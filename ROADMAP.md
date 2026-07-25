@@ -136,6 +136,29 @@ listener, headroom that never lies.
 
 ## Direction
 
+- **The stress probe (distortion hunts itself).** The
+  architect's thesis: if it is given to a human, a robot can
+  be taught -- the automation must end up better than any
+  leather bag. His ear-sweep found the iLoud floor at 54 Hz;
+  the probe automates that ear. After the sweep, take what
+  measured QUIET -- exactly the regions the fit will boost --
+  and replay them at the TARGET loudness, the drive the
+  post-EQ chain will actually apply: distortions invisible to
+  the polite sweep (rub, buzz, grunt) surface right where the
+  equalizer would summon them. Detection is the same mic and
+  cal listening for what does not belong -- harmonic energy
+  at 2f/3f and burst-shape garbage against the clean tone --
+  yielding a distortion-vs-frequency curve AT a loudness. Its
+  fruits, in order: the floor finds itself (the lowest clean
+  frequency at THIS volume -- the volume-tracked floor door
+  gets its data source, floor(L) is this curve's zero
+  crossing); per-band boost caps (a dip that grunts when
+  driven is an unfillable null with a physical reason -- the
+  solver's cap doctrine earns evidence); and guard rails for
+  the probe itself (short gated bursts, protective abort on
+  runaway, the neighbors' ceiling respected). The ear stays
+  the referee; the robot merely runs the sweep it was taught.
+
 - **The hole earns a passport (loopback cal).** Born at the
   architect's speaker bench: with an analog hole in the chain
   the interface itself colors the sweep, and the cure the
