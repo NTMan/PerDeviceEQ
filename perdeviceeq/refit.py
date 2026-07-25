@@ -130,6 +130,31 @@ def channel_results(measurement, take_ids=None, smoothing=6):
     return results, [t.get("id") for t in sel]
 
 
+def resolve_fit_params(prof, bands=None, f_lo=None, f_hi=None,
+                       max_boost=None, smoothing=None):
+    """The one place fit knobs resolve: an explicit argument wins,
+    then the profile's pending `fit_prefs` (the dial's word parked
+    by the measure window when no fit ran at close), then the last
+    fit's params, then the defaults. Returns the params dict the
+    fit stamps; the caller consumes `fit_prefs` after a successful
+    fit so params never lie about what produced the bands."""
+    fit = prof.get("fit") or {}
+    old = fit.get("params") or {}
+    prefs = prof.get("fit_prefs") or {}
+
+    def pick(explicit, key, default):
+        if explicit is not None:
+            return explicit
+        return prefs.get(key, old.get(key, default))
+
+    return {"bands": int(pick(bands, "bands", 10)),
+            "f_lo": float(pick(f_lo, "f_lo", 20.0)),
+            "f_hi": float(pick(f_hi, "f_hi", 12000.0)),
+            "max_boost": float(pick(max_boost, "max_boost", 6.0)),
+            "smoothing": pick(smoothing, "smoothing", 6),
+            "mono": bool(old.get("mono", False))}
+
+
 def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
                   max_boost=None, smoothing=None, take_ids=None,
                   allow_edited=False, progress=None):
@@ -157,18 +182,9 @@ def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
         raise RefitError("the bands were edited by hand after the "
                          "fit; re-fitting discards those edits "
                          "(pass allow_edited=True to proceed)")
-    old = fit.get("params") or {}
-    params = {"bands": int(bands if bands is not None
-                           else old.get("bands", 10)),
-              "f_lo": float(f_lo if f_lo is not None
-                            else old.get("f_lo", 20.0)),
-              "f_hi": float(f_hi if f_hi is not None
-                            else old.get("f_hi", 12000.0)),
-              "max_boost": float(max_boost if max_boost is not None
-                                 else old.get("max_boost", 6.0)),
-              "smoothing": (smoothing if smoothing is not None
-                            else old.get("smoothing", 6)),
-              "mono": bool(old.get("mono", False))}
+    params = resolve_fit_params(prof, bands=bands, f_lo=f_lo,
+                                f_hi=f_hi, max_boost=max_boost,
+                                smoothing=smoothing)
     results, used = channel_results(m, take_ids=take_ids,
                                     smoothing=params["smoothing"])
     if params["mono"] and len(results) != 1:
@@ -195,6 +211,9 @@ def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
                   "takes": list(used),
                   "inputs_sha256": fit_fingerprint(m, used, params),
                   "edited": False}
+    # the parked dial word (if any) was spent by this fit;
+    # params carry the truth now
+    out.pop("fit_prefs", None)
     # The zone rides the fit. The floor's source is the MEASURED
     # controlled band, not the hand-draggable fit range -- the
     # architect's own field caught the difference (his stored

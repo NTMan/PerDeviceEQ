@@ -855,7 +855,11 @@ class MeasureWindow(Adw.Window):
         row.append(Gtk.Label(label="Bands"))
         self.bands_spin = Gtk.SpinButton.new_with_range(1, 20, 1)
         self._tame_scroll(self.bands_spin)
-        self.bands_spin.set_value(FIT_BANDS)
+        prof = self.edit_prof or {}
+        seed = ((prof.get("fit_prefs") or {}).get(
+            "bands", ((prof.get("fit") or {}).get("params")
+                      or {}).get("bands", FIT_BANDS)))
+        self.bands_spin.set_value(int(seed))
         self.bands_spin.set_tooltip_text("Max biquads per channel; the fit "
                                          "stops early once the worst "
                                          "residual is under ~0.5 dB")
@@ -2310,6 +2314,10 @@ class MeasureWindow(Adw.Window):
             return True
         if fit.get("edited"):
             return False
+        want = int(self.bands_spin.get_value_as_int())
+        have = (fit.get("params") or {}).get("bands")
+        if have is not None and int(have) != want:
+            return True    # the dial moved past the fitted budget
         from . import refit
         ids = {t.get("id") for t in m["takes"]}
         return (refit.fit_is_stale(prof)
@@ -2438,6 +2446,27 @@ class MeasureWindow(Adw.Window):
         self.close()
         return False                     # the parent proceeds
 
+    def _park_bands_pref(self, pid, bands):
+        """No fit runs at this close, but the dial's word must
+        outlive the window (the field: 12 -> 15, close, reopen,
+        12 again). Parked as `fit_prefs`; the next fit -- the
+        editor's Re-fit included -- resolves and consumes it
+        (see refit.resolve_fit_params)."""
+        prof = self.parent.store.get(pid)
+        if not prof or prof.get("builtin"):
+            return
+        prefs = prof.get("fit_prefs") or {}
+        params = (prof.get("fit") or {}).get("params") or {}
+        have = prefs.get("bands", params.get("bands", FIT_BANDS))
+        if int(have) == int(bands):
+            return
+        body = dict(prof)
+        body["fit_prefs"] = {**prefs, "bands": int(bands)}
+        try:
+            self.parent.store.save_user(body)
+        except Exception:
+            pass
+
     def _on_close(self, *_):
         if self._busy:
             return True                  # a sweep is in the air
@@ -2449,6 +2478,8 @@ class MeasureWindow(Adw.Window):
             pass
         fit = self._should_autofit(pid)
         bands = self.bands_spin.get_value_as_int()
+        if not fit:
+            self._park_bands_pref(pid, bands)
         f_lo, f_hi = float(self.fit_lo), float(self.fit_hi)
         if getattr(self, "_parent_close_id", None) is not None:
             try:

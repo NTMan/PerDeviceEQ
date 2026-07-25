@@ -180,6 +180,12 @@ class ProfileStore:
             v = p.get(key)
             if v is not None:
                 body[key] = float(v)
+        prefs = p.get("fit_prefs")
+        if isinstance(prefs, dict) and prefs:
+            # the dial's parked word (refit.resolve_fit_params
+            # spends it): a preference, not history -- carried,
+            # never invented
+            body["fit_prefs"] = dict(prefs)
         for key in V3_BLOCKS:            # carried verbatim, never made up
             block = p.get(key)
             if isinstance(block, dict) and block:
