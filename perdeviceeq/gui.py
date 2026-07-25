@@ -1932,6 +1932,17 @@ class EqWindow(Adw.ApplicationWindow):
         self._apply_now()               # clipping is live: right now
         self._schedule_save()
 
+    def _floor_tail(self):
+        """The sealed protection stages as Band objects, built
+        from the same body the wire gets (_working_body carries
+        fit.zone and the protection keys). The tier-1 estimate
+        and Safe must see what the chain actually plays -- the
+        architect's question ("пол не влияет на preamp -- баг
+        или фича?") was a bug report: Safe was overcharging
+        loudness exactly where he fights for it."""
+        return [eq.Band.from_dict(b)
+                for b in eq.floor_bands(self._working_body())]
+
     def _auto_preamp_db(self):
         """Preamp that zeroes the tier-1 estimate: the max of the edited
         chain's band curve (no preamp) -- or, with unlinked channels, of
@@ -1940,6 +1951,7 @@ class EqWindow(Adw.ApplicationWindow):
         lands at or below 0 dBFS."""
         tail = [eq.Band.from_dict(b)
                 for b in self.pref_layers.active_bands()]
+        tail += self._floor_tail()
         if self.apply_all:
             peak = eq.curve_max_db(0.0, self.bands + tail)
         else:
@@ -1990,6 +2002,7 @@ class EqWindow(Adw.ApplicationWindow):
             self._land_safe()       # AUTO: the preamp follows Safe
         tail = [eq.Band.from_dict(b)
                 for b in self.pref_layers.active_bands()]
+        tail += self._floor_tail()
         bounds = {k: eq.headroom_bound_db(self.preamp,
                                           s["bands"] + tail)
                   for k, s in self._applied_chains()}

@@ -129,6 +129,22 @@ def test_protection_is_pinned_out_of_the_fit_hash():
             == pr.playback_sha256(with_floor))
 
 
+def test_the_headroom_sees_the_floor():
+    # the architect's bug report: a boost living under the
+    # floor must stop charging the Safe preamp
+    boost = [eq.Band.from_dict({"type": "PK", "freq": 37.0,
+                                "gain": 6.0, "q": 0.72})]
+    floor = [eq.Band.from_dict(b)
+             for b in eq.floor_bands(_floored(lo=54.0))]
+    bare = eq.curve_max_db(0.0, boost)
+    floored = eq.curve_max_db(0.0, boost + floor)
+    assert bare > 5.5
+    # the residual max lives on the bell's upper skirt where
+    # the floor barely reaches: 6.0 -> ~2.1 on this pair
+    assert floored < bare - 3.5
+    assert floored < 2.5
+
+
 def test_deep_zones_get_no_floor():
     assert eq.floor_bands(_floored(lo=20.0)) == []
     assert eq.floor_bands({}) == []
