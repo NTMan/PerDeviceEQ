@@ -6,6 +6,110 @@ listener, headroom that never lies.
 
 ---
 
+## Sprint (opened Jul 25, 2026)
+
+The graceful move: this list was drawn in the old chat, edited
+by the architect point by point, and minted here so the next
+chat opens with "вот проект, вот правила -- начинаем спринт".
+His goal lines ride each task verbatim.
+
+1. **The gain ladder, finale.** Score the 24 dB and 18 dB
+   rungs against the pre-registered bets (24: noise -62..-63,
+   SNR ~43; 18: noise ~-63, SNR starved), close the curve on
+   four points. His field notes already in: 18 dB got a second
+   chance -- the least-squeezed correction of all, sweeps loud
+   enough to shake clothes, some takes redone; 24 dB the most
+   frictionless -- six greens on the first pass. Цель: понять,
+   что даст UMIK-2, и какой гейн UMIK-1 лучше всего для
+   полевых измерений -- корона гейну, письменный вердикт
+   UMIK-2 данными. Shelf seed noted: a retake counter per
+   session (many attempts = suffering, few = first-take
+   greens; his own caveat -- not every failure is the gain's).
+
+2. **The battle fit of the iLoud.** Цель (formulated as
+   owed): a reference profile for LIFE, not for the ladder --
+   the mic reseated so the spread speaks for the listening
+   area, the cal worn so the curve is comparable across rigs
+   and on the exchange, the crowned gain from task 1; the
+   zone and the floor reborn from honest statistics, then the
+   ear's 54 Hz judged against the new zone edge. This profile
+   is the yardstick the AXON and the sub will be measured
+   against.
+
+3. **Preamp automation closes its loop.** His bug filed as a
+   question -- why must the automation be jiggled after a
+   floor toggle -- root found (the loading gate muted the
+   re-land) and fixed. Цель: исправить баг с автоматикой
+   преампа; acceptance = his Auto number moves by itself on
+   the toggle, no hand on the automation.
+
+4. **The solver's beasts.** (а) the argmax mask at saturated
+   anchors -- the 58/88 duplicates die, the boost cap regains
+   meaning; (б) the windowed joint refine -- the hour shrinks
+   (band 10 cost +41 s, 2.2M evaluations); (в) the floor-aware
+   base -- the solver optimizes with the floor fixed in its
+   model, honest at the edge. Цель: ускорить, оптимизировать
+   математику, добиться меньшего residual max на большем
+   бюджете -- with the standing honesty that the reported
+   residual measures the TRUE uncapped target, so unfillable
+   nulls keep their visible price.
+
+5. **The stress probe enters the sprint.** Challenged in by
+   the architect (my parking reasons did not survive: it
+   algorithmizes well, the goal is reachable -- only the
+   queue's thickness held it out). Prototype on the ready
+   30 dB canvas: gated bursts over what measured quiet, the
+   same mic and cal listening for harmonics and burst garbage,
+   distortion-vs-frequency at a loudness. Its deliverable is
+   the PRECONDITION for task 6: авто-пол, работающий не хуже
+   его уха (the ear found 54 where the zone said 38.3 -- the
+   probe must find 54 too).
+
+6. **[Off | Auto | Set].** The Floor button becomes an
+   AdwToggleGroup (he found the component) speaking the
+   Measure grammar: Auto follows the zone -- and after task 5,
+   the probe's floor(L); grabbing a handle flips to Set; Off
+   sleeps the stages and hides the strip. Precedent stands:
+   the session-loudness preamp mode coexists with Auto, so
+   Manual is not dubious. Цель: работа пола в авторежиме,
+   ручном режиме и выкл.
+
+7. **Exchange v1, the design round.** The agenda grew by his
+   questions: is it a service page of its own; what lives on
+   it -- search over speakers and headphones, photos and
+   graphs, who provided the profile and on what rig it was
+   measured. Цель: определиться, что из себя представляет
+   сервис обмена -- архитектура, база, CMS, фреймворки.
+   The v1 floor from the old Next stands under the round: a
+   static sha-addressed index of .pdeq packages (a git repo
+   can be the whole backend) plus in-app browse and import
+   through the existing unpack door; the maintainer's
+   cross-check against published curves marks a package
+   verified, unverified stays visible and labeled; accept
+   when a published profile installs from inside the app with
+   its provenance shown.
+   Boundary notes stand: the package knows its subject; the
+   architect's git-CMS idea (md files rendered client-side,
+   publish = git commit && git push) is ITS OWN project, not
+   mixed into per-device-eq -- but the exchange's reading room
+   is its natural first client if he builds it.
+
+8. **The sub and the AXON, on hardware arrival.** Цель:
+   получение полновесного звука, как в наушниках, только в
+   колонках. Deliverable includes an INSTRUCTION -- how to
+   wire and tune the 2.1 stack (crossover seam, level, phase,
+   ARC X off, their DSP frozen flat for measurement) with our
+   own UMIK as the instrument.
+
+9. **Release 4.1.0, the finale.** Цель: релиз всех фичей
+   спринта -- bump_version, notes for speaker protection with
+   its range handles, the zone in the fit, the headroom fixes;
+   COPR, flatpak bundle and AppImage converge.
+
+10. **The globals-row icon family.** Цель: улучшение визуала
+    -- icons for the eye, Floor and Auto strip when the family
+    is picked.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not
@@ -114,25 +218,6 @@ listener, headroom that never lies.
 - **Integration and CLI.** `install_full` as the one source behind both
   `--install` and the GUI dialog; `--uninstall`; symmetric
   `--list-sinks` / `--list-sources`; the launcher's tools gate.
-
-## Next (the sprint)
-
-1. **Verified .pdeq exchange, v1.** The architect's words: a
-   download service of verified EQ profiles. Promoted from
-   Direction at its smallest honest size -- a static,
-   sha-addressed index of .pdeq packages (a git repo can be
-   the whole backend) plus in-app browse and import through
-   the existing unpack door. Verification per the Direction
-   entry: the maintainer's cross-check against published
-   curves marks a package verified; unverified stays visible
-   and labeled. Accept when a profile published in the index
-   installs from inside the app with its provenance shown.
-   The package knows its subject: a .pdeq is about the thing
-   being corrected -- headphones, speakers, the room -- and
-   rig knowledge enters only from outside, as cal files and
-   stamps (testimony, not identity). Pages and pictures may
-   dress the index's reading room; the package itself stays
-   bare.
 
 ## Direction
 
