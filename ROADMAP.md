@@ -27,6 +27,34 @@ His goal lines ride each task verbatim.
    session (many attempts = suffering, few = first-take
    greens; his own caveat -- not every failure is the gain's).
 
+   **Verdict (Jul 25).** Both bets refuted, loudly. The 24 rung
+   read noise -68.5 dBFS -- past its own -67 refutation line --
+   with SNR 42.8 on the money; the 18 rung read -73.1 with the
+   ladder's best SNR 46.7, starvation beaten by the volume
+   knob (chan_vol 0.216 -> 0.512 lives in the file). The
+   two-point chain model died: the clean same-session 24/18
+   pair puts the room at -57.0 dBFS (36-equivalent) and the
+   chain at -77.5, crossover at gain 15.5 dB -- below the
+   jumper's lowest step, so the room rules every rung; the 30
+   rung's excess was +1.9 dB of morning ambient. Take
+   repeatability sits at 1-2 dB rms and stays flat from SNR 39
+   to 47 -- the deliverable is not SNR-limited anywhere on the
+   ladder; the true ceiling is inter-session drift in narrow
+   notches (1.5-2 kHz, 9 kHz, +/-20 dB). THE CROWN: 24 dB.
+   Zero slow beats and six first-take greens at the cadence
+   floor (11 s), 8+ dB of capture headroom at the honest
+   listening drive; the 18 rung bought its SNR by pushing the
+   speaker into its limiter (the acoustics returned 2.5-3 dB
+   less than the electricity promised -- task 5 territory).
+   UMIK-2: refused by data. The mic's electronics sit 20 dB
+   under the room at equal gain and never surface in the
+   jumper's range; SNR here is sweep SPL minus room ambient,
+   and both free levers (the knob, the hour) are already in
+   hand. The shelf seed grew a design: the retake counter
+   derives from stored take timestamps -- gap against the
+   session's own cadence floor -- no schema change, suffering
+   read as evidence.
+
 2. **The battle fit of the iLoud.** Goal (formulated as
    owed): a reference profile for LIFE, not for the ladder --
    the mic reseated so the spread speaks for the listening
@@ -52,7 +80,10 @@ His goal lines ride each task verbatim.
    model, honest at the edge. Goal: faster, leaner math --
    a smaller residual max on a bigger budget -- with the standing honesty that the reported
    residual measures the TRUE uncapped target, so unfillable
-   nulls keep their visible price.
+   nulls keep their visible price. Status: (a) landed Jul 25 --
+   with the diagnosis corrected in the field: the argmax was
+   the accomplice, the joint refine's sign flip was the parent
+   (see "fit: the sign leash and the saturated anchor's halo").
 
 5. **The stress probe enters the sprint.** Challenged in by
    the architect (my parking reasons did not survive: it
