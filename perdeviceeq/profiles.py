@@ -50,6 +50,12 @@ def playback_sha256(p):
     shape and it clears."""
     body = {k: p.get(k) for k in PLAYBACK_KEYS}
     body["preamp"] = 0.0
+    # protection is staging, like preamp, not fit editing:
+    # pinned out of the hash so riding the floor or the
+    # ceiling never reads as editing the fit, and every
+    # stored output_sha256 stays valid
+    for k in ("floor_off", "floor_hz", "ceil_hz"):
+        body.pop(k, None)
     blob = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -164,6 +170,16 @@ class ProfileStore:
                 "all": cls._sane_slot(p.get("all")),
                 "channels": {k: cls._sane_slot(v)
                              for k, v in (p.get("channels") or {}).items()}}
+        # speaker protection is a first-class citizen of the
+        # schema: the QA field run caught save_user stripping
+        # these -- handles snapped back on release and the
+        # override never reached the wire
+        if p.get("floor_off"):
+            body["floor_off"] = True
+        for key in ("floor_hz", "ceil_hz"):
+            v = p.get(key)
+            if v is not None:
+                body[key] = float(v)
         for key in V3_BLOCKS:            # carried verbatim, never made up
             block = p.get(key)
             if isinstance(block, dict) and block:

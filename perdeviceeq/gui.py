@@ -134,6 +134,9 @@ class EqWindow(Adw.ApplicationWindow):
         self.node = None
         self.live = False
         self.current_pid = CLEAN_ID
+        self.floor_off = False
+        self.floor_hz = None
+        self.ceil_hz = None
         self._save_source = 0
         self._loading = False
         self.sinks = []
@@ -492,9 +495,13 @@ class EqWindow(Adw.ApplicationWindow):
             fr = cache.get("fit_resid")
             if fr is not None:
                 txt += " · fit %.2f dB" % fr
-            fb = eq.floor_bands(p)
-            if fb:
-                txt += " · floor %s Hz" % _fmt_hz(fb[0]["freq"])
+            if not p.get("floor_off"):
+                fl = eq.floor_hz_effective(p)
+                if fl is not None:
+                    txt += " · floor %s Hz" % _fmt_hz(fl)
+                cl = eq.ceil_hz_effective(p)
+                if cl is not None and cl < eq.CEIL_ENGAGE_HZ:
+                    txt += " · ceil %s Hz" % _fmt_hz(cl)
         else:
             txt = "Measurement attached"
         self.trust_label.set_text(txt)
@@ -730,6 +737,16 @@ class EqWindow(Adw.ApplicationWindow):
             "Show the measurement behind this profile")
         self.meas_toggle.connect("toggled", self._on_meas_toggle)
         row.append(self.meas_toggle)
+        # the globals-row law (the architect's rule): everything
+        # under a tab affects only the tab; the eye, Auto and
+        # the floor act profile-wide, so they share this strip
+        # dressed like the preamp's Auto -- the one two-state
+        # precedent the architect named; flat toggles do not
+        # show their pressed state
+        self.floor_btn = Gtk.ToggleButton(label="Floor")
+        self.floor_btn.set_visible(False)
+        self.floor_btn.connect("toggled", self._on_floor_toggled)
+        row.append(self.floor_btn)
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         row.append(spacer)
@@ -1219,6 +1236,87 @@ class EqWindow(Adw.ApplicationWindow):
         s = self.slots.get(ch) or _new_slot()
         return {"bands": [bnd.to_dict() for bnd in s["bands"]]}
 
+    def _sync_floor_btn(self):
+        """Speaker protection, the architect's two-state spec:
+        one button by the eye -- protection works / does not
+        -- that both engages the sealed stages and shows or
+        hides the EQ-range handles repeated under the graph.
+        The price stays on the tooltip: the budget says 20,
+        the wire runs 24."""
+        p = self.store.get(self.current_pid) or {}
+        lo = eq.floor_hz_effective(p)
+        vis = lo is not None
+        on = vis and not p.get("floor_off")
+        self.floor_btn.set_visible(vis)
+        if vis:
+            self._floor_sync = True
+            try:
+                self.floor_btn.set_active(on)
+            finally:
+                self._floor_sync = False
+            tip = ("Speaker protection: LR8 edges outside the "
+                   "band budget, 4 biquads per engaged edge")
+            zl = eq.zone_floor_hz(p)
+            if zl is not None:
+                tip += ("\nmeasured zone: %s"
+                        % _fmt_hz(zl))
+                zh = eq.zone_ceil_hz(p)
+                if zh is not None:
+                    tip += " - %s Hz" % _fmt_hz(zh)
+            self.floor_btn.set_tooltip_text(tip)
+        self.view.set_protection(
+            lo, eq.ceil_hz_effective(p),
+            eq.zone_floor_hz(p), eq.zone_ceil_hz(p),
+            visible=on, on_change=self._on_protect_edges)
+
+    def _on_floor_toggled(self, btn):
+        if self._loading or getattr(self, "_floor_sync", False):
+            return
+        p = self.store.get(self.current_pid)
+        if not p:
+            return
+        if btn.get_active():
+            p.pop("floor_off", None)
+        else:
+            p["floor_off"] = True
+        self.floor_off = bool(p.get("floor_off"))
+        self.store.save_user(p)
+        self._load_slot(self.cur_ch)
+        self._canvas_refresh()
+        self._apply_now()
+        self._sync_floor_btn()
+
+    def _on_protect_edges(self, lo, hi, final):
+        """The strip's drags land here, throttled by the view;
+        edges within 2 percent of their measured zone marks
+        snap back to the zone (the override clears), a ceiling
+        parked at the right border sleeps. Intermediate moves
+        republish the graph so the sweep is HEARD; only the
+        final one touches the disk."""
+        p = self.store.get(self.current_pid)
+        if not p:
+            return
+        zl, zh = eq.zone_floor_hz(p), eq.zone_ceil_hz(p)
+        if zl is not None and abs(lo - zl) <= 0.02 * zl:
+            p.pop("floor_hz", None)
+        else:
+            p["floor_hz"] = float(lo)
+        if hi is None or hi >= 0.99 * eq.FMAX \
+                or (zh is not None
+                    and abs(hi - zh) <= 0.02 * zh):
+            p.pop("ceil_hz", None)
+        else:
+            p["ceil_hz"] = float(hi)
+        self.floor_hz = p.get("floor_hz")
+        self.ceil_hz = p.get("ceil_hz")
+        if final:
+            self.store.save_user(p)
+        self._load_slot(self.cur_ch)
+        self._canvas_refresh()
+        self._apply_now()
+        if final:
+            self._sync_floor_btn()
+
     def _working_body(self):
         """Assemble the full profile body from the current editor
         state. editor_body() reattaches the stored v3 blocks (the
@@ -1234,6 +1332,12 @@ class EqWindow(Adw.ApplicationWindow):
                 "all": self._slot_to_dict("all"),
                 "channels": {k: self._slot_to_dict(k)
                              for k in self.ch_keys}}
+        if self.floor_off:
+            body["floor_off"] = True
+        if self.floor_hz is not None:
+            body["floor_hz"] = float(self.floor_hz)
+        if self.ceil_hz is not None:
+            body["ceil_hz"] = float(self.ceil_hz)
         return editor_body(body, p)
 
     def _load_slot(self, ch):
@@ -1406,6 +1510,10 @@ class EqWindow(Adw.ApplicationWindow):
             self.current_pid = pid
             p = self.store.get(pid)
             self.apply_all = bool(p.get("apply_all", True))
+            self.floor_off = bool(p.get("floor_off"))
+            self.floor_hz = p.get("floor_hz")
+            self.ceil_hz = p.get("ceil_hz")
+            self._sync_floor_btn()
 
             dev = []
             if self.live and self.node:

@@ -78,25 +78,88 @@ FLOOR_MIN_HZ = 30.0
 FLOOR_QS = (0.5412, 1.3066, 0.5412, 1.3066)
 
 
-def floor_bands(p):
-    """The sealed floor stages for a profile dict, or []. Band
-    dicts (type HP at the fit's f_lo) that the graph builder
-    and the preview both consume; they never enter the
-    profile's band lists -- the zone places them, not the
-    hand."""
+def zone_floor_hz(p):
+    """The frequency the floor WOULD stand at: the measured
+    zone's lower edge from the stored fit (params fallback for
+    pre-zone fits), or None below the gate. Computed
+    regardless of the profile's floor_off flag, so the UI can
+    offer the handle even while the stages sleep."""
     fit = (p or {}).get("fit") or {}
     zone = fit.get("zone") or {}
     params = fit.get("params") or {}
     try:
-        # the measured controlled band, minted by refit, rules;
-        # the fit range is only the fallback for pre-zone fits
         lo = float(zone.get("lo", params.get("f_lo", 0.0)))
     except (TypeError, ValueError):
+        return None
+    return lo if lo >= FLOOR_MIN_HZ else None
+
+
+CEIL_ENGAGE_HZ = 18000.0
+
+
+def zone_ceil_hz(p):
+    """The measured zone's upper edge from the stored fit, or
+    None. No params fallback here on purpose: the stored f_hi
+    default (12000) predates the zone and engaging a lowpass
+    on it would shave honest treble -- only a minted zone or
+    the ear may place the ceiling."""
+    zone = ((p or {}).get("fit") or {}).get("zone") or {}
+    try:
+        hi = zone.get("hi")
+        return float(hi) if hi is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def ceil_hz_effective(p):
+    """Where the ceiling stands: the ear's override (ceil_hz)
+    or the measured zone's top. A ceiling parked at or above
+    CEIL_ENGAGE_HZ is asleep -- nothing to protect up there,
+    and headphones keep their air."""
+    p = p or {}
+    try:
+        ovr = p.get("ceil_hz")
+        if ovr is not None:
+            return float(ovr)
+    except (TypeError, ValueError):
+        pass
+    return zone_ceil_hz(p)
+
+
+def floor_hz_effective(p):
+    """Where the floor stands for THIS profile: the ear's
+    override (floor_hz, the architect's sweep-by-hearing
+    handle -- manual judgment outranks the gate) or the
+    measured zone's edge. None when neither speaks."""
+    p = p or {}
+    try:
+        ovr = p.get("floor_hz")
+        if ovr is not None:
+            return float(ovr)
+    except (TypeError, ValueError):
+        pass
+    return zone_floor_hz(p)
+
+
+def floor_bands(p):
+    """The sealed floor stages for a profile dict, or []. Band
+    dicts (type HP at the effective floor) that the graph
+    builder and the preview both consume; they never enter the
+    profile's band lists. The floor_off flag is the on/off
+    half of the handle; floor_hz is the frequency half -- the
+    ear sweeps it until the distortion is gone."""
+    if (p or {}).get("floor_off"):
         return []
-    if lo < FLOOR_MIN_HZ:
-        return []
-    return [{"type": "HP", "freq": lo, "gain": 0.0, "q": q,
-             "enabled": True} for q in FLOOR_QS]
+    out = []
+    lo = floor_hz_effective(p)
+    if lo is not None:
+        out += [{"type": "HP", "freq": lo, "gain": 0.0, "q": q,
+                 "enabled": True} for q in FLOOR_QS]
+    hi = ceil_hz_effective(p)
+    if hi is not None and hi < CEIL_ENGAGE_HZ:
+        out += [{"type": "LP", "freq": hi, "gain": 0.0, "q": q,
+                 "enabled": True} for q in FLOOR_QS]
+    return out
 
 
 def profile_graph(p, extra=None):

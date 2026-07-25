@@ -17,6 +17,7 @@ preamp, 11 px handle hit radius, create-on-empty-plot, the
 frequency guard for sub-plot trim bands, remove on right click.
 """
 import math
+import time
 
 import gi
 from . import focus
@@ -103,6 +104,29 @@ class PeqView(Gtk.Box):
         self.graph.add_controller(rclick)
         self.append(self.graph)
 
+        # the architect's spec verbatim: the Measure window's
+        # EQ-range handles repeated under the PEQ graph -- two
+        # draggable edges on the graph's own log axis, shown
+        # only while speaker protection is engaged
+        self.protect_strip = Gtk.DrawingArea()
+        self.protect_strip.set_content_height(26)
+        self.protect_strip.set_hexpand(True)
+        self.protect_strip.set_visible(False)
+        self.protect_strip.update_property(
+            [Gtk.AccessibleProperty.LABEL],
+            ["Speaker protection range"])
+        self.protect_strip.set_draw_func(self._draw_protect)
+        pdrag = Gtk.GestureDrag()
+        pdrag.connect("drag-begin", self._protect_drag_begin)
+        pdrag.connect("drag-update", self._protect_drag_update)
+        pdrag.connect("drag-end", self._protect_drag_end)
+        self.protect_strip.add_controller(pdrag)
+        self.append(self.protect_strip)
+        self._protect = None
+        self._protect_cb = None
+        self._protect_drag = None
+        self._protect_emit = 0.0
+
         self.grid = focus.OrderedGrid(column_spacing=4,
                                       row_spacing=4)
         self._focus_stops = []
@@ -122,6 +146,111 @@ class PeqView(Gtk.Box):
 
     def get_bands(self):
         return [b.to_dict() for b in self._bands]
+
+    def set_protection(self, lo, hi, zone_lo, zone_hi,
+                       visible, on_change=None):
+        """Feed the protection strip: lo/hi are the effective
+        edges (hi may be None -- the handle parks at the right
+        border), zone_* the measured reset marks drawn as
+        faint ticks. on_change(lo, hi, final) fires throttled
+        during a drag and once with final=True at its end."""
+        self._protect = (lo, hi, zone_lo, zone_hi)
+        self._protect_cb = on_change
+        self.protect_strip.set_visible(bool(visible)
+                                       and lo is not None)
+        self.protect_strip.queue_draw()
+
+    def _strip_geo(self):
+        pl = self._plot
+        w = self.protect_strip.get_width()
+        if pl and pl[2] > 0:
+            return pl[0], pl[2]
+        return 10.0, max(1.0, w - 20.0)
+
+    def _px_of(self, f, ml, pw_):
+        t = ((math.log10(max(FMIN, min(FMAX, f)))
+              - math.log10(FMIN))
+             / (math.log10(FMAX) - math.log10(FMIN)))
+        return ml + t * pw_
+
+    def _pf_of(self, x, ml, pw_):
+        t = min(1.0, max(0.0, (x - ml) / pw_))
+        return 10 ** (math.log10(FMIN)
+                      + t * (math.log10(FMAX) - math.log10(FMIN)))
+
+    def _draw_protect(self, _a, cr, w, h, *_):
+        if not self._protect:
+            return
+        lo, hi, zlo, zhi = self._protect
+        ml, pw_ = self._strip_geo()
+        xr = ml + pw_
+        mid = h / 2.0
+        cr.set_line_width(1.0)
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.5)
+        cr.move_to(ml, mid)
+        cr.line_to(xr, mid)
+        cr.stroke()
+        xlo = self._px_of(lo, ml, pw_) if lo else ml
+        xhi = self._px_of(hi, ml, pw_) if hi else xr
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.18)
+        cr.rectangle(ml, 2, max(0.0, xlo - ml), h - 4)
+        cr.fill()
+        if xhi < xr:
+            cr.rectangle(xhi, 2, xr - xhi, h - 4)
+            cr.fill()
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.7)
+        for z in (zlo, zhi):
+            if not z:
+                continue
+            xz = self._px_of(z, ml, pw_)
+            cr.move_to(xz, h - 7)
+            cr.line_to(xz, h - 1)
+            cr.stroke()
+        cr.set_source_rgba(0.21, 0.52, 0.89, 0.95)
+        cr.set_line_width(3.0)
+        for x in (xlo, xhi):
+            cr.move_to(x, 2)
+            cr.line_to(x, h - 2)
+            cr.stroke()
+
+    def _protect_drag_begin(self, _g, sx, _sy):
+        self._protect_drag = None
+        if not self._protect:
+            return
+        lo, hi, _zl, _zh = self._protect
+        ml, pw_ = self._strip_geo()
+        xlo = self._px_of(lo, ml, pw_) if lo else ml
+        xhi = self._px_of(hi, ml, pw_) if hi else ml + pw_
+        self._protect_drag = ("lo" if abs(sx - xlo)
+                              <= abs(sx - xhi) else "hi")
+
+    def _protect_drag_update(self, g, ox, _oy):
+        if not self._protect_drag or not self._protect:
+            return
+        ok, sx, _sy = g.get_start_point()
+        if not ok:
+            return
+        lo, hi, zlo, zhi = self._protect
+        ml, pw_ = self._strip_geo()
+        f = self._pf_of(sx + ox, ml, pw_)
+        if self._protect_drag == "lo":
+            top = (hi or FMAX) / 1.2
+            lo = max(FMIN, min(f, top))
+        else:
+            hi = min(FMAX, max(f, (lo or FMIN) * 1.2))
+        self._protect = (lo, hi, zlo, zhi)
+        self.protect_strip.queue_draw()
+        now = time.monotonic()
+        if self._protect_cb and now - self._protect_emit > 0.15:
+            self._protect_emit = now
+            self._protect_cb(lo, hi, False)
+
+    def _protect_drag_end(self, *_a):
+        if self._protect_drag and self._protect \
+                and self._protect_cb:
+            lo, hi, _zl, _zh = self._protect
+            self._protect_cb(lo, hi, True)
+        self._protect_drag = None
 
     def set_floor(self, band_dicts):
         """Sealed floor stages: the curve and the prediction

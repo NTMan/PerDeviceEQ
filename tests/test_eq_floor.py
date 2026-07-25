@@ -53,6 +53,82 @@ def test_a_deep_zone_gates_even_a_high_fit_range():
     assert eq.floor_bands(p) == []
 
 
+def test_floor_off_is_the_ab_handle():
+    p = _floored()
+    p["floor_off"] = True
+    assert eq.floor_bands(p) == []
+    # the handle still knows where the floor would stand
+    assert eq.zone_floor_hz(p) == 38.3
+
+
+def test_zone_floor_hz_respects_the_gate():
+    assert eq.zone_floor_hz(_floored(lo=20.0)) is None
+    assert eq.zone_floor_hz({}) is None
+
+
+def test_the_ears_override_outranks_the_zone():
+    p = _floored()
+    p["floor_hz"] = 55.0
+    fb = eq.floor_bands(p)
+    assert len(fb) == 4 and fb[0]["freq"] == 55.0
+    assert eq.floor_hz_effective(p) == 55.0
+
+
+def test_the_ear_outranks_the_gate_too():
+    # manual judgment may stand a floor where the gate would
+    # not: the ear is the judge
+    p = _floored(lo=20.0)
+    p["floor_hz"] = 25.0
+    assert [b["freq"] for b in eq.floor_bands(p)] == [25.0] * 4
+
+
+def test_ceiling_engages_below_the_gate():
+    p = _floored()
+    p["fit"]["zone"] = {"lo": 38.3, "hi": 20000.0}
+    # parked at the top: asleep, headphones keep their air
+    assert all(b["type"] == "HP" for b in eq.floor_bands(p))
+    p["ceil_hz"] = 12000.0
+    fb = eq.floor_bands(p)
+    lps = [b for b in fb if b["type"] == "LP"]
+    assert len(lps) == 4 and lps[0]["freq"] == 12000.0
+    assert len([b for b in fb if b["type"] == "HP"]) == 4
+
+
+def test_zone_ceiling_below_gate_engages_itself():
+    p = _floored()
+    p["fit"]["zone"] = {"lo": 38.3, "hi": 15000.0}
+    assert any(b["type"] == "LP" and b["freq"] == 15000.0
+               for b in eq.floor_bands(p))
+
+
+def test_protection_off_silences_both_edges():
+    p = _floored()
+    p["fit"]["zone"] = {"lo": 38.3, "hi": 12000.0}
+    p["floor_off"] = True
+    assert eq.floor_bands(p) == []
+
+
+def test_protection_keys_survive_the_body():
+    from perdeviceeq import profiles as pr
+    p = {"id": "x", "floor_hz": 55.0, "ceil_hz": 12000.0,
+         "floor_off": True}
+    body = pr.ProfileStore._body(p)
+    assert body["floor_hz"] == 55.0
+    assert body["ceil_hz"] == 12000.0
+    assert body["floor_off"] is True
+
+
+def test_protection_is_pinned_out_of_the_fit_hash():
+    from perdeviceeq import profiles as pr
+    base = {"apply_all": True, "preamp": 0.0,
+            "ch_keys": ["FL"], "all": {"bands": []},
+            "channels": {}}
+    with_floor = dict(base, floor_hz=55.0, floor_off=True,
+                      ceil_hz=12000.0)
+    assert (pr.playback_sha256(base)
+            == pr.playback_sha256(with_floor))
+
+
 def test_deep_zones_get_no_floor():
     assert eq.floor_bands(_floored(lo=20.0)) == []
     assert eq.floor_bands({}) == []
