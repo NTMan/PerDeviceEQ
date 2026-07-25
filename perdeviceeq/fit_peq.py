@@ -51,18 +51,17 @@ SHELF_Q_MAX = 1.0       # a band may retune this far from placement
 PRUNE_EPS_DB = 0.25         # pruning may cost at most this much, anywhere
 PRUNE_OVERLAP_DB = 0.25     # a drop frees only bands it reaches this far
 PRUNE_SPAN_OCT = 0.5        # a trial may retune a freed band this far
-# A boost pinned at the cap has said all the cap allows: the
-# residual left at its anchor is the cap's price, not a request
-# for one more band. Without a mask the argmax ping-pongs between
-# the under-served plateau and its overshoot skirt and stacks
-# shelf pairs at one null (the field showed three LSC +6 at 58 Hz
-# and three LSC -5.5 at 88 Hz on a single 20-band budget). A
-# saturated anchor therefore masks its neighbourhood against
-# further BOOST placements; cuts stay welcome everywhere -- an
-# overshoot is always a legitimate complaint.
-SAT_EPS_DB = 0.05           # this close to the cap counts as pinned
+# The boost cap is a NET law: a grid point has said all the cap
+# allows only when the chain's net response there has reached the
+# cap, and only then does it stop taking boost placements. Cuts
+# stay welcome everywhere -- an overshoot is always a legitimate
+# complaint. (A geometric halo around pinned bands was tried
+# first and over-reached in the field both ways: it sterilized a
+# crown its band had slid away from, and let flanking cut skirts
+# over-carve a valley no helper was allowed to top up.)
+SAT_EPS_DB = 0.05           # this close to the cap counts as full
 PARK_EPS_DB = 0.05          # a refined band this small was parked
-SAT_MASK_OCT = 1.0 / 3.0    # the masked halo around a pinned anchor
+SAT_MASK_OCT = 1.0 / 3.0    # retired halo around a PARKED anchor
 TRIM_MIN_DB = 0.05          # below this a trim is measurement noise
 TRIM_WARN_DB = 3.0          # past this it smells like a seating problem
 
@@ -248,10 +247,12 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
     parallel band tables instead of unrecognizable decompositions
     of the same net response.
 
-    A boost the refine leaves pinned at the cap retires its anchor:
-    a SAT_MASK_OCT halo around it stops taking further boost
+    The boost cap is enforced as a NET law at placement: a point
+    whose net response has reached the cap takes no further boost
     placements (cuts may still land there), so the cap's leftover
-    is paid once instead of chased with stacked shelves.
+    is paid once instead of chased with stacked shelves -- while a
+    crown eroded below the cap by neighbouring cut skirts may
+    still receive a legal helper.
 
     `limits`, when given, narrows the box to a destination's
     declared ranges -- {"gain": (lo, hi), "q": (lo, hi),
@@ -292,12 +293,23 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                      prog["band"], horizon, prog["tot"])
 
     bands, anchors = [], []
-    sat = np.zeros(len(fg), bool)
     park_hi = np.zeros(len(fg), bool)    # boosts refused here
     park_lo = np.zeros(len(fg), bool)    # cuts refused here
     for _ in range(n_bands):
         resid = target - _response(bands, fg)
         score = np.abs(resid)
+        # the cap is a NET law: a point has said all the cap
+        # allows only when the chain's net response there has
+        # reached the cap. A geometric halo around pinned bands
+        # over-reached both ways in the field -- a wide boost
+        # slid an octave off its anchor and the anchor's halo
+        # sterilized a crown it no longer served (+3.2 dB of
+        # hunger at 101 Hz), and a decree-masked helper let two
+        # q8 cut skirts over-carve 469 Hz by 3.4 dB. Where the
+        # net sits under the cap, a helper boost stays legal;
+        # where it has reached the cap, no boost may land -- so
+        # stacking past the cap stays dead without decrees.
+        sat = (target - resid) >= (g_hi - SAT_EPS_DB)
         score[(sat | park_hi) & (resid > 0.0)] = 0.0
         score[park_lo & (resid < 0.0)] = 0.0
         k = int(np.argmax(score))
@@ -347,19 +359,6 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                 park_hi[i0:i1] = True
             else:
                 park_lo[i0:i1] = True
-        sat[:] = False
-        for (_bt, f_now, g, _q), fa in zip(bands, anchors):
-            if g < g_hi - SAT_EPS_DB:
-                continue
-            # the leash lets a pinned band slide off its anchor;
-            # its corner residual travels with it, so the halo
-            # covers both the anchor and where the band sits now
-            for fc in (fa, f_now):
-                i0 = int(np.searchsorted(
-                    fg, fc * 2.0 ** -SAT_MASK_OCT))
-                i1 = int(np.searchsorted(
-                    fg, fc * 2.0 ** SAT_MASK_OCT))
-                sat[i0:i1] = True
         prog["band"] = len(bands)
         prog["fev"] = 0
     bands = _prune(bands, fg, target, flo, fhi, max_boost,
