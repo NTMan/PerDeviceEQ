@@ -275,6 +275,7 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
     once, at the end.
 
     Returns (bands, resid) with bands as (type, f, g, q) tuples."""
+    fg = np.asarray(fg, float)
     desired = np.asarray(desired, float)
     g_lo, g_hi, q_lo, q_hi = _bounds(max_boost, limits)
     allowed = tuple((limits or {}).get("types")
@@ -312,6 +313,13 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
         sat = (target - resid) >= (g_hi - SAT_EPS_DB)
         score[(sat | park_hi) & (resid > 0.0)] = 0.0
         score[park_lo & (resid < 0.0)] = 0.0
+        # the zone is the jurisdiction: a point outside flo..fhi
+        # is not the greedy's to serve. The field's grid never
+        # reaches here wider than the zone, but the exposed API
+        # can -- and an anchor born outside collapses its leash
+        # box against the zone wall (strict scipy refuses a
+        # lb == ub box; older scipy froze the band silently).
+        score[(fg < flo) | (fg > fhi)] = 0.0
         k = int(np.argmax(score))
         if score[k] < RESID_TARGET_DB:
             break
