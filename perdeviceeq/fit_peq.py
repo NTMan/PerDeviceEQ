@@ -61,6 +61,7 @@ PRUNE_SPAN_OCT = 0.5        # a trial may retune a freed band this far
 # further BOOST placements; cuts stay welcome everywhere -- an
 # overshoot is always a legitimate complaint.
 SAT_EPS_DB = 0.05           # this close to the cap counts as pinned
+PARK_EPS_DB = 0.05          # a refined band this small was parked
 SAT_MASK_OCT = 1.0 / 3.0    # the masked halo around a pinned anchor
 TRIM_MIN_DB = 0.05          # below this a trim is measurement noise
 TRIM_WARN_DB = 3.0          # past this it smells like a seating problem
@@ -292,10 +293,13 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
 
     bands, anchors = [], []
     sat = np.zeros(len(fg), bool)
+    park_hi = np.zeros(len(fg), bool)    # boosts refused here
+    park_lo = np.zeros(len(fg), bool)    # cuts refused here
     for _ in range(n_bands):
         resid = target - _response(bands, fg)
         score = np.abs(resid)
-        score[sat & (resid > 0.0)] = 0.0
+        score[(sat | park_hi) & (resid > 0.0)] = 0.0
+        score[park_lo & (resid < 0.0)] = 0.0
         k = int(np.argmax(score))
         if score[k] < RESID_TARGET_DB:
             break
@@ -312,6 +316,37 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
         bands = _refine(bands, fg, target, flo, fhi, max_boost,
                         span_oct=GREEDY_SPAN_OCT, anchors=anchors,
                         limits=limits, tick=tick)
+        if (abs(bands[-1][2]) < PARK_EPS_DB and btype != "PK"
+                and "PK" in allowed):
+            # the zone said shelf, the refine parked it at zero:
+            # the residual here is a bump, not a plateau (a shelf
+            # cannot serve a narrow low spike without harming
+            # everything below its corner). Second opinion at the
+            # same anchor as a peaking band -- started NARROW,
+            # since narrowness is the very reason the shelf
+            # parked; a wide start strands the refine in the
+            # parked minimum before it can tighten.
+            bands = bands[:-1] + [("PK", f0, g0, q_hi)]
+            bands = _refine(bands, fg, target, flo, fhi,
+                            max_boost, span_oct=GREEDY_SPAN_OCT,
+                            anchors=anchors, limits=limits,
+                            tick=tick)
+        if abs(bands[-1][2]) < PARK_EPS_DB:
+            # parked twice: the spot is unservable by any allowed
+            # shape. Drop the band and retire the anchor for this
+            # sign, or the argmax re-picks it every iteration --
+            # the treadmill that starved the field's FR fit to
+            # five bands out of fifteen.
+            bands = bands[:-1]
+            anchors.pop()
+            i0 = int(np.searchsorted(
+                fg, f0 * 2.0 ** -SAT_MASK_OCT))
+            i1 = int(np.searchsorted(
+                fg, f0 * 2.0 ** SAT_MASK_OCT))
+            if resid[k] > 0.0:
+                park_hi[i0:i1] = True
+            else:
+                park_lo[i0:i1] = True
         sat[:] = False
         for (_bt, f_now, g, _q), fa in zip(bands, anchors):
             if g < g_hi - SAT_EPS_DB:

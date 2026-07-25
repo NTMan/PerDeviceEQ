@@ -330,3 +330,26 @@ def test_saturated_anchor_masks_boost_stacking():
                     "stacked %s boosts at %.1f and %.1f Hz"
                     % (ti, fi, fj))
     assert float(np.max(resid)) >= 6.5
+
+
+def test_parked_placements_never_survive():
+    """The treadmill regression net: a narrow valley carved into a
+    low +plateau (the field's FR shape at 55 Hz) starved the
+    leashed solver to five bands of fifteen -- placements parked
+    at zero by the joint refine, reaped, re-picked forever. With
+    the second opinion and the parked-anchor guard the fit may
+    or may not carve the valley (the real canvas does, see the
+    commit), but it must never return parked corpses and never
+    burn the loop on one spot."""
+    f = np.logspace(np.log10(20), np.log10(20000), 400)
+    lf = np.log10(f)
+    desired = (12 * np.exp(-((lf - np.log10(60.0)) ** 2)
+                           / (2 * 0.20 ** 2))
+               - 12 * np.exp(-((lf - np.log10(55.0)) ** 2)
+                             / (2 * 0.025 ** 2)))
+    bands, resid = fit_peq.fit_to_desired(
+        f, desired, 40.0, 18000.0, 6, 6.0)
+    assert bands, "the guard starved the fit to nothing"
+    for _t, _f, g, _q in bands:
+        assert abs(g) >= 0.2, (
+            "a parked corpse survived: %r" % (bands,))
