@@ -1282,6 +1282,12 @@ class EqWindow(Adw.ApplicationWindow):
         self.floor_off = bool(p.get("floor_off"))
         self.store.save_user(p)
         self._load_slot(self.cur_ch)
+        # the architect's field catch: _load_slot runs its
+        # headroom pass INSIDE the loading gate, which mutes
+        # _land_safe -- so Auto never re-landed after the
+        # toggle until the automation was jiggled by hand.
+        # Re-run outside the gate, before the publish.
+        self._update_headroom()
         self._canvas_refresh()
         self._apply_now()
         self._sync_floor_btn()
@@ -1312,6 +1318,7 @@ class EqWindow(Adw.ApplicationWindow):
         if final:
             self.store.save_user(p)
         self._load_slot(self.cur_ch)
+        self._update_headroom()   # outside the loading gate
         self._canvas_refresh()
         self._apply_now()
         if final:
