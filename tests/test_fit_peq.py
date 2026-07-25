@@ -305,3 +305,28 @@ def test_fit_profiles_progress_is_the_perband_heartbeat():
         assert ev == sorted(ev) and ev   # the counter climbs
     mid = [s for s in seen if s[1] == "FL"]
     assert all(v[0] <= 0.5 for v in mid)  # FL lives in its half
+
+
+def test_saturated_anchor_masks_boost_stacking():
+    """A null deeper than the cap must not grow stacked same-type
+    boosts at one anchor (the 58/88 field zoo: three LSC +6 and
+    three LSC -5.5 on one 20-band budget): one pinned band says
+    +cap, the leftover stays visible in the residual."""
+    f = np.logspace(np.log10(20), np.log10(20000), 400)
+    lf = np.log10(f)
+    desired = (14 * np.exp(-((lf - np.log10(50.0)) ** 2)
+                           / (2 * 0.06 ** 2))
+               - 5 * np.exp(-((lf - np.log10(78.0)) ** 2)
+                            / (2 * 0.06 ** 2)))
+    bands, resid = fit_peq.fit_to_desired(
+        f, desired, 40.0, 18000.0, 10, 6.0)
+    pinned = [(t, fr) for (t, fr, g, q) in bands if g >= 5.9]
+    for i in range(len(pinned)):
+        for j in range(i + 1, len(pinned)):
+            ti, fi = pinned[i]
+            tj, fj = pinned[j]
+            if ti == tj:
+                assert abs(np.log2(fi / fj)) >= 0.30, (
+                    "stacked %s boosts at %.1f and %.1f Hz"
+                    % (ti, fi, fj))
+    assert float(np.max(resid)) >= 6.5

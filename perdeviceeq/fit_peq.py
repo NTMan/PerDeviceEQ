@@ -51,6 +51,17 @@ SHELF_Q_MAX = 1.0       # a band may retune this far from placement
 PRUNE_EPS_DB = 0.25         # pruning may cost at most this much, anywhere
 PRUNE_OVERLAP_DB = 0.25     # a drop frees only bands it reaches this far
 PRUNE_SPAN_OCT = 0.5        # a trial may retune a freed band this far
+# A boost pinned at the cap has said all the cap allows: the
+# residual left at its anchor is the cap's price, not a request
+# for one more band. Without a mask the argmax ping-pongs between
+# the under-served plateau and its overshoot skirt and stacks
+# shelf pairs at one null (the field showed three LSC +6 at 58 Hz
+# and three LSC -5.5 at 88 Hz on a single 20-band budget). A
+# saturated anchor therefore masks its neighbourhood against
+# further BOOST placements; cuts stay welcome everywhere -- an
+# overshoot is always a legitimate complaint.
+SAT_EPS_DB = 0.05           # this close to the cap counts as pinned
+SAT_MASK_OCT = 1.0 / 3.0    # the masked halo around a pinned anchor
 TRIM_MIN_DB = 0.05          # below this a trim is measurement noise
 TRIM_WARN_DB = 3.0          # past this it smells like a seating problem
 
@@ -123,11 +134,20 @@ def _refine(bands, fg, desired, flo, fhi, max_boost, span_oct=None,
             s = span_oct * np.log10(2.0)
             f_lo = max(np.log10(flo), np.log10(fa) - s)
             f_hi = min(np.log10(fhi), np.log10(fa) + s)
+        # the sign is leashed like the frequency: placement chose
+        # boost or cut by the residual's sign, and a flip inside
+        # the joint refine is how a cut placed on an overshoot
+        # skirt turned into the second +6 of a stacked pair (the
+        # 58/88 field zoo grew here, not in the argmax)
+        if g >= 0.0:
+            gl, gh = max(0.0, g_lo), g_hi
+        else:
+            gl, gh = g_lo, min(0.0, g_hi)
         x0 += [min(max(lf, f_lo), f_hi),
-               min(max(g, g_lo), g_hi),
+               min(max(g, gl), gh),
                min(max(q, q_lo), qh)]
-        lo += [f_lo, g_lo, q_lo]
-        hi += [f_hi, g_hi, qh]
+        lo += [f_lo, gl, q_lo]
+        hi += [f_hi, gh, qh]
 
     def resfun(x):
         if tick is not None:
@@ -139,7 +159,8 @@ def _refine(bands, fg, desired, flo, fhi, max_boost, span_oct=None,
     sol = least_squares(resfun, x0, bounds=(lo, hi), method="trf",
                         max_nfev=3000)
     return [(types[i], float(10 ** sol.x[3 * i]),
-             float(np.clip(sol.x[3 * i + 1], g_lo, g_hi)),
+             float(np.clip(sol.x[3 * i + 1],
+                           lo[3 * i + 1], hi[3 * i + 1])),
              float(sol.x[3 * i + 2])) for i in range(len(types))]
 
 
@@ -226,6 +247,11 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
     parallel band tables instead of unrecognizable decompositions
     of the same net response.
 
+    A boost the refine leaves pinned at the cap retires its anchor:
+    a SAT_MASK_OCT halo around it stops taking further boost
+    placements (cuts may still land there), so the cap's leftover
+    is paid once instead of chased with stacked shelves.
+
     `limits`, when given, narrows the box to a destination's
     declared ranges -- {"gain": (lo, hi), "q": (lo, hi),
     "types": (...)}; boost stays additionally capped by max_boost
@@ -265,10 +291,13 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                      prog["band"], horizon, prog["tot"])
 
     bands, anchors = [], []
+    sat = np.zeros(len(fg), bool)
     for _ in range(n_bands):
         resid = target - _response(bands, fg)
-        k = int(np.argmax(np.abs(resid)))
-        if abs(resid[k]) < RESID_TARGET_DB:
+        score = np.abs(resid)
+        score[sat & (resid > 0.0)] = 0.0
+        k = int(np.argmax(score))
+        if score[k] < RESID_TARGET_DB:
             break
         f0 = fg[k]
         btype = ("LSC" if f0 <= flo * 2
@@ -283,6 +312,19 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
         bands = _refine(bands, fg, target, flo, fhi, max_boost,
                         span_oct=GREEDY_SPAN_OCT, anchors=anchors,
                         limits=limits, tick=tick)
+        sat[:] = False
+        for (_bt, f_now, g, _q), fa in zip(bands, anchors):
+            if g < g_hi - SAT_EPS_DB:
+                continue
+            # the leash lets a pinned band slide off its anchor;
+            # its corner residual travels with it, so the halo
+            # covers both the anchor and where the band sits now
+            for fc in (fa, f_now):
+                i0 = int(np.searchsorted(
+                    fg, fc * 2.0 ** -SAT_MASK_OCT))
+                i1 = int(np.searchsorted(
+                    fg, fc * 2.0 ** SAT_MASK_OCT))
+                sat[i0:i1] = True
         prog["band"] = len(bands)
         prog["fev"] = 0
     bands = _prune(bands, fg, target, flo, fhi, max_boost,
