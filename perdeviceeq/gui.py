@@ -607,7 +607,7 @@ class EqWindow(Adw.ApplicationWindow):
                 dlg.set_close_response("close")
                 dlg.present(self)
             elif self.current_pid == pid:
-                self._load_profile(pid)
+                self._load_profile(pid, edit=True)
             else:
                 self._populate_picker()
             return False
@@ -1507,7 +1507,8 @@ class EqWindow(Adw.ApplicationWindow):
         p = self.store.profiles.get(pid)
         return bool(p and not p.get("builtin") and pid != CLEAN_ID)
 
-    def _load_profile(self, pid, apply=True, born=False):
+    def _load_profile(self, pid, apply=True, born=False,
+                      edit=False):
         """Load profile `pid` into the editor and bind it to the device.
         With apply=True also publish its graph to the session metadata
         (primes the key for the first Bypass; see _apply_now).
@@ -1585,6 +1586,14 @@ class EqWindow(Adw.ApplicationWindow):
             # real edit materializes it (and truncates rightfully).
             if born:
                 self._push_history(born=pid)
+            elif edit:
+                # a re-fit arrives through the load door, but it
+                # is an EDIT: the reloaded bands must count as a
+                # real step, or the arrows stay dark -- the undo
+                # law says selections never light them, and the
+                # dedup (content without marks) refuses a second
+                # push that would upgrade the baseline
+                self._push_history()
             elif self._hidx < len(self._hist) - 1:
                 self._pending_sel = self._snapshot()
             else:
