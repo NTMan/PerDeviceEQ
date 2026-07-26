@@ -813,7 +813,11 @@ def test_refit_progress_is_alive_and_bounded():
     assert fr == sorted(fr)              # never walks backwards
     assert len(fr) >= 5                  # alive, not a two-stepper
     ev = [s[3] for s in seen]
-    assert ev == sorted(ev) and ev[-1] >= ev[0] + 80
+    # the +80 floor was numeric-jacobian calibration: a toy
+    # fit now converges in tens of evaluations, and asserting
+    # volume would assert slowness -- monotone growth is the
+    # liveness that matters
+    assert ev == sorted(ev) and ev[-1] > ev[0]
     assert all(s[2] == 6 and 0 <= s[1] <= 6 for s in seen)
 
 

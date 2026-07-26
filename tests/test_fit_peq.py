@@ -320,15 +320,23 @@ def test_saturated_anchor_masks_boost_stacking():
                             / (2 * 0.06 ** 2)))
     bands, resid = fit_peq.fit_to_desired(
         f, desired, 40.0, 18000.0, 10, 6.0)
-    pinned = [(t, fr) for (t, fr, g, q) in bands if g >= 5.9]
-    for i in range(len(pinned)):
-        for j in range(i + 1, len(pinned)):
-            ti, fi = pinned[i]
-            tj, fj = pinned[j]
-            if ti == tj:
-                assert abs(np.log2(fi / fj)) >= 0.30, (
-                    "stacked %s boosts at %.1f and %.1f Hz"
+    # the crime was always the NET law, and the 0.30-oct distance
+    # was its proxy from the guillotine era: a converged refine
+    # may legally place two pinned shelves 0.2 oct apart with a
+    # cut between them (an edge steeper than one q<=1 shelf can
+    # make) while the net stays under the cap. The asserts now
+    # judge the law itself: no converged twins in one seat, net
+    # response capped everywhere, the unfillable price visible.
+    for i in range(len(bands)):
+        for j in range(i + 1, len(bands)):
+            ti, fi, gi, _q = bands[i]
+            tj, fj, gj, _q2 = bands[j]
+            if ti == tj and gi * gj > 0:
+                assert abs(np.log2(fi / fj)) >= fit_peq.DEDUP_OCT, (
+                    "twins share a seat: %s at %.1f and %.1f Hz"
                     % (ti, fi, fj))
+    net = np.array(fit_peq._response(bands, f))
+    assert float(net.max()) <= 6.0 + 0.25, float(net.max())
     assert float(np.max(resid)) >= 6.5
 
 
@@ -353,3 +361,51 @@ def test_parked_placements_never_survive():
     for _t, _f, g, _q in bands:
         assert abs(g) >= 0.2, (
             "a parked corpse survived: %r" % (bands,))
+
+
+def test_analytic_jacobian_matches_numeric():
+    """The refine's closed-form Jacobian must agree with central
+    finite differences of the exact response, for every type the
+    fit places, across boosts, cuts, shelves and edges."""
+    rng = np.random.default_rng(7)
+    f = np.logspace(np.log10(20), np.log10(20000), 97)
+    w = 2 * np.pi * f / fit_peq.FS
+    cosw, cos2w = np.cos(w), np.cos(2 * w)
+    cases = []
+    for btype in ("PK", "LSC", "HSC"):
+        for _ in range(6):
+            cases.append((btype,
+                          float(10 ** rng.uniform(1.5, 4.2)),
+                          float(rng.uniform(-18.0, 6.0)),
+                          float(rng.uniform(0.31, 7.9))))
+    cases += [("PK", 55.0, 6.0, 8.0), ("LSC", 40.0, -0.4, 0.3),
+              ("HSC", 17000.0, 6.0, 0.58)]
+    worst = 0.0
+    for btype, f0, g, q in cases:
+        got = fit_peq._mag_grad_vec(btype, f0, g, q, cosw, cos2w)
+        assert got is not None
+        lf = np.log10(f0)
+        for t, (lo_, hi_, h) in enumerate((
+                (lf - 1e-5, lf + 1e-5, 1e-5),
+                (g - 1e-5, g + 1e-5, 1e-5),
+                (q - 1e-5, q + 1e-5, 1e-5))):
+            args_lo = [f0, g, q]
+            args_hi = [f0, g, q]
+            if t == 0:
+                args_lo[0], args_hi[0] = 10 ** lo_, 10 ** hi_
+            elif t == 1:
+                args_lo[1], args_hi[1] = lo_, hi_
+            else:
+                args_lo[2], args_hi[2] = lo_, hi_
+            num = (fit_peq._mag_db_vec(btype, *args_hi, f)
+                   - fit_peq._mag_db_vec(btype, *args_lo, f)) / (2 * h)
+            err = float(np.max(np.abs(got[t] - num)))
+            scale = 1.0 + float(np.max(np.abs(num)))
+            worst = max(worst, err / scale)
+            # scale-aware: steep bells near their center carry
+            # derivatives in the hundreds of dB per unit, and the
+            # central difference's own O(h^2) truncation is the
+            # larger sinner there -- the analytic side is exact
+            assert err < 3e-4 * scale, (btype, f0, g, q, t,
+                                        err, scale)
+    assert worst < 3e-4

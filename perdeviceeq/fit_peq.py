@@ -40,6 +40,40 @@ from . import eq
 from .config import FS, SCHEMA_VERSION
 
 RESID_TARGET_DB = 0.5
+DEDUP_OCT = 0.03            # same-type same-sign bands this close
+#                             are one seat pretending to be two
+
+
+def _merge_twins(bands, g_lo, g_hi):
+    """A truly converged joint refine may slide two same-type
+    same-sign bands into one seat -- a pair of +6 shelves at one
+    corner is the old stack reborn without a single illegal move
+    (every placement at a net-hungry point, every sign kept).
+    One seat is one knob: gains merge (clipped into the sign\'s
+    box, so a boost pair pays the cap\'s price visibly), the
+    stronger twin keeps the seat. Returns (bands, dropped
+    indices) so callers can keep anchor lists true."""
+    dropped = []
+    i = 0
+    while i < len(bands):
+        j = i + 1
+        while j < len(bands):
+            ti, fi, gi, qi = bands[i]
+            tj, fj, gj, qj = bands[j]
+            if (ti == tj and gi * gj > 0.0
+                    and abs(np.log2(fi / fj)) < DEDUP_OCT):
+                g = gi + gj
+                g = min(g, g_hi) if g > 0.0 else max(g, g_lo)
+                if abs(gj) > abs(gi):
+                    bands[i] = (tj, fj, g, qj)
+                else:
+                    bands[i] = (ti, fi, g, qi)
+                bands.pop(j)
+                dropped.append(j)
+            else:
+                j += 1
+        i += 1
+    return bands, dropped
 GRID = 400
 GREEDY_SPAN_OCT = 1.0
 # A resonant shelf is almost never a request: past Q ~1 the RBJ
@@ -82,6 +116,120 @@ def _mag_db_vec(btype, f0, gain, q, freqs):
     z1, z2 = np.exp(-1j * w), np.exp(-2j * w)
     h = (b0 + b1 * z1 + b2 * z2) / (a0 + a1 * z1 + a2 * z2)
     return 20 * np.log10(np.maximum(np.abs(h), 1e-12))
+
+
+_LN10 = float(np.log(10.0))
+
+
+def _biquad_grads(btype, f0, gain, q):
+    """eq.biquad's exact coefficient formulas, un-normalized, plus
+    their partials wrt (log10 f0, gain_db, q). |H|^2 = N(b)/D(a)
+    is invariant to the a0 division eq.biquad performs, so the
+    un-normalized triples see the same magnitude; the solver's
+    boxes keep f and q away from the clamps eq.biquad guards for
+    foreign callers. Returns (b, a, db, da): b/a as 3-tuples,
+    db/da as {0: d/dlf, 1: d/dg, 2: d/dq} of 3-tuples. None for
+    types the fit never places (HP/LP)."""
+    A = 10.0 ** (gain / 40.0)
+    Ag = A * _LN10 / 40.0
+    w0 = 2.0 * np.pi * f0 / FS
+    cw, sw = np.cos(w0), np.sin(w0)
+    wl = w0 * _LN10                  # dw0/dlf
+    cwl, swl = -sw * wl, cw * wl     # dcw/dlf, dsw/dlf
+    al = sw / (2.0 * q)
+    al_lf = swl / (2.0 * q)
+    al_q = -al / q
+    if btype == "PK":
+        b = (1.0 + al * A, -2.0 * cw, 1.0 - al * A)
+        a = (1.0 + al / A, -2.0 * cw, 1.0 - al / A)
+        db = {0: (A * al_lf, -2.0 * cwl, -A * al_lf),
+              1: (al * Ag, 0.0, -al * Ag),
+              2: (A * al_q, 0.0, -A * al_q)}
+        da = {0: (al_lf / A, -2.0 * cwl, -al_lf / A),
+              1: (-al * Ag / (A * A), 0.0, al * Ag / (A * A)),
+              2: (al_q / A, 0.0, -al_q / A)}
+        return b, a, db, da
+    if btype not in ("LSC", "HSC"):
+        return None
+    rA = np.sqrt(A)
+    s = 2.0 * rA * al
+    s_lf = 2.0 * rA * al_lf
+    s_g = s * Ag / (2.0 * A)         # d(2*sqrt(A)*al)/dA * Ag
+    s_q = -s / q
+    if btype == "LSC":
+        b = (A * ((A + 1) - (A - 1) * cw + s),
+             2 * A * ((A - 1) - (A + 1) * cw),
+             A * ((A + 1) - (A - 1) * cw - s))
+        a = ((A + 1) + (A - 1) * cw + s,
+             -2 * ((A - 1) + (A + 1) * cw),
+             (A + 1) + (A - 1) * cw - s)
+        db = {0: (A * (-(A - 1) * cwl + s_lf),
+                  -2 * A * (A + 1) * cwl,
+                  A * (-(A - 1) * cwl - s_lf)),
+              1: (Ag * b[0] / A + A * (Ag * (1 - cw) + s_g),
+                  Ag * b[1] / A + 2 * A * Ag * (1 - cw),
+                  Ag * b[2] / A + A * (Ag * (1 - cw) - s_g)),
+              2: (-A * s / q, 0.0, A * s / q)}
+        da = {0: ((A - 1) * cwl + s_lf,
+                  -2 * (A + 1) * cwl,
+                  (A - 1) * cwl - s_lf),
+              1: (Ag * (1 + cw) + s_g,
+                  -2 * Ag * (1 + cw),
+                  Ag * (1 + cw) - s_g),
+              2: (s_q, 0.0, -s_q)}
+        return b, a, db, da
+    b = (A * ((A + 1) + (A - 1) * cw + s),
+         -2 * A * ((A - 1) + (A + 1) * cw),
+         A * ((A + 1) + (A - 1) * cw - s))
+    a = ((A + 1) - (A - 1) * cw + s,
+         2 * ((A - 1) - (A + 1) * cw),
+         (A + 1) - (A - 1) * cw - s)
+    db = {0: (A * ((A - 1) * cwl + s_lf),
+              -2 * A * (A + 1) * cwl,
+              A * ((A - 1) * cwl - s_lf)),
+          1: (Ag * b[0] / A + A * (Ag * (1 + cw) + s_g),
+              Ag * b[1] / A - 2 * A * Ag * (1 + cw),
+              Ag * b[2] / A + A * (Ag * (1 + cw) - s_g)),
+          2: (-A * s / q, 0.0, A * s / q)}
+    da = {0: (-(A - 1) * cwl + s_lf,
+              -2 * (A + 1) * cwl,
+              -(A - 1) * cwl - s_lf),
+          1: (Ag * (1 - cw) + s_g,
+              2 * Ag * (1 - cw),
+              Ag * (1 - cw) - s_g),
+          2: (s_q, 0.0, -s_q)}
+    return b, a, db, da
+
+
+def _mag_grad_vec(btype, f0, gain, q, cosw, cos2w):
+    """d(magnitude dB)/d(log10 f0, gain_db, q) of one biquad over a
+    grid, from _biquad_grads via the cosine form
+    N = b0^2+b1^2+b2^2 + 2(b0 b1 + b1 b2) cos w + 2 b0 b2 cos 2w,
+    dM = (10/ln10) (dN/N - dD/D). None when the type has no grads
+    (the numeric fallback then judges)."""
+    got = _biquad_grads(btype, f0, gain, q)
+    if got is None:
+        return None
+    b, a, db, da = got
+
+    def _nd(c):
+        return (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]
+                + 2.0 * (c[0] * c[1] + c[1] * c[2]) * cosw
+                + 2.0 * c[0] * c[2] * cos2w)
+
+    def _dnd(c, d):
+        return (2.0 * (c[0] * d[0] + c[1] * d[1] + c[2] * d[2])
+                + 2.0 * (d[0] * c[1] + c[0] * d[1]
+                         + d[1] * c[2] + c[1] * d[2]) * cosw
+                + 2.0 * (d[0] * c[2] + c[0] * d[2]) * cos2w)
+
+    n = np.maximum(_nd(b), 1e-24)
+    d = np.maximum(_nd(a), 1e-24)
+    k = 10.0 / _LN10
+    out = np.empty((3, len(cosw)))
+    for t in range(3):
+        out[t] = k * (_dnd(b, db[t]) / n - _dnd(a, da[t]) / d)
+    return out
 
 
 def _response(bands, freqs):
@@ -156,8 +304,33 @@ def _refine(bands, fg, desired, flo, fhi, max_boost, span_oct=None,
               for i in range(len(types))]
         return _response(bl, fg) - desired
 
-    sol = least_squares(resfun, x0, bounds=(lo, hi), method="trf",
-                        max_nfev=3000)
+    jac = "2-point"
+    if all(t in ("PK", "LSC", "HSC") for t in types):
+        # calculus, not finite differences: the 2-point Jacobian
+        # costs (3n+1) full responses per trf iteration -- at 14
+        # bands that is a 43x multiplier and the reason big
+        # solves died against max_nfev instead of converging.
+        # The response is a SUM of band magnitudes, so each band
+        # owns its own three columns, closed-form from
+        # _biquad_grads; one jac costs about two responses.
+        w_g = 2.0 * np.pi * np.asarray(fg, float) / FS
+        cosw, cos2w = np.cos(w_g), np.cos(2.0 * w_g)
+
+        def jacfun(x):
+            if tick is not None:
+                tick()
+            J = np.empty((len(cosw), len(x)))
+            for i in range(len(types)):
+                g3 = _mag_grad_vec(types[i], 10 ** x[3 * i],
+                                   x[3 * i + 1], x[3 * i + 2],
+                                   cosw, cos2w)
+                J[:, 3 * i:3 * i + 3] = g3.T
+            return J
+
+        jac = jacfun
+
+    sol = least_squares(resfun, x0, jac=jac, bounds=(lo, hi),
+                        method="trf", max_nfev=3000)
     return [(types[i], float(10 ** sol.x[3 * i]),
              float(np.clip(sol.x[3 * i + 1],
                            lo[3 * i + 1], hi[3 * i + 1])),
@@ -287,7 +460,11 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
     def tick():
         prog["fev"] += 1
         prog["tot"] += 1
-        if progress is not None and prog["tot"] % 20 == 0:
+        if progress is not None:
+            # calculus starved the heartbeat: a converged small
+            # fit makes tens of ticks where the numeric-jacobian
+            # era made thousands, so every tick now pulses --
+            # ticks are rare enough that the gate outlived itself
             inner = prog["fev"] / (prog["fev"] + 350.0)
             progress(min((prog["band"] + inner) / horizon,
                          0.999),
@@ -367,6 +544,16 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                 park_hi[i0:i1] = True
             else:
                 park_lo[i0:i1] = True
+        bands, gone = _merge_twins(bands, g_lo, g_hi)
+        if gone:
+            # a merge changes the balance its neighbours leaned
+            # on -- one more converged pass settles the survivors
+            for j in gone:
+                anchors.pop(j)
+            bands = _refine(bands, fg, target, flo, fhi,
+                            max_boost, span_oct=GREEDY_SPAN_OCT,
+                            anchors=anchors, limits=limits,
+                            tick=tick)
         prog["band"] = len(bands)
         prog["fev"] = 0
     bands = _prune(bands, fg, target, flo, fhi, max_boost,
