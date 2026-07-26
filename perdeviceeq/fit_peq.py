@@ -52,8 +52,9 @@ def _merge_twins(bands, g_lo, g_hi):
     One seat is one knob: gains merge (clipped into the sign\'s
     box, so a boost pair pays the cap\'s price visibly), the
     stronger twin keeps the seat. Returns (bands, dropped
-    indices) so callers can keep anchor lists true."""
-    dropped = []
+    indices, survivors as (freq, gain)) so callers can keep
+    anchor lists true and retire the merged seats."""
+    dropped, seats = [], []
     i = 0
     while i < len(bands):
         j = i + 1
@@ -70,10 +71,11 @@ def _merge_twins(bands, g_lo, g_hi):
                     bands[i] = (ti, fi, g, qi)
                 bands.pop(j)
                 dropped.append(j)
+                seats.append((bands[i][1], bands[i][2]))
             else:
                 j += 1
         i += 1
-    return bands, dropped
+    return bands, dropped, seats
 GRID = 400
 GREEDY_SPAN_OCT = 1.0
 # A resonant shelf is almost never a request: past Q ~1 the RBJ
@@ -486,7 +488,17 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
     bands, anchors = [], []
     park_hi = np.zeros(len(fg), bool)    # boosts refused here
     park_lo = np.zeros(len(fg), bool)    # cuts refused here
-    for _ in range(n_bands):
+    # seats, not iterations: a twins merge (and a double-parked
+    # drop) frees a seat, and the loop must keep placing until
+    # the budget is truly SPENT or nothing pickable remains --
+    # three merges on the field's re-measured 24 dB canvas left
+    # three seats empty against +2.5 dB of live hunger. The hard
+    # cap guards termination; the masks make it unreachable in
+    # practice (every park and every merged crown retires
+    # territory from the argmax).
+    iters = 0
+    while len(bands) < n_bands and iters < 3 * n_bands:
+        iters += 1
         resid = target - _response(bands, fg)
         score = np.abs(resid)
         # the cap is a NET law: a point has said all the cap
@@ -557,7 +569,7 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                 park_hi[i0:i1] = True
             else:
                 park_lo[i0:i1] = True
-        bands, gone = _merge_twins(bands, g_lo, g_hi)
+        bands, gone, seats = _merge_twins(bands, g_lo, g_hi)
         if gone:
             # a merge changes the balance its neighbours leaned
             # on -- one more converged pass settles the survivors
@@ -567,6 +579,20 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                             max_boost, span_oct=GREEDY_SPAN_OCT,
                             anchors=anchors, limits=limits,
                             tick=tick)
+            # the freed seat goes back to the budget, so the
+            # merged crown must retire from the argmax for its
+            # sign, exactly like a double-parked anchor -- or the
+            # pair re-forms there forever: place, converge, merge,
+            # re-pick. The survivor said all one band may say.
+            for fb, gb in seats:
+                i0 = int(np.searchsorted(
+                    fg, fb * 2.0 ** (-2 * DEDUP_OCT)))
+                i1 = int(np.searchsorted(
+                    fg, fb * 2.0 ** (2 * DEDUP_OCT)))
+                if gb > 0.0:
+                    park_hi[i0:i1] = True
+                else:
+                    park_lo[i0:i1] = True
         prog["band"] = len(bands)
         prog["fev"] = 0
     bands = _prune(bands, fg, target, flo, fhi, max_boost,
