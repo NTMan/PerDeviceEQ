@@ -409,3 +409,62 @@ def test_analytic_jacobian_matches_numeric():
             assert err < 3e-4 * scale, (btype, f0, g, q, t,
                                         err, scale)
     assert worst < 3e-4
+
+
+def test_polish_gradient_matches_numeric():
+    """The deep polish's assembled gradient (centered softmax
+    over _mag_grad_vec columns plus the net penalty) must agree
+    with central differences of its own objective."""
+    rng = np.random.default_rng(3)
+    f = np.logspace(np.log10(40), np.log10(18000), 90)
+    w = 2 * np.pi * f / fit_peq.FS
+    cosw, cos2w = np.cos(w), np.cos(2 * w)
+    types = ["PK", "LSC", "PK", "HSC"]
+    x = np.array([np.log10(90), -7.0, 2.0,
+                  np.log10(60), 5.0, 0.7,
+                  np.log10(900), 4.0, 6.0,
+                  np.log10(9000), -3.0, 0.8])
+    target = rng.normal(0, 3, len(f))
+    _v, g = fit_peq._polish_obj(x, types, f, target, 6.0,
+                                cosw, cos2w)
+    h = 1e-6
+    num = np.zeros_like(x)
+    for i in range(len(x)):
+        xp = x.copy()
+        xp[i] += h
+        xm = x.copy()
+        xm[i] -= h
+        vp, _ = fit_peq._polish_obj(xp, types, f, target, 6.0,
+                                    cosw, cos2w)
+        vm, _ = fit_peq._polish_obj(xm, types, f, target, 6.0,
+                                    cosw, cos2w)
+        num[i] = (vp - vm) / (2 * h)
+    err = float(np.max(np.abs(num - g) / (1 + np.abs(num))))
+    assert err < 3e-4, err
+
+
+def test_polish_never_worsens_and_is_seeded():
+    """The final polish must beat the incumbent on the true
+    level-free metric or leave it untouched -- and be seeded:
+    one canvas, one answer."""
+    rng = np.random.default_rng(11)
+    f = np.logspace(np.log10(40), np.log10(16000), 160)
+    lf = np.log10(f)
+    target = (5.0 * np.sin(6.0 * lf)
+              + rng.normal(0, 0.4, len(f)))
+    target = np.minimum(target, 6.0)
+    bands = [("PK", 80.0, 3.0, 1.2), ("PK", 300.0, -4.0, 2.0),
+             ("PK", 1200.0, 3.5, 1.0), ("PK", 5000.0, -3.0, 1.5)]
+
+    def cmax(bl):
+        e = target - np.asarray(fit_peq._response(bl, f), float)
+        e = e - e.mean()
+        return float(np.max(np.abs(e)))
+
+    m0 = cmax(bands)
+    out1 = fit_peq._polish(list(bands), f, target, 40.0, 16000.0,
+                           6.0)
+    out2 = fit_peq._polish(list(bands), f, target, 40.0, 16000.0,
+                           6.0)
+    assert cmax(out1) <= m0 + 1e-9
+    assert out1 == out2

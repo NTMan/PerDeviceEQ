@@ -34,7 +34,7 @@ import math
 import sys
 
 import numpy as np
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, minimize
 
 from . import eq
 from .config import FS, SCHEMA_VERSION
@@ -232,6 +232,146 @@ def _mag_grad_vec(btype, f0, gain, q, cosw, cos2w):
     out = np.empty((3, len(cosw)))
     for t in range(3):
         out[t] = k * (_dnd(b, db[t]) / n - _dnd(a, da[t]) / d)
+    return out
+
+
+POLISH_HOPS = 12            # basin hops in the deep polish
+POLISH_LOCAL_ITERS = 60     # L-BFGS budget per hop
+POLISH_STEP = 0.25          # hop perturbation, every coordinate
+POLISH_T = 0.4              # Metropolis temperature on the walk
+POLISH_BETA = 6.0           # log-sum-exp sharpness toward the max
+POLISH_NET_MARGIN = 0.15    # net penalty engages this far below
+#                             the tolerated cap+0.25
+POLISH_SEED = 7             # fixed: one canvas, one answer
+
+
+def _polish_obj(x, types, fg, target, cap, cosw, cos2w):
+    """(value, gradient) of the deep-polish objective: the
+    smoothed level-free max the device strip judges by --
+    the error's mean is removed (it rides in the preamp), the
+    max of |centered error| is softened by log-sum-exp so
+    L-BFGS has a slope to follow -- plus a smooth penalty that
+    keeps the net response under the cap's tolerance. The
+    gradient is calculus: each band's three columns come from
+    _mag_grad_vec, centering subtracts the column means,
+    softmax weights pick the working points."""
+    n = len(types)
+    r = np.zeros(len(fg))
+    J = np.empty((len(fg), 3 * n))
+    for i in range(n):
+        f0, g0, q0 = 10.0 ** x[3 * i], x[3 * i + 1], x[3 * i + 2]
+        r += _mag_db_vec(types[i], f0, g0, q0, fg)
+        J[:, 3 * i:3 * i + 3] = _mag_grad_vec(
+            types[i], f0, g0, q0, cosw, cos2w).T
+    e = target - r
+    ec = e - e.mean()
+    a = np.abs(ec)
+    m = float(a.max())
+    w = np.exp(POLISH_BETA * (a - m))
+    val = m + float(np.log(w.mean())) / POLISH_BETA
+    w /= w.sum()
+    Jc = J - J.mean(axis=0)
+    grad = -(w * np.sign(ec)) @ Jc
+    over = np.maximum(r - (cap + POLISH_NET_MARGIN), 0.0)
+    if over.any():
+        val += 8.0 * float(np.sum(over ** 2))
+        grad += 16.0 * (over @ J)
+    return val, grad
+
+
+def _polish(bands, fg, target, flo, fhi, max_boost, limits=None,
+            tick=None):
+    """The deep polish: seeded basin hopping over the WHOLE
+    chain with the analytic gradient, the final step of every
+    fit. The greedy is sequential and cannot see comb-shaped
+    optima (three pinned pickets with cuts woven between beat
+    its best by half a decibel on a field canvas); the hopper
+    can, and lands on the target's own drift floor. Guarantees:
+    seeded (one canvas, one answer), and NEVER worse -- the
+    result must beat the incumbent on the true metric while
+    keeping every law (net under cap+0.25, no twins in a seat)
+    or the incumbent stays."""
+    if len(bands) < 2:
+        return bands
+    if any(b[0] not in ("PK", "LSC", "HSC") for b in bands):
+        return bands
+    types = [b[0] for b in bands]
+    g_lo, g_hi, q_lo, q_hi = _bounds(max_boost, limits)
+    x0, lo, hi = [], [], []
+    for t, f, g, q in bands:
+        qh = q_hi if t == "PK" else min(q_hi, SHELF_Q_MAX)
+        x0.append(np.log10(f))
+        lo.append(np.log10(flo))
+        hi.append(np.log10(fhi))
+        x0.append(g)
+        lo.append(g_lo if g < 0.0 else 0.0)
+        hi.append(0.0 if g < 0.0 else g_hi)
+        x0.append(min(max(q, q_lo), qh))
+        lo.append(q_lo)
+        hi.append(qh)
+    x0 = np.clip(np.array(x0), np.array(lo) + 1e-9,
+                 np.array(hi) - 1e-9)
+    lo = np.array(lo)
+    hi = np.array(hi)
+    w_g = 2.0 * np.pi * np.asarray(fg, float) / FS
+    cosw, cos2w = np.cos(w_g), np.cos(2.0 * w_g)
+
+    def chain(x):
+        return [(types[i], 10.0 ** x[3 * i], x[3 * i + 1],
+                 x[3 * i + 2]) for i in range(len(types))]
+
+    def true_metric(x):
+        e = target - _response(chain(x), fg)
+        e = e - e.mean()
+        return float(np.max(np.abs(e)))
+
+    def is_legal(x):
+        r = np.asarray(_response(chain(x), fg), float)
+        if float(r.max()) > max_boost + 0.25:
+            return False
+        for i in range(len(types)):
+            for j in range(i + 1, len(types)):
+                if (types[i] == types[j]
+                        and x[3 * i + 1] * x[3 * j + 1] > 0.0
+                        and abs(x[3 * i] - x[3 * j])
+                        < DEDUP_OCT * np.log10(2.0)):
+                    return False
+        return True
+
+    def fun(x):
+        if tick is not None:
+            tick()
+        return _polish_obj(x, types, fg, target, max_boost,
+                           cosw, cos2w)
+
+    incumbent = true_metric(x0)
+    best_m, best_x = incumbent, None
+    rng = np.random.default_rng(POLISH_SEED)
+    xw = x0.copy()
+    fw = None
+    for _ in range(POLISH_HOPS):
+        sol = minimize(fun, xw, jac=True, method="L-BFGS-B",
+                       bounds=list(zip(lo, hi)),
+                       options={"maxiter": POLISH_LOCAL_ITERS})
+        if (sol.fun < (fw if fw is not None else np.inf)
+                or rng.random() < np.exp(
+                    -(sol.fun - fw) / POLISH_T)):
+            xw, fw = sol.x, sol.fun
+        mv = true_metric(sol.x)
+        if mv < best_m and is_legal(sol.x):
+            best_m, best_x = mv, sol.x.copy()
+        step = rng.uniform(-POLISH_STEP, POLISH_STEP, len(xw))
+        xw = np.clip(xw + step, lo + 1e-9, hi - 1e-9)
+    if best_x is None:
+        return bands
+    out = [(types[i], float(10.0 ** best_x[3 * i]),
+            float(best_x[3 * i + 1]), float(best_x[3 * i + 2]))
+           for i in range(len(types))]
+    out, _gone, _seats = _merge_twins(out, g_lo, g_hi)
+    e = target - _response(out, fg)
+    e = e - np.mean(e)
+    if float(np.max(np.abs(e))) > incumbent:
+        return bands
     return out
 
 
@@ -597,6 +737,8 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
         prog["fev"] = 0
     bands = _prune(bands, fg, target, flo, fhi, max_boost,
                    limits=limits, tick=tick)
+    bands = _polish(bands, fg, target, flo, fhi, max_boost,
+                    limits=limits, tick=tick)
     if progress is not None:
         progress(1.0, prog["band"], horizon, prog["tot"])
     return bands, desired - _response(bands, fg)   # vs TRUE target
