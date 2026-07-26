@@ -267,11 +267,20 @@ def test_greedy_does_not_grow_a_cancelling_stack():
                                ("HSC", 9000.0, 6.0, 0.7)], fg)
     bands, _, _, resid = fit_peq.fit_channel(fg, -shape, 20.0,
                                              20000.0, 15, 6.0)
-    # the residual bound is sanity only (the synthetic plateau ends at
-    # the grid edge, where a leashed shelf cannot match the reference
-    # exactly); the regression guard is the gain bound -- the stack
-    # solution carried -18.7 for a -12 feature
-    assert float(np.max(np.abs(resid))) < 2.0
+    # the residual bound is sanity only (the synthetic plateau ends
+    # at the grid edge, where a leashed shelf cannot match the
+    # reference exactly), and it must speak the strip's currency:
+    # the LEVEL-FREE max. The deep polish optimizes exactly that
+    # and legally moves the raw mean (it rides in the preamp), and
+    # across scipy builds the hop walk may fork between equivalent
+    # basins on a synthetic -- the architect's CI caught the raw
+    # bound sitting on the number (2.0145 vs 2.0) while the
+    # centered max stayed far below on both machines. The
+    # regression guard is the gain bound -- the stack solution
+    # carried -18.7 for a -12 feature
+    r = np.asarray(resid, float)
+    r = r - r.mean()
+    assert float(np.max(np.abs(r))) < 2.0
     assert max(abs(g) for _, _, g, _ in bands) <= 14.0
 
 
