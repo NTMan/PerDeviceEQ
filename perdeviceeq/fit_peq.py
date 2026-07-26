@@ -85,6 +85,7 @@ SHELF_Q_MAX = 1.0       # a band may retune this far from placement
 PRUNE_EPS_DB = 0.25         # pruning may cost at most this much, anywhere
 PRUNE_OVERLAP_DB = 0.25     # a drop frees only bands it reaches this far
 PRUNE_SPAN_OCT = 0.5        # a trial may retune a freed band this far
+PRUNE_SEATS = 6             # absorption window seat ceiling
 # The boost cap is a NET law: a grid point has said all the cap
 # allows only when the chain's net response there has reached the
 # cap, and only then does it stop taking boost placements. Cuts
@@ -375,11 +376,23 @@ def _prune(bands, fg, target, flo, fhi, max_boost,
         for i in range(len(bands)):
             dresp = _mag_db_vec(*bands[i], fg)
             rest = bands[:i] + bands[i + 1:]
-            free, frozen = [], []
-            for b in rest:
+            # the absorption window wears the greedy's seat
+            # ceiling: a 0.25 dB reach recruits nearly the whole
+            # chain inside a low-end fence and the trial balloons
+            # into 40-parameter solves. The strongest reaches
+            # absorb, the rest stay frozen; a weak absorber that
+            # actually mattered fails the pointwise court below
+            # and the drop is refused -- the conservative side.
+            scored = []
+            for j, b in enumerate(rest):
                 k = int(np.argmin(np.abs(fg - b[1])))
-                (free if abs(dresp[k]) >= PRUNE_OVERLAP_DB
-                 else frozen).append(b)
+                scored.append((abs(dresp[k]), j))
+            scored.sort(reverse=True)
+            take = {j for r, j in scored[:PRUNE_SEATS]
+                    if r >= PRUNE_OVERLAP_DB}
+            free = [rest[j] for j in sorted(take)]
+            frozen = [rest[j] for j in range(len(rest))
+                      if j not in take]
             if free:
                 base = _response(frozen, fg)
                 trial = frozen + _refine(free, fg, target - base,
