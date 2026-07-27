@@ -41,16 +41,27 @@ preamp, not in the bands. On the graph the gold dash is drawn
 at the prediction's own level for the same reason -- its SHAPE
 is the law, its height follows the prediction it judges.
 
-### The fit number
+### The two numbers
 
-The number in the device strip ("fit 0.53 dB") is the largest
+The device strip carries two numbers. **fit** is the largest
 distance between predicted and target after that level
-alignment. It answers one question: how well did the solver
-reach the target the law allows it? A profile can carry
-"fit 0.53" and an eight-decibel dip on the same graph without
-contradiction -- the dip lives in the target too. Flatness
-against the straight line is a different, second truth, and
-the graph shows it directly.
+alignment: how well the solver reached the target the law
+allows it. **flat** is the same distance measured against the
+STRAIGHT line, unpayable debt included: how far the corrected
+result stands from the wish. A profile can carry "fit 0.53"
+and "flat 7.3" on the same strip without contradiction, and
+without the first number reading like a finish line drawn
+right after the start.
+
+The honest analogy is weight classes, not finish lines: fit
+says whether the declared class weight was lifted cleanly,
+flat is the absolute record, and the cap -- the class -- is
+printed on the scoreboard (it is a per-profile parameter, in
+the gold curve and in this document, movable only by the
+owner's hand). Claiming a record without naming the class
+would be cheating; naming both numbers is the cure. When flat
+equals fit, the strip shows only fit -- there is no second
+story to tell.
 
 ### For the audiophile
 

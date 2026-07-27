@@ -508,6 +508,19 @@ class EqWindow(Adw.ApplicationWindow):
                 worst = (rv if cache.get("fit_resid") is None
                          else max(cache["fit_resid"], rv))
                 cache["fit_resid"] = worst
+                # the second truth: distance to the STRAIGHT
+                # line, unpayable debt included -- so the low
+                # fit number cannot read as a finish line drawn
+                # right after the start. Two numbers, two
+                # questions: fit grades the solver against the
+                # lawful target, flat grades the RESULT against
+                # the wish.
+                fv = export_peq.chain_fit_residual(
+                    list(fgd), list(des), bl,
+                    cap=float("inf"))
+                fworst = (fv if cache.get("flat_resid") is None
+                          else max(cache["flat_resid"], fv))
+                cache["flat_resid"] = fworst
         if lo_all is not None:
             cache["ylo"], cache["yhi"] = lo_all - 3.0, hi_all + 3.0
         self._canvas = cache
@@ -528,6 +541,9 @@ class EqWindow(Adw.ApplicationWindow):
             fr = cache.get("fit_resid")
             if fr is not None:
                 txt += " · fit %.2f dB" % fr
+                fl2 = cache.get("flat_resid")
+                if fl2 is not None and fl2 > fr + 0.05:
+                    txt += " · flat %.1f dB" % fl2
             if not p.get("floor_off"):
                 fl = eq.floor_hz_effective(p)
                 if fl is not None:
@@ -542,6 +558,10 @@ class EqWindow(Adw.ApplicationWindow):
         if cache.get("fit_resid") is not None:
             tips.append("fit: the worst channel's tracking error"
                         " vs the capped desired correction")
+        if cache.get("flat_resid") is not None:
+            tips.append("flat: distance to the straight line,"
+                        " unpayable debt included -- judge the"
+                        " solver by fit, the transducer by flat")
         self.device_hdr.set_tooltip_text("\n".join(tips) or None)
         chips = [t for t, on in (("stale", stale),
                                  ("incomplete", incomplete),
