@@ -63,6 +63,16 @@ would be cheating; naming both numbers is the cure. When flat
 equals fit, the strip shows only fit -- there is no second
 story to tell.
 
+Both flat and the drawn gold target live inside the PLAYED
+band: the trust zone clipped by engaged protection. Below an
+engaged floor and above an engaged ceiling the system
+deliberately reproduces nothing -- sealed stages cut there to
+keep a small transducer alive -- and a band we chose to mute
+has no flatness to grade. This is not the target bending
+again: the floor is a visible playback decision with its own
+button, handles and drawn slope, not a fit convenience. The
+fit itself is still judged over the whole trust zone.
+
 ### For the audiophile
 
 The straight line is the wish. Gold is the wish minus

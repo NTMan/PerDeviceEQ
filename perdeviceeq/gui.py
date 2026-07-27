@@ -387,6 +387,25 @@ class EqWindow(Adw.ApplicationWindow):
             self.view.set_curves(f, meas, spread, band)
             self.view.set_target(self._lawful_target(f, meas))
 
+    def _played_band(self, p, lo, hi):
+        """The contract's frequency span: the trust zone clipped
+        by ENGAGED protection. Below an engaged floor and above
+        an engaged ceiling the system deliberately reproduces
+        nothing -- a band we chose to mute has no flatness to
+        grade and no target to draw. The gates: floor when not
+        floor_off, ceiling when it stands under the engage
+        threshold. The fit itself still spends over the whole
+        zone; this clips only the contract's map and the flat
+        number."""
+        if not p.get("floor_off"):
+            fl = eq.floor_hz_effective(p)
+            if fl is not None:
+                lo = max(lo, float(fl))
+        cl = eq.ceil_hz_effective(p)
+        if cl is not None and cl < eq.CEIL_ENGAGE_HZ:
+            hi = min(hi, float(cl))
+        return lo, hi
+
     def _lawful_target(self, f, meas):
         """The curve the solver is LAWFULLY aiming at, in the
         measured plane: the trust zone's mean level wherever the
@@ -407,7 +426,7 @@ class EqWindow(Adw.ApplicationWindow):
             cap = float(params.get("max_boost", 6.0))
         except (TypeError, ValueError):
             cap = 6.0
-        lo, hi = zone
+        lo, hi = self._played_band(p, *zone)
         sel = [i for i, fq in enumerate(f) if lo <= fq <= hi]
         if len(sel) < 8:
             return None
@@ -515,8 +534,12 @@ class EqWindow(Adw.ApplicationWindow):
                 # questions: fit grades the solver against the
                 # lawful target, flat grades the RESULT against
                 # the wish.
+                plo, phi = self._played_band(p, nlo, nhi)
+                ps = [i for i, fq in enumerate(fgd)
+                      if plo <= fq <= phi]
                 fv = export_peq.chain_fit_residual(
-                    list(fgd), list(des), bl,
+                    [fgd[i] for i in ps],
+                    [des[i] for i in ps], bl,
                     cap=float("inf"))
                 fworst = (fv if cache.get("flat_resid") is None
                           else max(cache["flat_resid"], fv))
@@ -559,9 +582,11 @@ class EqWindow(Adw.ApplicationWindow):
             tips.append("fit: the worst channel's tracking error"
                         " vs the capped desired correction")
         if cache.get("flat_resid") is not None:
-            tips.append("flat: distance to the straight line,"
-                        " unpayable debt included -- judge the"
-                        " solver by fit, the transducer by flat")
+            tips.append("flat: distance to the straight line"
+                        " inside the played band (an engaged"
+                        " floor or ceiling clips it), unpayable"
+                        " debt included -- judge the solver by"
+                        " fit, the transducer by flat")
         self.device_hdr.set_tooltip_text("\n".join(tips) or None)
         chips = [t for t, on in (("stale", stale),
                                  ("incomplete", incomplete),
