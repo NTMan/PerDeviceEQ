@@ -81,6 +81,7 @@ class PeqView(Gtk.Box):
         self._bands = []
         self._floor = []  # sealed stages: drawn, never listed
         self._zone = None  # trust edges: drawn always
+        self._tgt = None   # lawful target: the gain law's silhouette
         self._curves = None         # (freqs, measured, spread, band)
         self._plot = None
         self._drag_band = None
@@ -263,6 +264,16 @@ class PeqView(Gtk.Box):
         self._zone = zone
         self.queue_draw()
 
+    def set_target(self, tgt):
+        """The curve the solver LAWFULLY aims at, aligned to
+        set_curves' grid; None entries mark points outside the
+        trust zone. Drawn as a dashed gold line at predicted's
+        own level -- the metric is level-free (the constant
+        rides in the preamp), so the target's SHAPE is the law
+        and its height follows the prediction it judges."""
+        self._tgt = tgt
+        self.queue_draw()
+
     def set_floor(self, band_dicts):
         """Sealed floor stages: the curve and the prediction
         wear them, the table never does -- their handle lives
@@ -432,6 +443,25 @@ class PeqView(Gtk.Box):
             cr.stroke()
             resp = eq.response_db(self._preamp,
                                   self._bands + self._floor, fo)
+            tgt = self._tgt
+            if tgt is not None and len(tgt) == len(fo):
+                sel = [i for i, t in enumerate(tgt)
+                       if t is not None]
+                if len(sel) > 8:
+                    shift = (sum(meas[i] + resp[i] for i in sel)
+                             - sum(tgt[i] for i in sel)) / len(sel)
+                    cr.set_source_rgba(0.95, 0.85, 0.40, 0.55)
+                    cr.set_line_width(1.0)
+                    cr.set_dash([5, 3], 0)
+                    first = True
+                    for i in sel:
+                        x = x_of(fo[i])
+                        y = y_of(tgt[i] + shift)
+                        cr.move_to(x, y) if first \
+                            else cr.line_to(x, y)
+                        first = False
+                    cr.stroke()
+                    cr.set_dash([], 0)
             cr.set_source_rgba(0.45, 0.95, 0.55, 0.90)
             cr.set_line_width(1.5)
             for i, f in enumerate(fo):
@@ -454,10 +484,13 @@ class PeqView(Gtk.Box):
             cr.select_font_face("Sans", 0, 0)
             cr.set_font_size(9)
             lx, ly = ml + 10, mt + 14
-            for lab, rgba in (
-                    ("measured", (0.85, 0.85, 0.90, 0.9)),
-                    ("predicted", (0.45, 0.95, 0.55, 0.9)),
-                    ("EQ", (0.30, 0.78, 1.0, 0.9))):
+            labels = [
+                ("measured", (0.85, 0.85, 0.90, 0.9)),
+                ("predicted", (0.45, 0.95, 0.55, 0.9)),
+                ("EQ", (0.30, 0.78, 1.0, 0.9))]
+            if self._tgt is not None:
+                labels.append(("target", (0.95, 0.85, 0.40, 0.9)))
+            for lab, rgba in labels:
                 cr.set_source_rgba(*rgba)
                 cr.set_line_width(2.0)
                 cr.move_to(lx, ly - 3)

@@ -381,9 +381,42 @@ class EqWindow(Adw.ApplicationWindow):
         ov = self._overlay_curve()
         if ov is None:
             self.view.set_curves(None, None)
+            self.view.set_target(None)
         else:
             f, meas, spread, band = ov
             self.view.set_curves(f, meas, spread, band)
+            self.view.set_target(self._lawful_target(f, meas))
+
+    def _lawful_target(self, f, meas):
+        """The curve the solver is LAWFULLY aiming at, in the
+        measured plane: the trust zone's mean level wherever the
+        sag under it is within the boost cap, and measured+cap
+        over deeper sags -- the gain law's silhouette. Without
+        it the graph implies the solver owes what the cap
+        forbids (the architect read an in-zone dip as an unmet
+        lawful target; the zone border answers WHERE the law
+        applies, this curve answers HOW MUCH it allows). None
+        entries mark points outside the zone; None result when
+        the profile has no fit to testify."""
+        p = self.store.get(self.current_pid) or {}
+        zone = eq.fit_zone(p)
+        if zone is None or f is None or len(f) == 0:
+            return None
+        params = (p.get("fit") or {}).get("params") or {}
+        try:
+            cap = float(params.get("max_boost", 6.0))
+        except (TypeError, ValueError):
+            cap = 6.0
+        lo, hi = zone
+        sel = [i for i, fq in enumerate(f) if lo <= fq <= hi]
+        if len(sel) < 8:
+            return None
+        line = sum(float(meas[i]) for i in sel) / len(sel)
+        tgt = [None] * len(f)
+        for i in sel:
+            m = float(meas[i])
+            tgt[i] = line if line - m <= cap else m + cap
+        return tgt
 
     def _on_view_changed(self, bands, final):
         """The editor reports an edit of the shown slot: land it in
