@@ -141,6 +141,24 @@ def floor_hz_effective(p):
     return zone_floor_hz(p)
 
 
+def fit_zone(p):
+    """Both edges of the measured trust zone from the stored
+    fit (params fallback), UNGATED: the graph draws the honesty
+    border everywhere, even where the floor organ sleeps -- the
+    30 Hz gate belongs to speaker protection, not to telling
+    the truth about where the measurement ends. None when the
+    profile has no fit to testify."""
+    fit = (p or {}).get("fit") or {}
+    zone = fit.get("zone") or {}
+    params = fit.get("params") or {}
+    try:
+        lo = float(zone.get("lo", params.get("f_lo")))
+        hi = float(zone.get("hi", params.get("f_hi")))
+    except (TypeError, ValueError):
+        return None
+    return (lo, hi)
+
+
 def floor_bands(p):
     """The sealed floor stages for a profile dict, or []. Band
     dicts (type HP at the effective floor) that the graph

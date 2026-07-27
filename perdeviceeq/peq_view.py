@@ -80,6 +80,7 @@ class PeqView(Gtk.Box):
         self._preamp = float(preamp)
         self._bands = []
         self._floor = []  # sealed stages: drawn, never listed
+        self._zone = None  # trust edges: drawn always
         self._curves = None         # (freqs, measured, spread, band)
         self._plot = None
         self._drag_band = None
@@ -252,6 +253,16 @@ class PeqView(Gtk.Box):
             self._protect_cb(lo, hi, True)
         self._protect_drag = None
 
+    def set_zone(self, zone):
+        """The measured trust zone's BOTH edges, drawn always:
+        a light shade beyond them and a dashed line on each.
+        The graph tells where the measurement's honesty ends
+        even when the floor organ sleeps -- the architect asked
+        why an 18.4 kHz border he computed was nowhere to be
+        seen."""
+        self._zone = zone
+        self.queue_draw()
+
     def set_floor(self, band_dicts):
         """Sealed floor stages: the curve and the prediction
         wear them, the table never does -- their handle lives
@@ -376,6 +387,26 @@ class PeqView(Gtk.Box):
             cr.move_to(ml, y); cr.line_to(ml + pw_, y); cr.stroke()
             cr.set_source_rgba(1, 1, 1, 0.45)
             cr.move_to(4, y + 3); cr.show_text("%+d" % db)
+
+        if self._zone is not None:
+            zlo, zhi = self._zone
+            for f0, left in ((zlo, True), (zhi, False)):
+                if not (FMIN < f0 < FMAX):
+                    continue
+                x = x_of(f0)
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
+                if left:
+                    cr.rectangle(ml, mt, max(0.0, x - ml), ph)
+                else:
+                    cr.rectangle(x, mt, max(0.0, ml + pw_ - x),
+                                 ph)
+                cr.fill()
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.55)
+                cr.set_dash([3, 3], 0)
+                cr.move_to(x, mt)
+                cr.line_to(x, mt + ph)
+                cr.stroke()
+                cr.set_dash([], 0)
 
         if self._curves is not None:
             fo, meas, spread, band = self._curves[:4]

@@ -1359,6 +1359,8 @@ class EqWindow(Adw.ApplicationWindow):
             self.view.set_bands([b.to_dict() for b in self.bands])
             self.view.set_floor(eq.floor_bands(
                 self.store.get(self.current_pid)))
+            self.view.set_zone(eq.fit_zone(
+                self.store.get(self.current_pid)))
             self.view.set_preamp(self.preamp)
             self._sync_view_curves()
             self._update_headroom()
