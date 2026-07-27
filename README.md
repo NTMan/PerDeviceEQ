@@ -19,6 +19,10 @@ Projects like REW, AutoEq and EasyEffects inspired this one with the results
 they achieve; I wanted the same correctness with more comfort, so the whole
 loop — measure, fit, apply, keep — lives in one app.
 
+How the fit thinks — the gold target it lawfully aims at, why that target
+is not a straight line, and the full mathematics of the solver — lives in
+[SOLVER.md](SOLVER.md).
+
 ### What per-device-eq gives you
 
 - **Built-in measurement.** Sweep generation, capture, per-capsule mic
