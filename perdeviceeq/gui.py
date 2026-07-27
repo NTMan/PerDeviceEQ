@@ -61,6 +61,21 @@ def _ui_path():
         "GUI design not found; looked in:\n  " + "\n  ".join(UI_FILE_CANDIDATES))
 
 
+
+def _resid_addr(fgd, des, bl, cap):
+    """The frequency where a residual number lives: argmax of
+    the centered capped error -- so the strip's records carry
+    addresses and never play hide and seek across channels or
+    needle-thin room nulls again."""
+    import numpy as _np
+    f = _np.asarray(list(fgd), float)
+    d = _np.minimum(_np.asarray(list(des), float), cap)
+    bands = [eq.Band.from_dict(b) for b in bl]
+    r = _np.asarray(eq.response_db(0.0, bands, list(f)), float)
+    e = d - r
+    e = e - e.mean()
+    return float(f[int(_np.argmax(_np.abs(e)))])
+
 def _fmt_hz(f):
     """20, 512.5, 8.1k -- the plaque's band endpoints."""
     if f >= 1000:
@@ -524,9 +539,13 @@ class EqWindow(Adw.ApplicationWindow):
                 rv = export_peq.chain_fit_residual(
                     list(fgd), list(des), bl,
                     cap=float(params.get("max_boost", 6.0)))
-                worst = (rv if cache.get("fit_resid") is None
-                         else max(cache["fit_resid"], rv))
-                cache["fit_resid"] = worst
+                if (cache.get("fit_resid") is None
+                        or rv > cache["fit_resid"]):
+                    cache["fit_resid"] = rv
+                    cache["fit_addr"] = (_resid_addr(
+                        fgd, des, bl,
+                        float(params.get("max_boost", 6.0))),
+                        key)
                 # the second truth: distance to the STRAIGHT
                 # line, unpayable debt included -- so the low
                 # fit number cannot read as a finish line drawn
@@ -541,9 +560,13 @@ class EqWindow(Adw.ApplicationWindow):
                     [fgd[i] for i in ps],
                     [des[i] for i in ps], bl,
                     cap=float("inf"))
-                fworst = (fv if cache.get("flat_resid") is None
-                          else max(cache["flat_resid"], fv))
-                cache["flat_resid"] = fworst
+                if (cache.get("flat_resid") is None
+                        or fv > cache["flat_resid"]):
+                    cache["flat_resid"] = fv
+                    cache["flat_addr"] = (_resid_addr(
+                        [fgd[i] for i in ps],
+                        [des[i] for i in ps], bl,
+                        float("inf")), key)
         if lo_all is not None:
             cache["ylo"], cache["yhi"] = lo_all - 3.0, hi_all + 3.0
         self._canvas = cache
@@ -579,14 +602,20 @@ class EqWindow(Adw.ApplicationWindow):
         self.trust_label.set_text(txt)
         tips = list((rep or {}).get("reasons") or [])
         if cache.get("fit_resid") is not None:
+            addr = cache.get("fit_addr")
+            at = (" -- worst at %s Hz (%s)"
+                  % (_fmt_hz(addr[0]), addr[1])) if addr else ""
             tips.append("fit: the worst channel's tracking error"
-                        " vs the capped desired correction")
+                        " vs the capped desired correction" + at)
         if cache.get("flat_resid") is not None:
+            addr = cache.get("flat_addr")
+            at = (" -- worst at %s Hz (%s)"
+                  % (_fmt_hz(addr[0]), addr[1])) if addr else ""
             tips.append("flat: distance to the straight line"
                         " inside the played band (an engaged"
                         " floor or ceiling clips it), unpayable"
                         " debt included -- judge the solver by"
-                        " fit, the transducer by flat")
+                        " fit, the transducer by flat" + at)
         self.device_hdr.set_tooltip_text("\n".join(tips) or None)
         chips = [t for t, on in (("stale", stale),
                                  ("incomplete", incomplete),
