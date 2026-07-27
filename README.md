@@ -21,7 +21,9 @@ loop — measure, fit, apply, keep — lives in one app.
 
 How the fit thinks — the gold target it lawfully aims at, why that target
 is not a straight line, and the full mathematics of the solver — lives in
-[SOLVER.md](SOLVER.md).
+[SOLVER.md](SOLVER.md). What a measurement must earn before the fit will
+trust it — the score, the controlled band, and why a single sweep earns
+nothing — lives in [TRUST.md](TRUST.md).
 
 ### What per-device-eq gives you
 
