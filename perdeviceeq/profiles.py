@@ -50,6 +50,17 @@ def playback_sha256(p):
     shape and it clears."""
     body = {k: p.get(k) for k in PLAYBACK_KEYS}
     body["preamp"] = 0.0
+    ck = body.get("ch_keys")
+    if isinstance(ck, list):
+        # channel-list ORDER is presentation, not playback:
+        # every channel gets its own chain and the seating
+        # order changes no audible bit. A measurement can mint
+        # the fit with FR first while the editor always seats
+        # FL first, so hashing the order made `edited` stick
+        # forever after the first editor save -- the
+        # architect's field bisector (his own post-undo
+        # profile) convicted exactly this key.
+        body["ch_keys"] = sorted(ck)
     # protection is staging, like preamp, not fit editing:
     # pinned out of the hash so riding the floor or the
     # ceiling never reads as editing the fit, and every

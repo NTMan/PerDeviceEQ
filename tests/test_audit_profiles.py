@@ -112,3 +112,24 @@ def test_demo_output_is_stable(fixtures_dir, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "recommended preamp: -7.5 dB" in out
     assert "profile:" not in out          # --demo header stays terse
+
+
+def test_playback_hash_is_blind_to_channel_seating():
+    """The channel-list order is presentation, not playback: a
+    fit minted over an FR-first body and an editor save that
+    seats FL first must hash IDENTICALLY, or the derived
+    `edited` flag sticks forever after the first touch -- the
+    architect's field profile convicted exactly this."""
+    from perdeviceeq import profiles as P
+    body = {"apply_all": False, "preamp": -3.0,
+            "ch_keys": ["FR", "FL"], "all": {"bands": []},
+            "channels": {"FL": {"bands": [
+                {"type": "PK", "freq": 100.0, "gain": 2.0,
+                 "q": 1.0, "enabled": True}]},
+                "FR": {"bands": []}}}
+    ref = P.playback_sha256(body)
+    reseated = dict(body, ch_keys=["FL", "FR"])
+    assert P.playback_sha256(reseated) == ref
+    edited = dict(body, ch_keys=["FL", "FR"])
+    edited["channels"] = {"FL": {"bands": []}, "FR": {"bands": []}}
+    assert P.playback_sha256(edited) != ref
