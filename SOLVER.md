@@ -89,6 +89,50 @@ rather than anything an ear receives. Serious correctors all
 cap their boosts; this one draws the consequence instead of
 hiding it.
 
+### Why the gold is not straight, in one sentence
+
+The solver heals what sticks out completely, and digs into
+dips exactly `max_boost` deep -- the oldest manual-EQ advice
+("cut the peaks, don't boost the dips") given a number
+instead of a prohibition.
+
+The physics behind the folklore is two-part. Humps are
+almost always minimum-phase resonances: an equalizer cancels
+them cleanly and for free, so cuts are unbounded. Deep dips
+in a ROOM are usually interference nulls -- a direct and a
+reflected wave meeting in antiphase -- and boosting into a
+null feeds the cancellation itself: at the microphone the
+dip barely moves, while everywhere else in the room, and in
+the preamp's ledger, a large boost appears. Device dips CAN
+be minimum-phase (a driver's roll-off, a TWS valley, a seal
+leak), and those do respond to boost -- which is why the cap
+is six rather than zero: six decibels buy the healable share
+of the dips without betting the whole headroom on nulls.
+
+### How to earn a straight gold
+
+The gold straightens when no dip inside the played band
+exceeds the cap. There are exactly three honest roads.
+
+Move what can move. An interference null lives in geometry:
+centimetres of speaker or listener position shift the null
+off the measurement point, which is a cure no equalizer can
+buy. On in-ears, reseat the tips -- a low-mid sag is often
+the seal's signature, not the driver's.
+
+Pay for it. `max_boost` is a per-profile parameter: raising
+it to cover the deepest sag straightens the gold at a listed
+price -- every point where the correction rides above the
+old cap raises the net response, and the preamp takes the
+same decibels back from the ENTIRE track, while the driver
+works hardest exactly where it was weakest. Sometimes worth
+it; the strip's two numbers will say.
+
+Or accept. A sag in the gold is the solver declining a bad
+trade on your behalf, in the open. The straight line is
+earned by the setup, bought with headroom, or honestly
+declined -- it is never faked by the scoreboard.
+
 ### The floor strip is a different organ
 
 Speaker protection (the Floor button and the handle strip) is
