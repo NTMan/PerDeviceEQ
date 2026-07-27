@@ -82,6 +82,9 @@ class PeqView(Gtk.Box):
         self._floor = []  # sealed stages: drawn, never listed
         self._zone = None  # trust edges: drawn always
         self._tgt = None   # lawful target: the gain law's silhouette
+        self._pin = set()         # click-pinned curve names
+        self._hover = None        # legend name under pointer
+        self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
         self._plot = None
         self._drag_band = None
@@ -100,6 +103,10 @@ class PeqView(Gtk.Box):
         drag.connect("drag-update", self._on_drag_update)
         drag.connect("drag-end", self._on_drag_end)
         self.graph.add_controller(drag)
+        mo = Gtk.EventControllerMotion()
+        mo.connect("motion", self._on_motion)
+        mo.connect("leave", self._on_hover_leave)
+        self.graph.add_controller(mo)
         rclick = Gtk.GestureClick()
         rclick.set_button(3)
         rclick.connect("pressed", self._on_right_click)
@@ -262,7 +269,7 @@ class PeqView(Gtk.Box):
         why an 18.4 kHz border he computed was nowhere to be
         seen."""
         self._zone = zone
-        self.queue_draw()
+        self.graph.queue_draw()
 
     def set_target(self, tgt):
         """The curve the solver LAWFULLY aims at, aligned to
@@ -272,7 +279,56 @@ class PeqView(Gtk.Box):
         rides in the preamp), so the target's SHAPE is the law
         and its height follows the prediction it judges."""
         self._tgt = tgt
-        self.queue_draw()
+        self.graph.queue_draw()
+
+    def _lit(self):
+        """The set of highlighted curve names: click-pinned
+        names plus the one under the pointer."""
+        lit = set(self._pin)
+        if self._hover:
+            lit.add(self._hover)
+        return lit
+
+    def _dress(self, name, r, g, b, a, w):
+        """Highlight dressing: lit curves brighten and thicken,
+        the rest step back to a readable shadow (0.35x, not
+        darkness -- divergence is a comparison and the
+        neighbours must stay legible). Nothing lit = the house
+        dress unchanged."""
+        lit = self._lit()
+        if lit:
+            if name in lit:
+                a, w = min(1.0, a + 0.25), w + 1.0
+            else:
+                a, w = a * 0.35, max(0.8, w - 0.4)
+        return r, g, b, a, w
+
+    def _legend_at(self, x, y):
+        for x0, y0, x1, y1, lab in self._legend_hits:
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return lab
+        return None
+
+    def _on_motion(self, _c, x, y):
+        """REW-style: hovering a legend name lights its curve,
+        leaving releases it; the pointer cursor over the legend
+        says the names are live. A click pins the highlight --
+        either road leads to the same light. The repaint goes
+        to the CANVAS: a GTK4 DrawingArea re-renders only when
+        queued itself, and the field photo proved it -- the
+        cursor flipped while the curves stood frozen."""
+        hit = self._legend_at(x, y)
+        if hit != self._hover:
+            self._hover = hit
+            self.graph.set_cursor_from_name(
+                "pointer" if hit else None)
+            self.graph.queue_draw()
+
+    def _on_hover_leave(self, *_a):
+        if self._hover:
+            self._hover = None
+            self.graph.set_cursor_from_name(None)
+            self.graph.queue_draw()
 
     def set_floor(self, band_dicts):
         """Sealed floor stages: the curve and the prediction
@@ -425,7 +481,10 @@ class PeqView(Gtk.Box):
             cr.rectangle(ml, mt, pw_, ph)
             cr.clip()
             if spread is not None:
-                cr.set_source_rgba(0.55, 0.65, 0.85, 0.14)
+                lit = self._lit()
+                sa = (0.14 if not lit or "measured" in lit
+                      else 0.05)
+                cr.set_source_rgba(0.55, 0.65, 0.85, sa)
                 for i, f in enumerate(fo):
                     x = x_of(f)
                     y = y_of(meas[i] + spread[i])
@@ -435,8 +494,10 @@ class PeqView(Gtk.Box):
                                y_of(meas[i] - spread[i]))
                 cr.close_path()
                 cr.fill()
-            cr.set_source_rgba(0.85, 0.85, 0.90, 0.55)
-            cr.set_line_width(1.2)
+            mr, mg, mb, ma, mw = self._dress(
+                "measured", 0.85, 0.85, 0.90, 0.55, 1.2)
+            cr.set_source_rgba(mr, mg, mb, ma)
+            cr.set_line_width(mw)
             for i, f in enumerate(fo):
                 x, y = x_of(f), y_of(meas[i])
                 cr.move_to(x, y) if i == 0 else cr.line_to(x, y)
@@ -450,8 +511,10 @@ class PeqView(Gtk.Box):
                 if len(sel) > 8:
                     shift = (sum(meas[i] + resp[i] for i in sel)
                              - sum(tgt[i] for i in sel)) / len(sel)
-                    cr.set_source_rgba(0.95, 0.85, 0.40, 0.55)
-                    cr.set_line_width(1.0)
+                    tr, tg, tb, ta, tw = self._dress(
+                        "target", 0.95, 0.85, 0.40, 0.55, 1.0)
+                    cr.set_source_rgba(tr, tg, tb, ta)
+                    cr.set_line_width(tw)
                     cr.set_dash([5, 3], 0)
                     first = True
                     for i in sel:
@@ -462,8 +525,10 @@ class PeqView(Gtk.Box):
                         first = False
                     cr.stroke()
                     cr.set_dash([], 0)
-            cr.set_source_rgba(0.45, 0.95, 0.55, 0.90)
-            cr.set_line_width(1.5)
+            pr, pg, pb, pa, pw2 = self._dress(
+                "predicted", 0.45, 0.95, 0.55, 0.90, 1.5)
+            cr.set_source_rgba(pr, pg, pb, pa)
+            cr.set_line_width(pw2)
             for i, f in enumerate(fo):
                 x, y = x_of(f), y_of(meas[i] + resp[i])
                 cr.move_to(x, y) if i == 0 else cr.line_to(x, y)
@@ -490,23 +555,37 @@ class PeqView(Gtk.Box):
                 ("EQ", (0.30, 0.78, 1.0, 0.9))]
             if self._tgt is not None:
                 labels.append(("target", (0.95, 0.85, 0.40, 0.9)))
+            self._legend_hits = []
+            lit = self._lit()
             for lab, rgba in labels:
-                cr.set_source_rgba(*rgba)
+                r0, g0, b0, a0 = rgba
+                if lit and lab not in lit:
+                    a0 *= 0.35
+                cr.set_source_rgba(r0, g0, b0, a0)
                 cr.set_line_width(2.0)
                 cr.move_to(lx, ly - 3)
                 cr.line_to(lx + 14, ly - 3)
                 cr.stroke()
                 cr.move_to(lx + 18, ly)
                 cr.show_text(lab)
-                lx += 18 + cr.text_extents(lab).width + 14
+                tw2 = cr.text_extents(lab).width
+                self._legend_hits.append(
+                    (lx - 4, ly - 14, lx + 18 + tw2 + 4,
+                     ly + 8, lab))
+                lx += 18 + tw2 + 14
             cr.restore()
 
         freqs = _log_freqs(int(max(60, pw_)))
         curve = eq.response_db(self._preamp,
                                 self._bands + self._floor, freqs)
-        cr.set_source_rgb(0.30, 0.78, 1.0) if self._active \
-            else cr.set_source_rgba(0.6, 0.6, 0.6, 0.7)
-        cr.set_line_width(2.0)
+        if self._active:
+            er, eg, eb, ea, ew = self._dress(
+                "EQ", 0.30, 0.78, 1.0, 1.0, 2.0)
+        else:
+            er, eg, eb, ea, ew = self._dress(
+                "EQ", 0.6, 0.6, 0.6, 0.7, 2.0)
+        cr.set_source_rgba(er, eg, eb, ea)
+        cr.set_line_width(ew)
         for i, f in enumerate(freqs):
             db = max(wlo, min(whi, curve[i]))
             px, py = x_of(f), y_of(db)
@@ -535,6 +614,16 @@ class PeqView(Gtk.Box):
     # ---- graph interaction ---------------------------------------------
     def _on_drag_begin(self, gesture, sx, sy):
         self._drag_band = None
+        lab = self._legend_at(sx, sy)
+        if lab is not None:
+            # a click on the legend pins the highlight -- and
+            # never gives birth to a band under the names
+            if lab in self._pin:
+                self._pin.discard(lab)
+            else:
+                self._pin.add(lab)
+            self.graph.queue_draw()
+            return
         if not self._plot:
             return
         b = self._hit_band(sx, sy)

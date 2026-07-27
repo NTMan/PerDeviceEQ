@@ -603,19 +603,14 @@ class EqWindow(Adw.ApplicationWindow):
         tips = list((rep or {}).get("reasons") or [])
         if cache.get("fit_resid") is not None:
             addr = cache.get("fit_addr")
-            at = (" -- worst at %s Hz (%s)"
-                  % (_fmt_hz(addr[0]), addr[1])) if addr else ""
-            tips.append("fit: the worst channel's tracking error"
-                        " vs the capped desired correction" + at)
+            if addr:
+                tips.append("fit: worst at %s Hz (%s)"
+                            % (_fmt_hz(addr[0]), addr[1]))
         if cache.get("flat_resid") is not None:
             addr = cache.get("flat_addr")
-            at = (" -- worst at %s Hz (%s)"
-                  % (_fmt_hz(addr[0]), addr[1])) if addr else ""
-            tips.append("flat: distance to the straight line"
-                        " inside the played band (an engaged"
-                        " floor or ceiling clips it), unpayable"
-                        " debt included -- judge the solver by"
-                        " fit, the transducer by flat" + at)
+            if addr:
+                tips.append("flat (played band): worst at %s Hz"
+                            " (%s)" % (_fmt_hz(addr[0]), addr[1]))
         self.device_hdr.set_tooltip_text("\n".join(tips) or None)
         chips = [t for t, on in (("stale", stale),
                                  ("incomplete", incomplete),
