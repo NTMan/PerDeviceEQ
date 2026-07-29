@@ -141,6 +141,21 @@ def test_clean_loop_snr_is_sane(sweep):
     assert result["takes"]["snr_min_db"] > mc.SNR_WARN_DB
 
 
+def test_dc_and_drift_are_not_noise(sweep):
+    """A capture parked off zero must not read as a noisy one.
+
+    613 LSB of DC is -34.6 dBFS; counted broadband it swamps a floor
+    that sits below -80 dBFS in the measured band.
+    """
+    bands = DEMO_PROFILE["channels"]["FL"]
+    rec = synth_recording(sweep, bands, seed=10)
+    clean = mc.process_takes([rec], sweep)["takes"]["snr_min_db"]
+    t = np.arange(len(rec)) / FS
+    stained = rec + 613 / 32768 + 3e-3 * np.sin(2 * np.pi * 1.5 * t)
+    got = mc.process_takes([stained], sweep)["takes"]["snr_min_db"]
+    assert got == pytest.approx(clean, abs=1.0)
+
+
 # --- mic calibration ------------------------------------------------------
 
 def test_mic_cal_parse_and_apply(sweep, tmp_path):

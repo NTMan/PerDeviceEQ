@@ -48,6 +48,7 @@ SWEEP_LEVEL_DBFS = -6.0       # fixed digital sweep level, by protocol
 DEFAULT_F_START = 20.0
 DEFAULT_F_END = 20000.0
 SNR_WARN_DB = 40.0
+SNR_HP_HZ = 20.0              # level stats ignore below the grid floor
 JITTER_WARN_MS = 2.0          # ROADMAP Task 3 BT sanity threshold
 BT_JITTER_WARNING = "wireless link unstable, HF may be unreliable"
 SCHEMA = "pde-measurement"
@@ -235,22 +236,47 @@ def apply_mic_cal(freqs, mag_db, cal_freq, cal_db):
 
 # --- SNR ---------------------------------------------------------------------
 
+def band_rms(seg, fs, hp_hz=SNR_HP_HZ):
+    """RMS of `seg` with DC and sub-`hp_hz` drift taken out first.
+
+    A capture chain can park a long way off zero: a C-Media dongle here
+    sits ~613 LSB high, which is -34.6 dBFS of pure DC, and a sealed
+    coupler adds slow pressure wander on top of it. A broadband RMS
+    counts both as noise and understates SNR by tens of dB -- the same
+    rig reads -34.6 dBFS raw and -82 dBFS above 20 Hz. Neither term
+    lives in a band the grid covers, so high-passing at the grid floor
+    leaves the measured band untouched.
+    """
+    seg = np.asarray(seg, dtype=float)
+    if seg.size == 0:
+        return 0.0
+    seg = seg - float(seg.mean())
+    nyq = 0.5 * fs
+    if 0.0 < hp_hz < nyq:
+        sos = sg.butter(2, hp_hz / nyq, btype="highpass", output="sos")
+        if seg.size > 3 * (2 * sos.shape[0] + 1):
+            seg = sg.sosfiltfilt(sos, seg)
+    return math.sqrt(float(np.mean(seg ** 2)))
+
+
 def estimate_snr(recording, peak_index, sweep, guard_ms=50.0,
                  min_noise_ms=100.0):
     """Noise floor from the pre-sweep silence vs in-sweep signal RMS.
 
     `peak_index` (linear-IR position from `extract_linear_ir`) doubles as the
-    sweep onset in the recording. Returns (snr_db, signal_dbfs, noise_dbfs);
-    all None when the recording has no usable pre-roll.
+    sweep onset in the recording. Both windows go through `band_rms`, so
+    the numbers describe the measured band and not the capture chain's
+    DC. Returns (snr_db, signal_dbfs, noise_dbfs); all None when the
+    recording has no usable pre-roll.
     """
     rec = np.asarray(recording, dtype=float)
     fs = sweep.fs
     n_noise = peak_index - int(guard_ms * fs / 1000)
     if n_noise < int(min_noise_ms * fs / 1000):
         return None, None, None
-    noise = math.sqrt(float(np.mean(rec[:n_noise] ** 2)))
+    noise = band_rms(rec[:n_noise], fs)
     s1 = min(len(rec), peak_index + sweep.n_samples)
-    sig = math.sqrt(float(np.mean(rec[peak_index:s1] ** 2)))
+    sig = band_rms(rec[peak_index:s1], fs)
     sig_db = 20 * math.log10(sig) if sig > 0 else float("-inf")
     noise_db = 20 * math.log10(noise) if noise > 0 else float("-inf")
     snr = sig_db - noise_db
