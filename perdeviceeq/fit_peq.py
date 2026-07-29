@@ -235,7 +235,7 @@ def _mag_grad_vec(btype, f0, gain, q, cosw, cos2w):
     return out
 
 
-POLISH_HOPS = 12            # basin hops in the deep polish
+POLISH_HOPS = 24            # basin hops in the deep polish
 POLISH_LOCAL_ITERS = 60     # L-BFGS budget per hop
 POLISH_STEP = 0.25          # hop perturbation, every coordinate
 POLISH_T = 0.4              # Metropolis temperature on the walk
@@ -344,24 +344,115 @@ def _polish(bands, fg, target, flo, fhi, max_boost, limits=None,
         return _polish_obj(x, types, fg, target, max_boost,
                            cosw, cos2w)
 
+    pk_idx = [i for i, t in enumerate(types) if t == "PK"]
+
+    def reseat(x):
+        # the cruder kick: teleport the weakest PK to the
+        # extreme of the residual matching its sign box --
+        # on the field canvas it and the catalyst found
+        # different basins, so the walk alternates them.
+        if not pk_idx:
+            return None
+        r = target - np.asarray(
+            _response(chain(x), fg), float)
+        j = min(pk_idx, key=lambda i: abs(x[3 * i + 1]))
+        pos = hi[3 * j + 1] > 0.0
+        k = int(np.argmax(r)) if pos else int(np.argmin(r))
+        if (r[k] if pos else -r[k]) < 0.5:
+            return None
+        y = x.copy()
+        y[3 * j] = np.clip(np.log10(fg[k]), lo[3 * j] + 1e-9,
+                           hi[3 * j] - 1e-9)
+        y[3 * j + 1] = np.clip(r[k], lo[3 * j + 1] + 1e-9,
+                               hi[3 * j + 1] - 1e-9)
+        y[3 * j + 2] = np.clip(3.0, lo[3 * j + 2],
+                               hi[3 * j + 2])
+        return y
+
+    def catalyst(x):
+        # the treadmill's accidental gift, formalized: its
+        # winning perturbation was never a jiggle but a whole
+        # band reborn at the hungriest point -- the chain
+        # passed through n+1 dimensions and came out in basin
+        # families a fixed-dimension walk cannot reach (0.46
+        # dB of level-free max on the field FL canvas). Every
+        # third hop adds a temporary band at the extreme of
+        # the current residual, converges the extended chain,
+        # drops the weakest gain to restore the seat count,
+        # and hands the walk that start. Deterministic, and
+        # the never-worse keeper judges the outcome as any
+        # other hop.
+        r = target - np.asarray(_response(chain(x), fg),
+                                float)
+        k = int(np.argmax(np.abs(r)))
+        if abs(r[k]) < 0.5:
+            return None
+        gng = float(np.clip(r[k], g_lo, g_hi))
+        te = types + ["PK"]
+        xe = np.concatenate([x, [np.log10(fg[k]), gng,
+                                 3.0]])
+        loe = np.concatenate([lo, [np.log10(flo),
+                                   g_lo if gng < 0 else 0.0,
+                                   q_lo]])
+        hie = np.concatenate([hi, [np.log10(fhi),
+                                   0.0 if gng < 0 else g_hi,
+                                   q_hi]])
+        xe = np.clip(xe, loe + 1e-9, hie - 1e-9)
+
+        def fune(z):
+            if tick is not None:
+                tick()
+            return _polish_obj(z, te, fg, target, max_boost,
+                               cosw, cos2w)
+        sol = minimize(fune, xe, jac=True, method="L-BFGS-B",
+                       bounds=list(zip(loe, hie)),
+                       options={"maxiter":
+                                POLISH_LOCAL_ITERS})
+        z = sol.x
+        drop = min(range(len(te)),
+                   key=lambda i: abs(z[3 * i + 1]))
+        keep = [i for i in range(len(te)) if i != drop]
+        if [te[i] for i in keep] != types:
+            return None          # a shelf fell: keep types
+        y = np.concatenate([z[3 * i: 3 * i + 3]
+                            for i in keep])
+        return np.clip(y, lo + 1e-9, hi - 1e-9)
+
     incumbent = true_metric(x0)
     best_m, best_x = incumbent, None
     rng = np.random.default_rng(POLISH_SEED)
+    # the walker comes HOME: canonical basin hopping perturbs
+    # from the last ACCEPTED state. The old loop left the
+    # walker standing wherever the last perturbation put it,
+    # so rejections never rewound and the steps accumulated
+    # into pure diffusion -- on a field canvas the objective
+    # ran 1.4 -> 17.2 across eleven hops while only hop zero
+    # ever paid. Now a rejected proposal returns the walker
+    # to the accepted basin before the next jump.
+    xacc = x0.copy()
+    facc = None
     xw = x0.copy()
-    fw = None
-    for _ in range(POLISH_HOPS):
+    for h in range(POLISH_HOPS):
         sol = minimize(fun, xw, jac=True, method="L-BFGS-B",
                        bounds=list(zip(lo, hi)),
                        options={"maxiter": POLISH_LOCAL_ITERS})
-        if (sol.fun < (fw if fw is not None else np.inf)
+        if (facc is None or sol.fun < facc
                 or rng.random() < np.exp(
-                    -(sol.fun - fw) / POLISH_T)):
-            xw, fw = sol.x, sol.fun
+                    -(sol.fun - facc) / POLISH_T)):
+            xacc, facc = sol.x.copy(), sol.fun
         mv = true_metric(sol.x)
         if mv < best_m and is_legal(sol.x):
             best_m, best_x = mv, sol.x.copy()
-        step = rng.uniform(-POLISH_STEP, POLISH_STEP, len(xw))
-        xw = np.clip(xw + step, lo + 1e-9, hi - 1e-9)
+        moved = None
+        if h % 3 == 2:
+            kick = reseat if (h // 3) % 2 == 0 else catalyst
+            moved = kick(xacc)
+        if moved is not None:
+            xw = moved
+        else:
+            step = rng.uniform(-POLISH_STEP, POLISH_STEP,
+                               len(xacc))
+            xw = np.clip(xacc + step, lo + 1e-9, hi - 1e-9)
     if best_x is None:
         return bands
     out = [(types[i], float(10.0 ** best_x[3 * i]),
