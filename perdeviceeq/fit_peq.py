@@ -77,6 +77,15 @@ def _merge_twins(bands, g_lo, g_hi):
         i += 1
     return bands, dropped, seats
 GRID = 400
+SOLVER_VERSION = 2
+# The solver's passport, folded into every fit fingerprint.
+# BUMP THIS IN ANY COMMIT THAT CHANGES FIT BEHAVIOUR: the Auto
+# button treats a stored fit from another version as another
+# solver's work -- stale by definition, refit on one press --
+# instead of forcing the architect to poke a random band to
+# break the equalizer. 2 = the rail law + the walker with two
+# kicks.
+
 GREEDY_SPAN_OCT = 1.0
 # A resonant shelf is almost never a request: past Q ~1 the RBJ
 # shelves grow an overshoot horn, and unleashed the optimizer was

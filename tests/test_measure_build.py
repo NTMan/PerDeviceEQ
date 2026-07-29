@@ -296,3 +296,21 @@ def test_cal_groups_shapes_the_manage_dialog():
         (None, None, 1, ["Umik"]),
         ("bb", "R.txt", 1, ["Umik"])]
     assert measure_build.cal_groups({}) == []
+
+
+def test_the_solver_version_stales_old_fits(monkeypatch):
+    """The architect's decree: changing the solver must make
+    every automatically fitted result belong to ANOTHER
+    solver -- stale to the Auto button on one press, no
+    random-band poking to break the equalizer. The version is
+    folded into the fingerprint, so a bump changes it."""
+    from perdeviceeq import fit_peq
+    m = {"grid": {"f_lo": 20.0, "f_hi": 20000.0, "ppo": 48},
+         "takes": [{"id": "t1", "mag_db_uncal": [0.0, 1.0],
+                    "cal_sha": "abc"}]}
+    params = {"bands": 12, "f_lo": 35.0, "f_hi": 20000.0}
+    a = measure_build.fit_fingerprint(m, ["t1"], params)
+    monkeypatch.setattr(fit_peq, "SOLVER_VERSION",
+                        fit_peq.SOLVER_VERSION + 1)
+    b = measure_build.fit_fingerprint(m, ["t1"], params)
+    assert a != b

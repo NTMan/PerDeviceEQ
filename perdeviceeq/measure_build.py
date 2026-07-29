@@ -100,8 +100,10 @@ def fit_fingerprint(measurement, take_ids, params):
     cal = {t["id"]: t.get("cal_sha")
            for t in measurement.get("takes", [])
            if t["id"] in wanted}
+    from . import fit_peq
     blob = json.dumps({"grid": measurement.get("grid"), "cal": cal,
-                       "takes": takes, "params": params},
+                       "takes": takes, "params": params,
+                       "solver": fit_peq.SOLVER_VERSION},
                       sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
