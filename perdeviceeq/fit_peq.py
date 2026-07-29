@@ -725,10 +725,22 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
             # pair re-forms there forever: place, converge, merge,
             # re-pick. The survivor said all one band may say.
             for fb, gb in seats:
+                # a crown AT THE RAIL cannot absorb another
+                # decibel, yet any anchor within the refine's
+                # leash can slide into its arms and merge --
+                # the field's place-slide-merge treadmill
+                # burned ten seats at 948 Hz feeding a +6.00
+                # crown at 860. The rail is what makes the
+                # re-formation futile, so at the rail the
+                # crown retires its whole REACH for its sign;
+                # a moderate crown keeps the narrow halo.
+                halo = (GREEDY_SPAN_OCT
+                        if abs(gb) >= g_hi - SAT_EPS_DB
+                        else 2 * DEDUP_OCT)
                 i0 = int(np.searchsorted(
-                    fg, fb * 2.0 ** (-2 * DEDUP_OCT)))
+                    fg, fb * 2.0 ** -halo))
                 i1 = int(np.searchsorted(
-                    fg, fb * 2.0 ** (2 * DEDUP_OCT)))
+                    fg, fb * 2.0 ** halo))
                 if gb > 0.0:
                     park_hi[i0:i1] = True
                 else:

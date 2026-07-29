@@ -477,3 +477,38 @@ def test_polish_never_worsens_and_is_seeded():
                            6.0)
     assert cmax(out1) <= m0 + 1e-9
     assert out1 == out2
+
+
+def test_a_rail_crown_retires_its_reach(monkeypatch):
+    """The place-slide-merge treadmill: an anchor outside the
+    old merge halo slides one leash-length into a crown
+    already at the rail, merges, frees the seat, and the
+    argmax picks the same spot again -- ten seats burned on
+    the field's first honest-SNR canvas. A crown AT THE RAIL
+    now retires its whole reach for its sign, so the merge
+    fires at most twice and the counter climbs monotonically."""
+    fg = np.exp(np.linspace(np.log(35.0), np.log(20000.0),
+                            500))
+    desired = np.zeros_like(fg)
+    plateau = (fg > 700) & (fg < 1050)
+    desired[plateau] = 9.0            # cap is 6: rail hunger
+    shoulder = (fg > 1050) & (fg < 1500)
+    desired[shoulder] = 3.0
+    desired[(fg > 120) & (fg < 180)] = -8.0
+    desired[(fg > 3000) & (fg < 4200)] = -5.0
+    merges = {"n": 0}
+    real = fit_peq._merge_twins
+
+    def counting(bands, g_lo, g_hi):
+        out = real(bands, g_lo, g_hi)
+        if out[1]:
+            merges["n"] += 1
+        return out
+    monkeypatch.setattr(fit_peq, "_merge_twins", counting)
+    bands, resid = fit_peq.fit_to_desired(
+        fg, desired, 35.0, 20000.0, 12, 6.0)
+    assert merges["n"] <= 2, merges
+    assert len(bands) >= 6
+    target = np.minimum(desired, 6.0)
+    rr = target - (desired - resid)
+    assert float(np.sqrt(np.mean(rr ** 2))) < 1.2
