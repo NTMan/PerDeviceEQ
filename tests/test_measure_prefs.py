@@ -164,3 +164,22 @@ def test_mic_memory_survives_a_card_profile_switch(paths):
     # and bluez keys fall back across their trailing instance too
     m2.remember("bluez_output.F4_9D.1", mic_profile="ears")
     assert mp.MeasureMemory().mic_for("bluez_output.F4_9D.2") == "ears"
+
+
+def test_the_level_caption_and_the_hand_that_wins(tmp_path):
+    """The pre-session hand edit persists: MeasureMemory
+    keeps the volume under sink+source, so the next build
+    starts from the hand, not from a hunt."""
+    import perdeviceeq.measure_prefs as _mp
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(_mp, "MEASURE_STATE_FILE",
+                        str(tmp_path / "m.json"),
+                        raising=False)
+    try:
+        mem = _mp.MeasureMemory()
+        mem.remember("sinkA", source="umik24", volume=0.42)
+        assert abs(mem.volume_for("sinkA", "umik24")
+                   - 0.42) < 1e-9
+        assert mem.volume_for("sinkA", "other") is None
+    finally:
+        monkeypatch.undo()

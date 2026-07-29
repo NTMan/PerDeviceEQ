@@ -1103,8 +1103,6 @@ class MeasureSession:
         # on the next sweep), "auto" (auto-level locked it), "manual"
         # (the user set or accepted it) -- the wizard shows this, so
         # the number in the spin is never a mystery
-        self.level_source = ("pending" if cfg.auto_level
-                             else "remembered")
         self._auto_state = {"enabled": bool(cfg.auto_level),
                             "adjustments": 0, "initial": None,
                             "final": None, "in_window": None}
@@ -1207,7 +1205,6 @@ class MeasureSession:
     def set_level(self, cubic):
         """Manual override of the measurement level (the wizard's editable
         %); freezes auto-level so the chosen level sticks for the sweep."""
-        self.level_source = "manual"
         self._v_cur = max(0.0, min(1.0, float(cubic)))
         self._leveled = True
 
@@ -1417,7 +1414,6 @@ class MeasureSession:
                   and self._auto_ctl.verdict(pk, snr_q) == "ok")
             if ok:
                 self._leveled, auto["in_window"] = True, True
-                self.level_source = "auto"
             elif hopeless or auto["adjustments"] >= AUTO_MAX_ADJUST \
                     or stuck:
                 auto["in_window"] = False
@@ -1467,7 +1463,6 @@ class MeasureSession:
          gains) = self._pending
         self._pending = None
         self._leveled = True
-        self.level_source = "manual"       # the user accepted this level
         return self._accept(channel, data, chan, pk, clipped, repaired,
                             [], gains, capture=capture)
 
@@ -1487,7 +1482,6 @@ class MeasureSession:
                 AUTO_START_VOLUME)
         self._auto_state["initial"] = round(v, 4)
         self._v_cur = v
-        self.level_source = "pending"
 
     def _accept(self, channel, data, chan, pk, clipped, repaired, notes,
                 gains=(None, None), capture=None):

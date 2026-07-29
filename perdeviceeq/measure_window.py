@@ -195,7 +195,6 @@ class MeasureWindow(Adw.Window):
         self._canvas_ids = {}       # (ch, live rec.id) -> canvas id
         self._canvas_session = None  # one session entry per sitting
         self._mic_gone = False      # selected rig left the graph
-        self._relevel_pending = False
         self._sink_gone = False
         self.fit_lo, self.fit_hi = FIT_FLO, FMAX_PLOT
         # each handle follows the statistics until dragged
@@ -1128,29 +1127,46 @@ class MeasureWindow(Adw.Window):
     def _on_vol_edited(self, _spin):
         """Manual override of the sweep level -- the stop-crane when
         auto-level misses. Set it on the session and stop auto-levelling
-        so it sticks for the next sweep. Before a session it cancels a
-        pending relevel: the hand on the knob wins."""
+        so it sticks for the next sweep. Before a session the hand on
+        the knob WINS too: the value is remembered for this sink and
+        mic and the next session builds on it instead of hunting --
+        the old path canceled the relevel and then let the refresh
+        overwrite the hand's number with the memory's."""
+        v = self.vol_spin.get_value() / 100.0
         if self.session is not None:
-            self.session.set_level(self.vol_spin.get_value() / 100.0)
-        else:
-            self._relevel_pending = False
+            self.session.set_level(v)
+        src = self._source_name()
+        if src:
+            # the LAST fader value is always restorable: the
+            # pair remembers every hand, in-session or before,
+            # and because it is remembered IMMEDIATELY, any
+            # later refresh reads the hand's own number back
+            self.memory.remember(self.sink_node, source=src,
+                                 volume=v)
         self._refresh_volume()
 
     def _refresh_volume(self):
         """The spin always shows the last established sweep level --
         the session's current, the remembered one, or the level the
         hunt will start from. Never the sink's LISTENING volume: that
-        fallback once invented a number nobody asked for."""
+        fallback once invented a number nobody asked for. The caption
+        under the fader names the level's source, so a remembered 33
+        and a pending hunt can never wear the same face again."""
         if self.session is not None:
             v = getattr(self.session, "_v_cur", None)
+            if v is not None:
+                self._set_volume_display(v)
         else:
+            # pre-session the fader shows the pair's memory --
+            # a hand edit is remembered immediately, so this
+            # read-back IS the hand. No memory means ZERO on
+            # the dial: an obviously wrong number is the cue
+            # to press auto-level, never a hidden fifteen.
             src = self._source_name()
             v = (self.memory.volume_for(self.sink_node, src)
                  if src else None)
-            if v is None:
-                v = ms.AUTO_START_VOLUME
-        if v is not None:
-            self._set_volume_display(v)
+            self._set_volume_display(v if v is not None
+                                     else 0.0)
 
     def _on_relevel(self, _btn):
         """Measure the level here and now: forget the remembered
@@ -1169,7 +1185,7 @@ class MeasureWindow(Adw.Window):
                 self.session.relevel()
             except Exception:
                 pass
-        self._relevel_pending = True
+        self._refresh_volume()
         self._refresh_all()
         self._start_measure(self._selected_ch, level_only=True)
 
@@ -2051,15 +2067,20 @@ class MeasureWindow(Adw.Window):
                 if not quiet:
                     self._error("Pick a measurement mic first.")
                 return False
-            remembered = self.memory.volume_for(self.sink_node,
-                                                mic)
-            use_auto = remembered is None or self._relevel_pending
+            # THE FADER LAW, the architect's stomach cure:
+            # the sweep plays the fader's number, always --
+            # the fader is always set to something, so the
+            # behaviour is always predictable. The hunt lives
+            # ONLY behind its own button (level_only runs),
+            # and its whole job is to move the fader.
+            hunt = bool(getattr(self, "_level_only", False))
             cfg = ms.SessionConfig(
                 sink=self.sink_node, source=mic,
-                channels=self.mic_ch, auto_level=use_auto,
+                channels=self.mic_ch, auto_level=hunt,
                 mute_others=True, device=self.sink_desc,
-                start_volume=(None if use_auto else remembered))
-            self._relevel_pending = False
+                start_volume=(None if hunt else
+                              self.vol_spin.get_value()
+                              / 100.0))
             try:
                 # an absent home births the session unresolved:
                 # the canvas adopts, statistics and refits run,
@@ -2105,6 +2126,12 @@ class MeasureWindow(Adw.Window):
         if self._sink_gone or self._mic_gone:
             return    # play is locked; stray starts no-op here
         self._level_only = level_only
+        # THE ONE DOOR of the fader law: every take starts by
+        # setting the session level to the fader's number, read
+        # on the main thread here, applied by the worker after
+        # the session is entered. One door, zero shield flags.
+        self._take_level = (None if level_only
+                            else self.vol_spin.get_value() / 100.0)
         self._busy = True
         self._set_ring_sensitive(False)
         self._update_pult()
@@ -2123,6 +2150,8 @@ class MeasureWindow(Adw.Window):
         quality is flagged for the user). Result marshalled to the UI."""
         result = {"error": None, "outcome": None}
         try:
+            if getattr(self, "_take_level", None) is not None:
+                self.session.set_level(self._take_level)
             guard = 0
             while True:
                 guard += 1
