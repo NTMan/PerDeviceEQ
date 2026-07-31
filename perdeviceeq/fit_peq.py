@@ -265,13 +265,9 @@ def _polish_obj(x, types, fg, target, cap, cosw, cos2w):
     _mag_grad_vec, centering subtracts the column means,
     softmax weights pick the working points."""
     n = len(types)
-    r = np.zeros(len(fg))
-    J = np.empty((len(fg), 3 * n))
-    for i in range(n):
-        f0, g0, q0 = 10.0 ** x[3 * i], x[3 * i + 1], x[3 * i + 2]
-        r += _mag_db_vec(types[i], f0, g0, q0, fg)
-        J[:, 3 * i:3 * i + 3] = _mag_grad_vec(
-            types[i], f0, g0, q0, cosw, cos2w).T
+    mags, grads = _chain_mag_grads(types, x, cosw, cos2w)
+    r = mags.sum(axis=0)
+    J = grads.transpose(2, 0, 1).reshape(len(fg), 3 * n)
     e = target - r
     ec = e - e.mean()
     a = np.abs(ec)
@@ -482,6 +478,80 @@ def _response(bands, freqs):
     return out
 
 
+def _nd_all(C, cosw, cos2w):
+    """The cosine form of |section|^2 numerators/denominators for
+    a STACK of coefficient triples C (n, 3) over the grid: one
+    broadcast instead of a Python loop per band -- the profiler
+    convicted the loop of five of every six fit seconds on a
+    96-ppo canvas."""
+    c0, c1, c2 = C[:, 0:1], C[:, 1:2], C[:, 2:3]
+    return (c0 * c0 + c1 * c1 + c2 * c2
+            + 2.0 * (c0 * c1 + c1 * c2) * cosw
+            + 2.0 * c0 * c2 * cos2w)
+
+
+def _dnd_all(C, D, cosw, cos2w):
+    """d(_nd_all)/d(param) for stacks C (n, 3) and their partials
+    D (n, 3): same cosine form, same broadcast."""
+    c0, c1, c2 = C[:, 0:1], C[:, 1:2], C[:, 2:3]
+    d0, d1, d2 = D[:, 0:1], D[:, 1:2], D[:, 2:3]
+    return (2.0 * (c0 * d0 + c1 * d1 + c2 * d2)
+            + 2.0 * (d0 * c1 + c0 * d1
+                     + d1 * c2 + c1 * d2) * cosw
+            + 2.0 * (d0 * c2 + c0 * d2) * cos2w)
+
+
+def _chain_mag_grads(types, x, cosw, cos2w, want_grads=True):
+    """The whole chain in one voice: magnitudes (n, G) and, when
+    asked, the (n, 3, G) gradients wrt (log10 f, gain, q) -- the
+    per-band coefficient math stays scalar (cheap), every grid
+    operation is one broadcast. Returns (mags, grads); grads is
+    None when want_grads is False. Falls back to None for band
+    types without closed-form grads (the callers gate on that)."""
+    n = len(types)
+    B = np.empty((n, 3))
+    A = np.empty((n, 3))
+    DB = np.empty((n, 3, 3)) if want_grads else None
+    DA = np.empty((n, 3, 3)) if want_grads else None
+    for i in range(n):
+        got = _biquad_grads(types[i], 10.0 ** x[3 * i],
+                            x[3 * i + 1], x[3 * i + 2])
+        if got is None:
+            return None, None
+        b, a, db, da = got
+        B[i] = b
+        A[i] = a
+        if want_grads:
+            for t in range(3):
+                DB[i, t] = db[t]
+                DA[i, t] = da[t]
+    # magnitudes via the COMPLEX transfer (stable where the
+    # cosine form cancels catastrophically at shelf corners --
+    # 3e-6 dB of noise there turned numeric gradients to mush);
+    # z1 is rebuilt from the given cosines: w lies in (0, pi)
+    # below Nyquist, so sin w = sqrt(1 - cos^2 w) is exact.
+    sinw = np.sqrt(np.maximum(1.0 - cosw * cosw, 0.0))
+    z1 = cosw - 1j * sinw
+    z2 = cos2w - 1j * (2.0 * sinw * cosw)
+    num = B[:, 0:1] + B[:, 1:2] * z1 + B[:, 2:3] * z2
+    den = A[:, 0:1] + A[:, 1:2] * z1 + A[:, 2:3] * z2
+    N = np.maximum(num.real ** 2 + num.imag ** 2, 1e-24)
+    D = np.maximum(den.real ** 2 + den.imag ** 2, 1e-24)
+    mags = 10.0 / _LN10 * (np.log(N) - np.log(D))
+    if not want_grads:
+        return mags, None
+    N = np.maximum(_nd_all(B, cosw, cos2w), 1e-24)
+    D = np.maximum(_nd_all(A, cosw, cos2w), 1e-24)
+    k = 10.0 / _LN10
+    G = cosw.shape[0]
+    grads = np.empty((n, 3, G))
+    for t in range(3):
+        dN = _dnd_all(B, DB[:, t], cosw, cos2w)
+        dA = _dnd_all(A, DA[:, t], cosw, cos2w)
+        grads[:, t] = k * (dN / N - dA / D)
+    return mags, grads
+
+
 def _bounds(max_boost, limits):
     """The optimizer's gain/Q box, narrowed by a destination's
     declared ranges when given. The app's own sanity walls (-24 dB
@@ -540,15 +610,25 @@ def _refine(bands, fg, desired, flo, fhi, max_boost, span_oct=None,
         lo += [f_lo, gl, q_lo]
         hi += [f_hi, gh, qh]
 
+    w_r = 2.0 * np.pi * np.asarray(fg, float) / FS
+    cosw_r, cos2w_r = np.cos(w_r), np.cos(2.0 * w_r)
+    closed = all(t in ("PK", "LSC", "HSC") for t in types)
+
     def resfun(x):
         if tick is not None:
             tick()
+        if closed:
+            mags, _ = _chain_mag_grads(types, x, cosw_r,
+                                       cos2w_r,
+                                       want_grads=False)
+            if mags is not None:
+                return mags.sum(axis=0) - desired
         bl = [(types[i], 10 ** x[3 * i], x[3 * i + 1], x[3 * i + 2])
               for i in range(len(types))]
         return _response(bl, fg) - desired
 
     jac = "2-point"
-    if all(t in ("PK", "LSC", "HSC") for t in types):
+    if closed:
         # calculus, not finite differences: the 2-point Jacobian
         # costs (3n+1) full responses per trf iteration -- at 14
         # bands that is a 43x multiplier and the reason big
@@ -562,18 +642,20 @@ def _refine(bands, fg, desired, flo, fhi, max_boost, span_oct=None,
         def jacfun(x):
             if tick is not None:
                 tick()
-            J = np.empty((len(cosw), len(x)))
-            for i in range(len(types)):
-                g3 = _mag_grad_vec(types[i], 10 ** x[3 * i],
-                                   x[3 * i + 1], x[3 * i + 2],
-                                   cosw, cos2w)
-                J[:, 3 * i:3 * i + 3] = g3.T
-            return J
+            _, grads = _chain_mag_grads(types, x, cosw, cos2w)
+            return grads.transpose(2, 0, 1).reshape(
+                len(cosw), len(x))
 
         jac = jacfun
 
     sol = least_squares(resfun, x0, jac=jac, bounds=(lo, hi),
-                        method="trf", max_nfev=3000)
+                        method="trf", tr_solver="lsmr",
+                        max_nfev=3000)
+    # tr_solver: the default exact solver SVDs the tall (grid x
+    # 3n) Jacobian on EVERY trust-region iteration -- twenty of
+    # the field FL's sixty fit seconds were scipy.linalg.svd.
+    # lsmr solves the same subproblem iteratively, no
+    # factorization, built for exactly this shape.
     return [(types[i], float(10 ** sol.x[3 * i]),
              float(np.clip(sol.x[3 * i + 1],
                            lo[3 * i + 1], hi[3 * i + 1])),
