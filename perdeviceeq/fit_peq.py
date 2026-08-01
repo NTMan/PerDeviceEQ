@@ -77,14 +77,15 @@ def _merge_twins(bands, g_lo, g_hi):
         i += 1
     return bands, dropped, seats
 GRID = 400
-SOLVER_VERSION = 2
+SOLVER_VERSION = 3
 # The solver's passport, folded into every fit fingerprint.
 # BUMP THIS IN ANY COMMIT THAT CHANGES FIT BEHAVIOUR: the Auto
 # button treats a stored fit from another version as another
 # solver's work -- stale by definition, refit on one press --
 # instead of forcing the architect to poke a random band to
 # break the equalizer. 2 = the rail law + the walker with two
-# kicks.
+# kicks; 3 = islands birth peaks, futile merges retire their
+# reach.
 
 GREEDY_SPAN_OCT = 1.0
 # A resonant shelf is almost never a request: past Q ~1 the RBJ
@@ -850,6 +851,24 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
         f0 = fg[k]
         btype = ("LSC" if f0 <= flo * 2
                  else "HSC" if f0 >= fhi / 2 else "PK")
+        if btype != "PK":
+            # the island law: a shelf answers a demand that
+            # holds its sign to the zone edge; an ISLAND --
+            # the residual flipping sign within an octave on
+            # the edge side -- needs a PEAK, whatever floor
+            # of the house it lives on. The field caught the
+            # old frequency-only rule birthing a shelf for a
+            # narrow coupler resonance at 8281 Hz: the refine
+            # rightly refused to deepen it (the far side of
+            # the zone wanted the opposite sign), the newborn
+            # collapsed into a futile merge, and the whole
+            # top octave stayed unservable.
+            edge = fhi if btype == "HSC" else flo
+            span = (fg >= min(f0, edge)) & (fg <= max(f0, edge))
+            near = span & (np.abs(np.log2(fg / f0)) <= 1.0)
+            if np.any(near) and np.any(
+                    np.sign(resid[near]) != np.sign(resid[k])):
+                btype = "PK"
         if btype not in allowed:
             btype = "PK" if "PK" in allowed else allowed[0]
         g0 = float(np.clip(resid[k], g_lo, g_hi))
@@ -891,6 +910,7 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                 park_hi[i0:i1] = True
             else:
                 park_lo[i0:i1] = True
+        before = list(bands)
         bands, gone, seats = _merge_twins(bands, g_lo, g_hi)
         if gone:
             # a merge changes the balance its neighbours leaned
@@ -916,8 +936,25 @@ def fit_to_desired(fg, desired, flo, fhi, n_bands, max_boost,
                 # re-formation futile, so at the rail the
                 # crown retires its whole REACH for its sign;
                 # a moderate crown keeps the narrow halo.
+                # FUTILITY is the second proof, rail or no
+                # rail: a merge that left the crown's gain
+                # unmoved absorbed nothing -- the coupler
+                # field showed sixty identical merges into a
+                # -1.37 shelf, delta 1e-9 a turn. An unmoved
+                # crown retires its reach too.
+                g_prev = None
+                for tb2, fb2, gb2, _q2 in before:
+                    if (np.sign(gb2) == np.sign(gb)
+                            and abs(np.log2(
+                                max(fb2, 1e-6) / max(fb, 1e-6)))
+                            <= 2 * DEDUP_OCT):
+                        g_prev = gb2
+                        break
+                futile = (g_prev is not None
+                          and abs(gb - g_prev) < 0.05)
                 halo = (GREEDY_SPAN_OCT
-                        if abs(gb) >= g_hi - SAT_EPS_DB
+                        if (abs(gb) >= g_hi - SAT_EPS_DB
+                            or futile)
                         else 2 * DEDUP_OCT)
                 i0 = int(np.searchsorted(
                     fg, fb * 2.0 ** -halo))

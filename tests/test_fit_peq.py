@@ -512,3 +512,44 @@ def test_a_rail_crown_retires_its_reach(monkeypatch):
     target = np.minimum(desired, 6.0)
     rr = target - (desired - resid)
     assert float(np.sqrt(np.mean(rr ** 2))) < 1.2
+
+
+def test_an_island_above_the_shelf_floor_gets_a_peak(monkeypatch):
+    """The coupler field beast: a narrow deep cut just above
+    fhi/2 flanked by opposite-sign demand. The old
+    frequency-only birth law made it an HSC, the refine
+    rightly refused to deepen a shelf that would wreck the
+    far side, and sixty futile merges into an unmoved -1.4
+    crown left the whole top octave unserved. Two laws now:
+    an island births a PEAK whatever floor it lives on, and a
+    merge that leaves the crown unmoved retires its reach."""
+    fg = np.exp(np.linspace(np.log(20.0), np.log(16000.0),
+                            500))
+    desired = np.zeros_like(fg)
+    desired[(fg > 7900) & (fg < 8700)] = -11.0
+    desired[(fg > 10000) & (fg < 14000)] = 8.0
+    desired[(fg > 100) & (fg < 160)] = -6.0
+    merges = {"n": 0}
+    real = fit_peq._merge_twins
+
+    def counting(bands, g_lo, g_hi):
+        out = real(bands, g_lo, g_hi)
+        if out[1]:
+            merges["n"] += 1
+        return out
+    monkeypatch.setattr(fit_peq, "_merge_twins", counting)
+    bands, resid = fit_peq.fit_to_desired(
+        fg, desired, 20.0, 16000.0, 12, 6.0)
+    assert merges["n"] <= 4, merges
+    island = [b for b in bands
+              if b[0] == "PK" and b[2] <= -5.0
+              and abs(np.log2(b[1] / 8300.0)) < 0.3]
+    assert island, bands
+    target = np.clip(desired, -24.0, 6.0)
+    rr = target - (desired - resid)
+    # the CORE of the island: a synthetic rectangle leaks at
+    # its cliff edges on a coarse grid, honestly; the law's
+    # promise is that the island is SERVED, not that a
+    # brick-wall is matched
+    core = (fg > 8050) & (fg < 8550)
+    assert float(np.max(np.abs(rr[core]))) < 3.0
