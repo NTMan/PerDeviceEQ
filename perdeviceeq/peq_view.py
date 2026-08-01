@@ -310,6 +310,8 @@ class PeqView(Gtk.Box):
         return r, g, b, a, w
 
     def _legend_at(self, x, y):
+        if self._curves is None:
+            return None           # a hidden legend has no hands
         for x0, y0, x1, y1, lab in self._legend_hits:
             if x0 <= x <= x1 and y0 <= y <= y1:
                 return lab
@@ -481,6 +483,14 @@ class PeqView(Gtk.Box):
                 cr.stroke()
                 cr.set_dash([], 0)
 
+        if self._curves is None:
+            # the eye is off: no curves, no legend -- and no
+            # GHOST legend either. The hit rectangles used to
+            # outlive the drawing, leaving an invisible hover
+            # strip that kept toggling curve highlights on a
+            # plot that showed none of them.
+            self._legend_hits = []
+            self._hover = None
         if self._curves is not None:
             fo, meas, spread, band = self._curves[:4]
             cr.save()
