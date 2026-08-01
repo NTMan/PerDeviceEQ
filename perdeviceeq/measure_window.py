@@ -2053,9 +2053,16 @@ class MeasureWindow(Adw.Window):
             if not self._sink_present() or self._sink_gone:
                 miss = "sink offline: %s" % (self.sink_node
                                              or "?")
-            else:
+            elif self.mic_picker.core.node:
                 miss = ("mic offline: %s"
-                        % (self.mic_picker.core.node or "?"))
+                        % self.mic_picker.core.node)
+            else:
+                # the field's silent lock: a remembered mic
+                # LABEL that never resolved to a live node.
+                # None is not "gone" (you cannot leave without
+                # being born), so the mic banner sleeps -- the
+                # tracer names the state and the way out.
+                miss = "mic not resolved -- re-pick the mic"
             if self.center.get_text() != miss:
                 self.center.set_text(miss)
         self.play_btn.set_sensitive(not self._busy and live)
