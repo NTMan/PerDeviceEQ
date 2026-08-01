@@ -147,8 +147,14 @@ class PeqView(Gtk.Box):
     # ---- public API --------------------------------------------------
     def set_bands(self, band_dicts):
         """Replace the whole band list (dicts; the view keeps Band
-        objects internally so a drag can mutate freq/gain)."""
+        objects internally so a drag can mutate freq/gain).
+
+        A load is the one moment the table may reorder itself:
+        the solver hands its bands over in placement order and
+        nobody is looking at a row yet.
+        """
         self._bands = [eq.Band.from_dict(b) for b in (band_dicts or [])]
+        self._bands.sort(key=lambda b: b.freq)
         self._drag_band = None
         self._rebuild_table()
         self.graph.queue_draw()
@@ -687,10 +693,13 @@ class PeqView(Gtk.Box):
             lbl = Gtk.Label(label=t, xalign=0.0)
             lbl.add_css_class("dim-label")
             lbl.add_css_class("caption")
-            self.grid.attach(lbl, c, 0, 1, 1)
-        # rows sort by frequency, like the plot reads; storage
-        # order is untouched (the response is order-agnostic)
-        shown = sorted(self._bands, key=lambda b: b.freq)
+            if t.startswith("Freq"):
+                self.grid.attach(self._sort_head(lbl), c, 0, 1, 1)
+            else:
+                self.grid.attach(lbl, c, 0, 1, 1)
+        # the rows ARE the storage order, verbatim -- nothing
+        # reshuffles under the hand that is editing it
+        shown = self._bands
         for i, b in enumerate(shown):
             self._attach_band(i, b)
         def _action(icon, label):
@@ -729,6 +738,28 @@ class PeqView(Gtk.Box):
         # second to last, not first, whatever geometry says
         self._focus_stops.append(acts)
         self.grid.set_focus_order(self._focus_stops)
+
+    def _sort_head(self, lbl):
+        """The Freq header, as a hand the user can lay on."""
+        btn = Gtk.Button()
+        btn.set_child(lbl)
+        btn.add_css_class("flat")
+        btn.set_tooltip_text("Sort the rows by frequency")
+        btn.connect("clicked", self._on_sort_freq)
+        return btn
+
+    def _on_sort_freq(self, *_a):
+        """Order the rows by frequency, once, on request.
+
+        No edit is emitted: the response does not depend on the
+        order, and a load sorts anyway, so the click buys the
+        reading order without forking a built-in profile or
+        resetting the headroom session behind the user's back.
+        """
+        if len(self._bands) < 2:
+            return
+        self._bands.sort(key=lambda b: b.freq)
+        self._rebuild_table()
 
     def _attach_band(self, i, b):
         row = i + 1
