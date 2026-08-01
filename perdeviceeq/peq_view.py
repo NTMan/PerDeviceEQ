@@ -162,14 +162,14 @@ class PeqView(Gtk.Box):
     def get_bands(self):
         return [b.to_dict() for b in self._bands]
 
-    def set_protection(self, lo, hi, zone_lo, zone_hi,
-                       visible, on_change=None):
-        """Feed the protection strip: lo/hi are the effective
-        edges (hi may be None -- the handle parks at the right
-        border), zone_* the measured reset marks drawn as
-        faint ticks. on_change(lo, hi, final) fires throttled
-        during a drag and once with final=True at its end."""
-        self._protect = (lo, hi, zone_lo, zone_hi)
+    def set_protection(self, lo, visible, on_change=None):
+        """Feed the protection strip: lo is the floor's
+        frequency, the ONE handle -- the ceiling came down and
+        the zone lost its ticks here (a fit organ has no
+        business marking a manual one). on_change(lo, final)
+        fires throttled during a drag and once with final=True
+        at its end."""
+        self._protect = lo
         self._protect_cb = on_change
         self.protect_strip.set_visible(bool(visible)
                                        and lo is not None)
@@ -196,7 +196,7 @@ class PeqView(Gtk.Box):
     def _draw_protect(self, _a, cr, w, h, *_):
         if not self._protect:
             return
-        lo, hi, zlo, zhi = self._protect
+        lo = self._protect
         ml, pw_ = self._strip_geo()
         xr = ml + pw_
         mid = h / 2.0
@@ -205,39 +205,18 @@ class PeqView(Gtk.Box):
         cr.move_to(ml, mid)
         cr.line_to(xr, mid)
         cr.stroke()
-        xlo = self._px_of(lo, ml, pw_) if lo else ml
-        xhi = self._px_of(hi, ml, pw_) if hi else xr
+        xlo = self._px_of(lo, ml, pw_)
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.18)
         cr.rectangle(ml, 2, max(0.0, xlo - ml), h - 4)
         cr.fill()
-        if xhi < xr:
-            cr.rectangle(xhi, 2, xr - xhi, h - 4)
-            cr.fill()
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.7)
-        for z in (zlo, zhi):
-            if not z:
-                continue
-            xz = self._px_of(z, ml, pw_)
-            cr.move_to(xz, h - 7)
-            cr.line_to(xz, h - 1)
-            cr.stroke()
         cr.set_source_rgba(0.21, 0.52, 0.89, 0.95)
         cr.set_line_width(3.0)
-        for x in (xlo, xhi):
-            cr.move_to(x, 2)
-            cr.line_to(x, h - 2)
-            cr.stroke()
+        cr.move_to(xlo, 2)
+        cr.line_to(xlo, h - 2)
+        cr.stroke()
 
     def _protect_drag_begin(self, _g, sx, _sy):
-        self._protect_drag = None
-        if not self._protect:
-            return
-        lo, hi, _zl, _zh = self._protect
-        ml, pw_ = self._strip_geo()
-        xlo = self._px_of(lo, ml, pw_) if lo else ml
-        xhi = self._px_of(hi, ml, pw_) if hi else ml + pw_
-        self._protect_drag = ("lo" if abs(sx - xlo)
-                              <= abs(sx - xhi) else "hi")
+        self._protect_drag = bool(self._protect)
 
     def _protect_drag_update(self, g, ox, _oy):
         if not self._protect_drag or not self._protect:
@@ -245,26 +224,20 @@ class PeqView(Gtk.Box):
         ok, sx, _sy = g.get_start_point()
         if not ok:
             return
-        lo, hi, zlo, zhi = self._protect
         ml, pw_ = self._strip_geo()
         f = self._pf_of(sx + ox, ml, pw_)
-        if self._protect_drag == "lo":
-            top = (hi or FMAX) / 1.2
-            lo = max(FMIN, min(f, top))
-        else:
-            hi = min(FMAX, max(f, (lo or FMIN) * 1.2))
-        self._protect = (lo, hi, zlo, zhi)
+        lo = max(FMIN, min(f, FMAX / 1.2))
+        self._protect = lo
         self.protect_strip.queue_draw()
         now = time.monotonic()
         if self._protect_cb and now - self._protect_emit > 0.15:
             self._protect_emit = now
-            self._protect_cb(lo, hi, False)
+            self._protect_cb(lo, False)
 
     def _protect_drag_end(self, *_a):
         if self._protect_drag and self._protect \
                 and self._protect_cb:
-            lo, hi, _zl, _zh = self._protect
-            self._protect_cb(lo, hi, True)
+            self._protect_cb(self._protect, True)
         self._protect_drag = None
 
     def set_zone(self, zone):

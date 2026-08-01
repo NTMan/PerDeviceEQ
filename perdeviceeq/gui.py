@@ -151,7 +151,6 @@ class EqWindow(Adw.ApplicationWindow):
         self.current_pid = CLEAN_ID
         self.floor_off = False
         self.floor_hz = None
-        self.ceil_hz = None
         self._save_source = 0
         self._loading = False
         self.sinks = []
@@ -416,9 +415,6 @@ class EqWindow(Adw.ApplicationWindow):
             fl = eq.floor_hz_effective(p)
             if fl is not None:
                 lo = max(lo, float(fl))
-        cl = eq.ceil_hz_effective(p)
-        if cl is not None and cl < eq.CEIL_ENGAGE_HZ:
-            hi = min(hi, float(cl))
         return lo, hi
 
     def _lawful_target(self, f, meas):
@@ -594,9 +590,6 @@ class EqWindow(Adw.ApplicationWindow):
                 fl = eq.floor_hz_effective(p)
                 if fl is not None:
                     txt += " · floor %s Hz" % _fmt_hz(fl)
-                cl = eq.ceil_hz_effective(p)
-                if cl is not None and cl < eq.CEIL_ENGAGE_HZ:
-                    txt += " · ceil %s Hz" % _fmt_hz(cl)
         else:
             txt = "Measurement attached"
         self.trust_label.set_text(txt)
@@ -1339,37 +1332,29 @@ class EqWindow(Adw.ApplicationWindow):
         return {"bands": [bnd.to_dict() for bnd in s["bands"]]}
 
     def _sync_floor_btn(self):
-        """Speaker protection, the architect's two-state spec:
-        one button by the eye -- protection works / does not
-        -- that both engages the sealed stages and shows or
-        hides the EQ-range handles repeated under the graph.
-        The price stays on the tooltip: the budget says 20,
-        the wire runs 24."""
+        """Speaker protection, the architect's manual decree:
+        the floor button ALWAYS shows (the old visibility rule
+        -- button only when a floor already stands -- made the
+        organ unreachable on a fresh profile), and the floor
+        answers only to the hand. No zone in the tooltip, no
+        zone anywhere near this organ: the zone is a fit
+        organ, not a protection source."""
         p = self.store.get(self.current_pid) or {}
         lo = eq.floor_hz_effective(p)
-        vis = lo is not None
-        on = vis and not p.get("floor_off")
-        self.floor_btn.set_visible(vis)
-        if vis:
-            self._floor_sync = True
-            try:
-                self.floor_btn.set_active(on)
-            finally:
-                self._floor_sync = False
-            tip = ("Speaker protection: LR8 edges outside the "
-                   "band budget, 4 biquads per engaged edge")
-            zl = eq.zone_floor_hz(p)
-            if zl is not None:
-                tip += ("\nmeasured zone: %s"
-                        % _fmt_hz(zl))
-                zh = eq.zone_ceil_hz(p)
-                if zh is not None:
-                    tip += " - %s Hz" % _fmt_hz(zh)
-            self.floor_btn.set_tooltip_text(tip)
+        on = lo is not None and not p.get("floor_off")
+        self.floor_btn.set_visible(True)
+        self._floor_sync = True
+        try:
+            self.floor_btn.set_active(on)
+        finally:
+            self._floor_sync = False
+        self.floor_btn.set_tooltip_text(
+            "Speaker protection floor: LR8 highpass, 4 biquads "
+            "per channel, outside the band budget. The "
+            "frequency is the hand's -- drag the handle under "
+            "the graph until the distortion is gone")
         self.view.set_protection(
-            lo, eq.ceil_hz_effective(p),
-            eq.zone_floor_hz(p), eq.zone_ceil_hz(p),
-            visible=on, on_change=self._on_protect_edges)
+            lo, visible=on, on_change=self._on_protect_edges)
 
     def _on_floor_toggled(self, btn):
         if self._loading or getattr(self, "_floor_sync", False):
@@ -1379,6 +1364,11 @@ class EqWindow(Adw.ApplicationWindow):
             return
         if btn.get_active():
             p.pop("floor_off", None)
+            if p.get("floor_hz") is None:
+                # first engagement on this profile: seed the
+                # handle somewhere grabbable, nothing more
+                p["floor_hz"] = eq.FLOOR_SEED_HZ
+            self.floor_hz = p.get("floor_hz")
         else:
             p["floor_off"] = True
         self.floor_off = bool(p.get("floor_off"))
@@ -1394,29 +1384,17 @@ class EqWindow(Adw.ApplicationWindow):
         self._apply_now()
         self._sync_floor_btn()
 
-    def _on_protect_edges(self, lo, hi, final):
-        """The strip's drags land here, throttled by the view;
-        edges within 2 percent of their measured zone marks
-        snap back to the zone (the override clears), a ceiling
-        parked at the right border sleeps. Intermediate moves
-        republish the graph so the sweep is HEARD; only the
-        final one touches the disk."""
+    def _on_protect_edges(self, lo, final):
+        """The strip's drags land here, throttled by the view.
+        No zone, no snap: the handle is the law, the frequency
+        lands verbatim. Intermediate moves republish the graph
+        so the sweep is HEARD; only the final one touches the
+        disk."""
         p = self.store.get(self.current_pid)
         if not p:
             return
-        zl, zh = eq.zone_floor_hz(p), eq.zone_ceil_hz(p)
-        if zl is not None and abs(lo - zl) <= 0.02 * zl:
-            p.pop("floor_hz", None)
-        else:
-            p["floor_hz"] = float(lo)
-        if hi is None or hi >= 0.99 * eq.FMAX \
-                or (zh is not None
-                    and abs(hi - zh) <= 0.02 * zh):
-            p.pop("ceil_hz", None)
-        else:
-            p["ceil_hz"] = float(hi)
+        p["floor_hz"] = float(lo)
         self.floor_hz = p.get("floor_hz")
-        self.ceil_hz = p.get("ceil_hz")
         if final:
             self.store.save_user(p)
         self._load_slot(self.cur_ch)
@@ -1445,8 +1423,6 @@ class EqWindow(Adw.ApplicationWindow):
             body["floor_off"] = True
         if self.floor_hz is not None:
             body["floor_hz"] = float(self.floor_hz)
-        if self.ceil_hz is not None:
-            body["ceil_hz"] = float(self.ceil_hz)
         return editor_body(body, p)
 
     def _load_slot(self, ch):
@@ -1624,7 +1600,6 @@ class EqWindow(Adw.ApplicationWindow):
             self.apply_all = bool(p.get("apply_all", True))
             self.floor_off = bool(p.get("floor_off"))
             self.floor_hz = p.get("floor_hz")
-            self.ceil_hz = p.get("ceil_hz")
             self._sync_floor_btn()
 
             dev = []

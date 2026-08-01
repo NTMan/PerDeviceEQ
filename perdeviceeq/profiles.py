@@ -65,7 +65,7 @@ def playback_sha256(p):
     # pinned out of the hash so riding the floor or the
     # ceiling never reads as editing the fit, and every
     # stored output_sha256 stays valid
-    for k in ("floor_off", "floor_hz", "ceil_hz"):
+    for k in ("floor_off", "floor_hz"):
         body.pop(k, None)
     blob = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -187,7 +187,7 @@ class ProfileStore:
         # override never reached the wire
         if p.get("floor_off"):
             body["floor_off"] = True
-        for key in ("floor_hz", "ceil_hz"):
+        for key in ("floor_hz",):
             v = p.get(key)
             if v is not None:
                 body[key] = float(v)

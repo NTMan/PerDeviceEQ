@@ -94,43 +94,18 @@ def zone_floor_hz(p):
     return lo if lo >= FLOOR_MIN_HZ else None
 
 
-CEIL_ENGAGE_HZ = 18000.0
-
-
-def zone_ceil_hz(p):
-    """The measured zone's upper edge from the stored fit, or
-    None. No params fallback here on purpose: the stored f_hi
-    default (12000) predates the zone and engaging a lowpass
-    on it would shave honest treble -- only a minted zone or
-    the ear may place the ceiling."""
-    zone = ((p or {}).get("fit") or {}).get("zone") or {}
-    try:
-        hi = zone.get("hi")
-        return float(hi) if hi is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
-def ceil_hz_effective(p):
-    """Where the ceiling stands: the ear's override (ceil_hz)
-    or the measured zone's top. A ceiling parked at or above
-    CEIL_ENGAGE_HZ is asleep -- nothing to protect up there,
-    and headphones keep their air."""
-    p = p or {}
-    try:
-        ovr = p.get("ceil_hz")
-        if ovr is not None:
-            return float(ovr)
-    except (TypeError, ValueError):
-        pass
-    return zone_ceil_hz(p)
+FLOOR_SEED_HZ = 40.0     # where the handle first appears when
+#                          the hand turns the floor on with no
+#                          history: a place to grab, nothing more
 
 
 def floor_hz_effective(p):
-    """Where the floor stands for THIS profile: the ear's
-    override (floor_hz, the architect's sweep-by-hearing
-    handle -- manual judgment outranks the gate) or the
-    measured zone's edge. None when neither speaks."""
+    """Where the floor stands for THIS profile: floor_hz, the
+    architect's sweep-by-hearing handle, or None. The floor is
+    a fully MANUAL organ -- the ceiling came down entirely and
+    the trust zone lost its protection authority (it remains a
+    fit organ: jurisdiction for the solver and honesty marks
+    on the graph, never a blind gate on playback)."""
     p = p or {}
     try:
         ovr = p.get("floor_hz")
@@ -138,7 +113,7 @@ def floor_hz_effective(p):
             return float(ovr)
     except (TypeError, ValueError):
         pass
-    return zone_floor_hz(p)
+    return None
 
 
 def fit_zone(p):
@@ -168,16 +143,11 @@ def floor_bands(p):
     ear sweeps it until the distortion is gone."""
     if (p or {}).get("floor_off"):
         return []
-    out = []
     lo = floor_hz_effective(p)
-    if lo is not None:
-        out += [{"type": "HP", "freq": lo, "gain": 0.0, "q": q,
-                 "enabled": True} for q in FLOOR_QS]
-    hi = ceil_hz_effective(p)
-    if hi is not None and hi < CEIL_ENGAGE_HZ:
-        out += [{"type": "LP", "freq": hi, "gain": 0.0, "q": q,
-                 "enabled": True} for q in FLOOR_QS]
-    return out
+    if lo is None:
+        return []
+    return [{"type": "HP", "freq": lo, "gain": 0.0, "q": q,
+             "enabled": True} for q in FLOOR_QS]
 
 
 def profile_graph(p, extra=None):

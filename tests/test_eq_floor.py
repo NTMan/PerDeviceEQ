@@ -1,5 +1,7 @@
-"""The device floor: Taste asks, the zone disposes. Pure,
-GTK-free -- the LR8 arithmetic, the gate, and the seal."""
+"""The device floor: a fully manual organ. The ceiling came
+down and the trust zone lost its protection authority -- the
+floor answers only to the hand. Pure, GTK-free: the LR8
+arithmetic and the seal."""
 
 import sys
 import os
@@ -9,13 +11,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from perdeviceeq import eq
 
 
-def _floored(lo=38.3):
+def _floored(hz=38.3):
     return {"preamp": 0.0, "apply_all": True,
-            "all": {"bands": []},
-            "fit": {"params": {"f_lo": lo}}}
+            "all": {"bands": []}, "floor_hz": hz}
 
 
-def test_floor_is_four_hp_stages_at_the_zone_edge():
+def test_floor_is_four_hp_stages_at_the_hands_mark():
     fb = eq.floor_bands(_floored())
     assert [b["type"] for b in fb] == ["HP"] * 4
     assert all(b["freq"] == 38.3 for b in fb)
@@ -38,84 +39,52 @@ def test_the_zone_itself_is_untouched():
     assert abs(eq.response_db(0.0, fb, [383.0])[0]) < 0.2
 
 
-def test_the_zone_outranks_the_fit_range():
-    # the architect's field case: fit made with the 20.0
-    # default while the measured band starts at 38.3
-    p = {"fit": {"params": {"f_lo": 20.0},
-                 "zone": {"lo": 38.3, "hi": 20000.0}}}
-    fb = eq.floor_bands(p)
-    assert len(fb) == 4 and fb[0]["freq"] == 38.3
-
-
-def test_a_deep_zone_gates_even_a_high_fit_range():
+def test_the_zone_never_places_protection():
+    # the architect's decree: fully manual control must not be
+    # tied to any blind zone -- a fit zone is jurisdiction for
+    # the solver and honesty marks on the graph, never a gate
+    # on playback
     p = {"fit": {"params": {"f_lo": 38.3},
-                 "zone": {"lo": 20.0, "hi": 20000.0}}}
+                 "zone": {"lo": 38.3, "hi": 12000.0}}}
     assert eq.floor_bands(p) == []
+    assert eq.floor_hz_effective(p) is None
+
+
+def test_zone_floor_hz_stays_informational():
+    p = {"fit": {"params": {"f_lo": 38.3},
+                 "zone": {"lo": 38.3}}}
+    assert eq.zone_floor_hz(p) == 38.3
+    assert eq.zone_floor_hz({}) is None
 
 
 def test_floor_off_is_the_ab_handle():
     p = _floored()
     p["floor_off"] = True
     assert eq.floor_bands(p) == []
-    # the handle still knows where the floor would stand
-    assert eq.zone_floor_hz(p) == 38.3
+    # the frequency half survives the toggle
+    assert eq.floor_hz_effective(p) == 38.3
 
 
-def test_zone_floor_hz_respects_the_gate():
-    assert eq.zone_floor_hz(_floored(lo=20.0)) is None
-    assert eq.zone_floor_hz({}) is None
+def test_the_hand_needs_no_gate():
+    # 25 Hz would have failed the old zone gate; the hand may
+    # stand a floor anywhere
+    assert [b["freq"] for b in eq.floor_bands(_floored(25.0))] \
+        == [25.0] * 4
 
 
-def test_the_ears_override_outranks_the_zone():
-    p = _floored()
-    p["floor_hz"] = 55.0
-    fb = eq.floor_bands(p)
-    assert len(fb) == 4 and fb[0]["freq"] == 55.0
-    assert eq.floor_hz_effective(p) == 55.0
-
-
-def test_the_ear_outranks_the_gate_too():
-    # manual judgment may stand a floor where the gate would
-    # not: the ear is the judge
-    p = _floored(lo=20.0)
-    p["floor_hz"] = 25.0
-    assert [b["freq"] for b in eq.floor_bands(p)] == [25.0] * 4
-
-
-def test_ceiling_engages_below_the_gate():
-    p = _floored()
-    p["fit"]["zone"] = {"lo": 38.3, "hi": 20000.0}
-    # parked at the top: asleep, headphones keep their air
-    assert all(b["type"] == "HP" for b in eq.floor_bands(p))
-    p["ceil_hz"] = 12000.0
-    fb = eq.floor_bands(p)
-    lps = [b for b in fb if b["type"] == "LP"]
-    assert len(lps) == 4 and lps[0]["freq"] == 12000.0
-    assert len([b for b in fb if b["type"] == "HP"]) == 4
-
-
-def test_zone_ceiling_below_gate_engages_itself():
-    p = _floored()
-    p["fit"]["zone"] = {"lo": 38.3, "hi": 15000.0}
-    assert any(b["type"] == "LP" and b["freq"] == 15000.0
-               for b in eq.floor_bands(p))
-
-
-def test_protection_off_silences_both_edges():
-    p = _floored()
-    p["fit"]["zone"] = {"lo": 38.3, "hi": 12000.0}
-    p["floor_off"] = True
-    assert eq.floor_bands(p) == []
+def test_no_ceiling_organs_remain():
+    assert not hasattr(eq, "ceil_hz_effective")
+    assert not hasattr(eq, "zone_ceil_hz")
+    assert not hasattr(eq, "CEIL_ENGAGE_HZ")
 
 
 def test_protection_keys_survive_the_body():
     from perdeviceeq import profiles as pr
-    p = {"id": "x", "floor_hz": 55.0, "ceil_hz": 12000.0,
-         "floor_off": True}
+    p = {"id": "x", "floor_hz": 55.0, "floor_off": True}
     body = pr.ProfileStore._body(p)
     assert body["floor_hz"] == 55.0
-    assert body["ceil_hz"] == 12000.0
     assert body["floor_off"] is True
+    assert "ceil_hz" not in body
 
 
 def test_protection_is_pinned_out_of_the_fit_hash():
@@ -123,8 +92,7 @@ def test_protection_is_pinned_out_of_the_fit_hash():
     base = {"apply_all": True, "preamp": 0.0,
             "ch_keys": ["FL"], "all": {"bands": []},
             "channels": {}}
-    with_floor = dict(base, floor_hz=55.0, floor_off=True,
-                      ceil_hz=12000.0)
+    with_floor = dict(base, floor_hz=55.0, floor_off=True)
     assert (pr.playback_sha256(base)
             == pr.playback_sha256(with_floor))
 
@@ -135,18 +103,15 @@ def test_the_headroom_sees_the_floor():
     boost = [eq.Band.from_dict({"type": "PK", "freq": 37.0,
                                 "gain": 6.0, "q": 0.72})]
     floor = [eq.Band.from_dict(b)
-             for b in eq.floor_bands(_floored(lo=54.0))]
+             for b in eq.floor_bands(_floored(54.0))]
     bare = eq.curve_max_db(0.0, boost)
     floored = eq.curve_max_db(0.0, boost + floor)
     assert bare > 5.5
-    # the residual max lives on the bell's upper skirt where
-    # the floor barely reaches: 6.0 -> ~2.1 on this pair
     assert floored < bare - 3.5
     assert floored < 2.5
 
 
-def test_deep_zones_get_no_floor():
-    assert eq.floor_bands(_floored(lo=20.0)) == []
+def test_no_floor_key_means_no_floor():
     assert eq.floor_bands({}) == []
     assert eq.floor_bands(None) == []
 
@@ -154,7 +119,8 @@ def test_deep_zones_get_no_floor():
 def test_the_graph_wears_the_floor_sealed():
     g = eq.profile_graph(_floored())
     assert g.count("bq_highpass") == 4
-    bare = eq.profile_graph(_floored(lo=20.0))
+    bare = eq.profile_graph({"preamp": 0.0, "apply_all": True,
+                             "all": {"bands": []}})
     assert "bq_highpass" not in bare
 
 
