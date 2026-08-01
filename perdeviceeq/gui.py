@@ -1587,12 +1587,24 @@ class EqWindow(Adw.ApplicationWindow):
         p = self.store.profiles.get(pid)
         return bool(p and not p.get("builtin") and pid != CLEAN_ID)
 
+    def _flush_pending_save(self):
+        """A debounced edit lands BEFORE the editor leaves its
+        profile: the timer used to survive a switch and fire
+        against whatever state came next -- the pending debt
+        belongs to the profile that incurred it."""
+        if self._save_source:
+            GLib.source_remove(self._save_source)
+            self._save_source = 0
+            if self._dev_dirty:
+                self._save_now()
+
     def _load_profile(self, pid, apply=True, born=False,
                       edit=False):
         """Load profile `pid` into the editor and bind it to the device.
         With apply=True also publish its graph to the session metadata
         (primes the key for the first Bypass; see _apply_now).
         """
+        self._flush_pending_save()
         self._loading = True
         try:
             self.current_pid = pid
