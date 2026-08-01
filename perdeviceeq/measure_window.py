@@ -2044,6 +2044,20 @@ class MeasureWindow(Adw.Window):
         must survive a gone device."""
         live = (self._sink_present() and not self._sink_gone
                 and self._source_present() and not self._mic_gone)
+        if not live and not self._busy:
+            # the tracer law, third service: a locked pult
+            # names the missing end out loud -- the field saw
+            # every control gray while "everything is there",
+            # and nothing said WHICH of the four truths failed
+            # or what NAME the window was looking for.
+            if not self._sink_present() or self._sink_gone:
+                miss = "sink offline: %s" % (self.sink_node
+                                             or "?")
+            else:
+                miss = ("mic offline: %s"
+                        % (self.mic_picker.core.node or "?"))
+            if self.center.get_text() != miss:
+                self.center.set_text(miss)
         self.play_btn.set_sensitive(not self._busy and live)
         if getattr(self, "relevel_btn", None) is not None:
             self.relevel_btn.set_sensitive(not self._busy and live)
