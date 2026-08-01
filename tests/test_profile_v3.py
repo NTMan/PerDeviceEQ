@@ -154,3 +154,31 @@ def test_edited_mark_is_derived_from_the_fit_output():
     # and riding the preamp on a fitted profile stays clean
     quiet = profiles.editor_body(dict(body, preamp=-6.2), cold)
     assert quiet["fit"]["edited"] is False
+
+
+def test_a_save_never_strips_a_channel():
+    """The mono-flap thief: the editor's view is keyed by the
+    sink's live map, so a profile visited while the sink sat
+    in a mono state assembled a body with only MONO -- one
+    autosave then buried the stored FL/FR band lists (the
+    measurement survived, the bands died, the edited chip
+    lit). Stored channels the view does not carry now ride
+    through every save, and ch_keys keeps them reachable."""
+    stored = {"id": "x", "apply_all": False,
+              "ch_keys": ["FL", "FR"],
+              "channels": {
+                  "FL": {"bands": [{"type": "PK", "freq": 100.0,
+                                    "gain": -3.0, "q": 1.0}]},
+                  "FR": {"bands": [{"type": "PK", "freq": 200.0,
+                                    "gain": 2.0, "q": 2.0}]}},
+              "measurement": {"grid": {"f_lo": 20.0}}}
+    body = {"id": "x", "apply_all": False, "preamp": 0.0,
+            "ch_keys": ["MONO"],
+            "all": {"bands": []},
+            "channels": {"MONO": {"bands": []}}}
+    out = profiles.editor_body(dict(body), stored)
+    assert out["channels"]["FL"]["bands"][0]["freq"] == 100.0
+    assert out["channels"]["FR"]["bands"][0]["freq"] == 200.0
+    assert out["channels"]["MONO"] == {"bands": []}
+    assert out["ch_keys"] == ["MONO", "FL", "FR"]
+    assert out["measurement"] == stored["measurement"]

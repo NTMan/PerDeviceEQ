@@ -90,6 +90,23 @@ def editor_body(body, stored):
         block = (stored or {}).get(key)
         if isinstance(block, dict) and block and key not in out:
             out[key] = block
+    # ...and never strip a CHANNEL. The editor's view is keyed
+    # by the SINK's live map, so a profile visited through a
+    # mono flap (LDAC falling to HFP, a DAC in a mono state)
+    # assembles a body with only the sink's keys -- one
+    # autosave then buried the stored FL/FR band lists. The
+    # profile owns its layout; the sink owns only the route:
+    # stored channels the view does not carry ride through
+    # every save, and ch_keys keeps them reachable.
+    sch = (stored or {}).get("channels") or {}
+    mine = out.get("channels") or {}
+    keep = {k: v for k, v in sch.items() if k not in mine}
+    if keep:
+        out["channels"] = {**keep, **mine}
+        keys = list(out.get("ch_keys") or [])
+        keys += [k for k in ((stored or {}).get("ch_keys")
+                             or sch.keys()) if k not in keys]
+        out["ch_keys"] = keys
     fit = out.get("fit")
     if isinstance(fit, dict):
         ref = fit.get("output_sha256")
