@@ -124,10 +124,12 @@ def mean_confession(records):
         if not rows:
             return None
         a = np.vstack(rows)
+        n = np.sum(~np.isnan(a), axis=0)
         with np.errstate(all="ignore"):
-            out = 10.0 * np.log10(np.nanmean(
-                10.0 ** (a / 10.0), axis=0))
-        out[np.all(np.isnan(a), axis=0)] = np.nan
+            out = 10.0 * np.log10(
+                np.nansum(10.0 ** (a / 10.0), axis=0)
+                / np.maximum(n, 1))
+        out[n == 0] = np.nan
         return out
     return (pavg(cols["thd_db"]), pavg(cols["h2_db"]),
             pavg(cols["h3_db"]), pavg(cols["thd_noise_db"]))
