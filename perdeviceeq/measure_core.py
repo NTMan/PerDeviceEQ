@@ -293,6 +293,60 @@ class Take:
     snr_db: object
     signal_dbfs: object
     noise_dbfs: object
+    h2_db: object = None      # 2nd-harmonic level re fundamental (dB),
+    #                           NaN where the sweep cannot testify
+    h3_db: object = None      # 3rd ditto
+    thd_db: object = None     # power sum of harmonics 2..5, same axis
+
+
+def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
+                      ks=(2, 3, 4, 5)):
+    """Farina's free confession: the k-th harmonic of the exponential
+    sweep deconvolves to an impulse at -L*ln(k) BEFORE the linear IR.
+    Window each image (half-width 0.45x the gap to its nearest
+    neighbour, Hann), read its spectrum at k*f with the same grid
+    machinery as the fundamental, and the ratio to the linear
+    magnitude at f IS the harmonic level at fundamental f. Costs no
+    field seconds -- the images sit in every take already; only the
+    math was being thrown away.
+
+    Returns (h2_db, h3_db, thd_db) arrays on `freqs`, NaN where the
+    sweep cannot testify (k*f beyond the sweep's top or Nyquist
+    guard, or the image window off the recording); (None, None,
+    None) when no image is extractable at all. THD is the power sum
+    over the available orders."""
+    fs = sweep.fs
+    L = sweep.sweep_rate_l
+    fmax_img = min(sweep.f_end, 0.45 * fs)
+    freqs = np.asarray(freqs, float)
+    main = np.asarray(main_mag_db, float)
+    ratios = {}
+    for k in ks:
+        center = peak - int(round(L * math.log(k) * fs))
+        d_lo = math.log((k + 1) / k)
+        d_hi = math.log(k / (k - 1)) if k > 2 else math.log(2.0)
+        half = int(0.45 * min(d_lo, d_hi) * L * fs)
+        if center - half <= 0 or half < 8:
+            continue
+        seg = np.array(ir[center - half:center + half + 1], float)
+        seg *= np.hanning(len(seg))
+        valid = (freqs * k) < fmax_img
+        if not np.any(valid):
+            continue
+        m = ir_to_magnitude(seg, fs, freqs[valid] * k)
+        r = np.full(len(freqs), np.nan)
+        r[valid] = m - main[valid]
+        ratios[k] = r
+    if not ratios:
+        return None, None, None
+    stack = np.array(list(ratios.values()))
+    with np.errstate(all="ignore"):
+        p = np.nansum(10.0 ** (stack / 10.0), axis=0)
+        cnt = np.sum(np.isfinite(stack), axis=0)
+        thd = np.where(cnt > 0,
+                       10.0 * np.log10(np.maximum(p, 1e-30)),
+                       np.nan)
+    return ratios.get(2), ratios.get(3), thd
 
 
 def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
@@ -303,7 +357,9 @@ def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
                                   post_ms)
     mag = ir_to_magnitude(seg, sweep.fs, freqs)
     snr, sig_db, noise_db = estimate_snr(recording, peak, sweep)
-    return Take(freqs, mag, 1000.0 * peak / sweep.fs, snr, sig_db, noise_db)
+    h2, h3, thd = extract_harmonics(ir, sweep, freqs, peak, mag)
+    return Take(freqs, mag, 1000.0 * peak / sweep.fs, snr, sig_db, noise_db,
+                h2_db=h2, h3_db=h3, thd_db=thd)
 
 
 def average_takes(takes):

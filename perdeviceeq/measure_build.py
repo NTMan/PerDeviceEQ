@@ -74,7 +74,7 @@ def take_dict(rec, session_id, key, freqs):
     if (len(rec.freq_hz) != len(freqs)
             or not np.allclose(rec.freq_hz, freqs)):
         mag = np.interp(np.log(freqs), np.log(rec.freq_hz), mag)
-    return {"id": _new_id(), "session": session_id, "channel": key,
+    out = {"id": _new_id(), "session": session_id, "channel": key,
             "capture_channel": rec.capture_channel,
             "created_utc": rec.created_utc,
             "mag_db_uncal": [_num(v, 2) for v in mag],
@@ -86,6 +86,17 @@ def take_dict(rec, session_id, key, freqs):
             "repaired": int(rec.repaired),
             "chan_vol": _num(rec.chan_vol, 6),
             "soft_vol": _num(rec.soft_vol, 6)}
+    for key in ("h2_db", "h3_db", "thd_db"):
+        arr = getattr(rec, key, None)
+        if arr is None:
+            continue
+        a = np.asarray(arr, float)
+        if (len(rec.freq_hz) != len(freqs)
+                or not np.allclose(rec.freq_hz, freqs)):
+            continue      # off-grid takes skip the confession
+        out[key] = [None if not np.isfinite(v) else _num(v, 2)
+                    for v in a]
+    return out
 
 
 def fit_fingerprint(measurement, take_ids, params):

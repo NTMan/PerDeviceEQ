@@ -920,6 +920,9 @@ class TakeRecord:
     noise_dbfs: object = None  # core pre-sweep noise-floor estimate
     capture_channel: object = None  # analyze column (which mic saw it)
     created_utc: object = None      # ISO 8601 UTC acceptance time
+    h2_db: object = None            # harmonic confession, core axes
+    h3_db: object = None
+    thd_db: object = None
 
 
 def spread_trust_bound(spread, n_takes):
@@ -1498,7 +1501,9 @@ class MeasureSession:
                          chan_vol=gains[0], soft_vol=gains[1],
                          noise_dbfs=t.noise_dbfs,
                          capture_channel=capture,
-                         created_utc=_utc_now())
+                         created_utc=_utc_now(),
+                         h2_db=t.h2_db, h3_db=t.h3_db,
+                         thd_db=t.thd_db)
         self._takes.setdefault(channel, []).append((rec, chan))
         return TakeOutcome("take", take=rec,
                            spread_db=self.spread_db(channel), notes=notes)

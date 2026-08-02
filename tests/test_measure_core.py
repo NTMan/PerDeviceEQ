@@ -6,6 +6,7 @@ fix the core, do not relax the tolerance: in synthetics there is no mic and
 no room, only math.
 """
 import json
+import math
 
 import numpy as np
 import pytest
@@ -223,3 +224,44 @@ def test_jitter_warning_gated_by_transport(sweep):
     wired = mc.process_takes(recs, sweep, sink_api="alsa")
     assert jitter_warns(wired) == []
     assert wired["sink_api"] == "alsa"
+
+
+def test_the_sweep_confesses_known_harmonics():
+    """The Farina confession, judged against analytic truth: a
+    memoryless nonlinearity y = x + a*x^2 + b*x^3 on the house
+    sweep must read back as H2 = 20log10(a*A/2) and
+    H3 = 20log10(b*A^2/4) re the fundamental (A is the sweep
+    amplitude), flat with frequency; a linear pass must read
+    silence. The images sit in every take already -- this pins
+    that the math finally reads them."""
+    fs = 48000
+    sweep = mc.generate_sweep(n_samples=2 * fs, fs=fs,
+                              f_start=20.0, f_end=20000.0)
+    a, b = 0.02, 0.04
+    x = sweep.signal
+    lead = np.zeros(fs // 2)
+    y = np.concatenate([lead, x + a * x * x + b * x ** 3,
+                        np.zeros(fs // 2)])
+    freqs = mc.log_grid(50.0, 8000.0, 48)
+    t = mc.analyze_take(y, sweep, freqs)
+    A = 10.0 ** (sweep.level_dbfs / 20.0)
+    exp2 = 20.0 * math.log10(a * A / 2.0)
+    exp3 = 20.0 * math.log10(b * A * A / 4.0)
+    band = (freqs >= 100.0) & (freqs <= 4000.0)
+    h2 = np.asarray(t.h2_db, float)[band]
+    h3 = np.asarray(t.h3_db, float)[band]
+    assert np.all(np.isfinite(h2)) and np.all(np.isfinite(h3))
+    assert abs(float(np.median(h2)) - exp2) < 0.7, (
+        float(np.median(h2)), exp2)
+    assert abs(float(np.median(h3)) - exp3) < 0.7, (
+        float(np.median(h3)), exp3)
+    assert float(np.max(np.abs(h2 - exp2))) < 1.5
+    thd = np.asarray(t.thd_db, float)[band]
+    ref = 10.0 * np.log10(10 ** (exp2 / 10.0)
+                          + 10 ** (exp3 / 10.0))
+    assert abs(float(np.median(thd)) - ref) < 0.8
+
+    lin = np.concatenate([lead, x, np.zeros(fs // 2)])
+    tl = mc.analyze_take(lin, sweep, freqs)
+    h2l = np.asarray(tl.h2_db, float)[band]
+    assert float(np.median(h2l)) < -70.0
