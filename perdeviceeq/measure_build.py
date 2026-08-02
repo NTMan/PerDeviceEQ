@@ -99,6 +99,40 @@ def take_dict(rec, session_id, key, freqs):
     return out
 
 
+def mean_confession(records):
+    """Power-averaged distortion of a channel's takes for the
+    takes-panel graph: (thd, h2, h3, noise) arrays in dB re the
+    fundamental, NaN where no take testifies, or None when no
+    record carries a confession at all. Records are TakeRecord
+    objects or anything wearing the four arrays as attributes;
+    a take without them (adopted canvas, pre-0052 data) simply
+    abstains."""
+    keys = ("thd_db", "h2_db", "h3_db", "thd_noise_db")
+    cols = {k: [] for k in keys}
+    for r in records:
+        for k in keys:
+            a = getattr(r, k, None)
+            if a is None:
+                continue
+            cols[k].append(np.array(
+                [np.nan if v is None else float(v)
+                 for v in a], float))
+    if not cols["thd_db"]:
+        return None
+
+    def pavg(rows):
+        if not rows:
+            return None
+        a = np.vstack(rows)
+        with np.errstate(all="ignore"):
+            out = 10.0 * np.log10(np.nanmean(
+                10.0 ** (a / 10.0), axis=0))
+        out[np.all(np.isnan(a), axis=0)] = np.nan
+        return out
+    return (pavg(cols["thd_db"]), pavg(cols["h2_db"]),
+            pavg(cols["h3_db"]), pavg(cols["thd_noise_db"]))
+
+
 def fit_fingerprint(measurement, take_ids, params):
     """sha256 over everything the fit consumed: the selected takes'
     magnitudes, the rig cal and the fit parameters. A stored fit whose

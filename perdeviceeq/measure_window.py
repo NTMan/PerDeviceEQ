@@ -549,6 +549,15 @@ class MeasureWindow(Adw.Window):
         trow.append(chev)
         face.append(trow)
         face.append(summary)
+        dist = Gtk.DrawingArea()
+        dist.update_property(
+            [Gtk.AccessibleProperty.LABEL],
+            ["Distortion of the mean take with the reading's "
+             "own noise floor"])
+        dist.set_content_height(110)
+        dist.set_visible(False)
+        dist.set_hexpand(True)
+        face.append(dist)
         face.add_css_class("card-header")
         click = Gtk.GestureClick()
         click.set_button(1)
@@ -568,7 +577,8 @@ class MeasureWindow(Adw.Window):
         col.append(card)
         self._takes_open = True
         self._page = {"title": title, "header": header,
-                      "summary": summary, "takes_list": lb,
+                      "summary": summary, "dist": dist,
+                      "takes_list": lb,
                       "takes_rev": rev, "card": card,
                       "chevron": chev, "take_rows": []}
         return col
@@ -1361,6 +1371,94 @@ class MeasureWindow(Adw.Window):
             base[0].freq_hz, mean, sp, lo, hi, ghost, glabel))
         area.set_visible(True)
         area.queue_draw()
+        dist = self._page.get("dist")
+        if dist is not None:
+            conf = measure_build.mean_confession(base)
+            if conf is None:
+                dist.set_visible(False)
+            else:
+                dist.set_draw_func(self._make_dist_draw(
+                    base[0].freq_hz, *conf))
+                dist.set_visible(True)
+                dist.queue_draw()
+
+    def _make_dist_draw(self, freqs, thd, h2, h3, noise):
+        """The confession under the summary: THD dark, H2/H3
+        thin, and the gray line of the reading's OWN noise
+        floor with the land under it shaded -- a reading on
+        the line is the instrument speaking, not the device.
+        Fixed axis -70..-20 dB re fundamental; 1% and 0.1%
+        gridlines for the eye."""
+        lo, hi = -70.0, -20.0
+
+        def yof(v):
+            y = 3 + (hi - float(v)) / (hi - lo) * (110 - 6)
+            return max(1.0, min(109.0, y))
+
+        def path(cr, arr, close_land=False):
+            first = True
+            x0 = None
+            for j in _stride_idx(len(freqs)):
+                v = arr[j] if j < len(arr) else float("nan")
+                if not np.isfinite(v):
+                    first = True
+                    continue
+                x = _log_x(freqs[j], 2, _W[0] - 4)
+                if first and close_land and x0 is None:
+                    x0 = x
+                if first:
+                    cr.move_to(x, yof(v))
+                else:
+                    cr.line_to(x, yof(v))
+                first = False
+                xl = x
+            return x0, (xl if not first else None)
+
+        def draw(_area, cr, w, h, *_):
+            _W[0] = w
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
+            cr.rectangle(0, 0, w, h)
+            cr.fill()
+            for v, lab in ((-40.0, "1%"), (-60.0, "0.1%")):
+                y = yof(v)
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
+                cr.set_line_width(0.8)
+                cr.move_to(2, y)
+                cr.line_to(w - 2, y)
+                cr.stroke()
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.7)
+                cr.set_font_size(9)
+                cr.move_to(4, y - 2)
+                cr.show_text(lab)
+            if noise is not None:
+                cr.set_source_rgba(0.55, 0.55, 0.55, 0.30)
+                x0, xl = path(cr, noise, close_land=True)
+                if xl is not None:
+                    cr.line_to(xl, h - 1)
+                    cr.line_to(x0 or 2, h - 1)
+                    cr.close_path()
+                    cr.fill()
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.9)
+                cr.set_line_width(1.3)
+                path(cr, noise)
+                cr.stroke()
+            for arr, rgba, wd in (
+                    (h2, (0.76, 0.13, 0.13, 0.75), 1.0),
+                    (h3, (0.90, 0.57, 0.0, 0.75), 1.0),
+                    (thd, (0.15, 0.15, 0.15, 1.0), 1.8)):
+                if arr is None:
+                    continue
+                cr.set_source_rgba(*rgba)
+                cr.set_line_width(wd)
+                path(cr, arr)
+                cr.stroke()
+            cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
+            cr.set_font_size(10)
+            cr.move_to(6, 12)
+            cr.show_text("distortion, dB re fundamental")
+
+        _W = [400]
+        return draw
 
     def _partner_ghost(self, ch, mean):
         """(curve, label) of the mirror partner's compensated mean --

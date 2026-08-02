@@ -314,3 +314,27 @@ def test_the_solver_version_stales_old_fits(monkeypatch):
                         fit_peq.SOLVER_VERSION + 1)
     b = measure_build.fit_fingerprint(m, ["t1"], params)
     assert a != b
+
+
+def test_mean_confession_averages_and_abstains():
+    from perdeviceeq import measure_build as mb
+    class R:
+        def __init__(self, thd, h2=None, h3=None, nfl=None):
+            self.thd_db = thd
+            self.h2_db = h2
+            self.h3_db = h3
+            self.thd_noise_db = nfl
+    a = R([-40.0, None, -50.0], h2=[-45.0, -50.0, None],
+          nfl=[-60.0, -60.0, -60.0])
+    b = R([-46.0, -44.0, None], h2=[-51.0, -50.0, None],
+          nfl=[-66.0, -60.0, None])
+    out = mb.mean_confession([a, b])
+    assert out is not None
+    thd, h2, h3, nfl = out
+    assert abs(thd[0] - (-42.03)) < 0.1
+    assert abs(thd[1] - (-44.0)) < 1e-6
+    assert abs(thd[2] - (-50.0)) < 1e-6
+    assert h3 is None
+    assert abs(nfl[0] - (-62.03)) < 0.1
+    silent = R(None)
+    assert mb.mean_confession([silent]) is None
