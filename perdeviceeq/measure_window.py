@@ -29,6 +29,7 @@ from gi.repository import Gtk, GLib, Gdk, Adw, Pango  # noqa: E402
 
 from . import config, pipewire, measure_build       # noqa: E402
 from . import focus                                  # noqa: E402
+from . import debug
 from .picker import NodePicker                       # noqa: E402
 from . import measure_core as mc                    # noqa: E402
 from . import measure_session as ms                 # noqa: E402
@@ -1016,6 +1017,11 @@ class MeasureWindow(Adw.Window):
     def _prefill_from_memory(self):
         pid = self.memory.mic_for(self.sink_node)
         prof = self.mic_store.get(pid) if pid else None
+        debug.mic_trace("prefill sink=%r pid=%r prof=%s nm=%r "
+                     "live=%d" % (self.sink_node, pid,
+                                  bool(prof),
+                                  (prof or {}).get("node_match"),
+                                  len(self.sources)))
         if prof:
             # cal BEFORE the dropdown: set_selected fires the
             # source-change handler synchronously, and
@@ -1029,12 +1035,15 @@ class MeasureWindow(Adw.Window):
                 except (TypeError, ValueError):
                     pass
         if prof and prof.get("node_match"):
+            debug.mic_trace("prefill select nm")
             self.mic_picker.select(
                 prof["node_match"],
                 next((s["desc"] for s in self.sources
                       if s["name"] == prof["node_match"]),
                      prof.get("name") or prof["node_match"]))
             self._adopt_selected_source()
+        debug.mic_trace("prefill done core=%r"
+                     % self.mic_picker.core.node)
         self._sync_cal_labels()
 
     def _select_profile_rig(self):
@@ -1700,6 +1709,11 @@ class MeasureWindow(Adw.Window):
 
     def _adopt_selected_source(self):
         src = self._selected_source()
+        debug.mic_trace("adopt src=%r core=%r in_list=%s"
+                     % ((src or {}).get("name"),
+                        self.mic_picker.core.node,
+                        any(s["name"] == self.mic_picker.core.node
+                            for s in self.sources)))
         if not src:
             return
         self._recompute_mic()
@@ -2142,6 +2156,13 @@ class MeasureWindow(Adw.Window):
         must survive a gone device."""
         live = (self._sink_present() and not self._sink_gone
                 and self._source_present() and not self._mic_gone)
+        debug.mic_trace("pult live=%s sinkP=%s sinkG=%s srcP=%s "
+                     "micG=%s busy=%s core=%r"
+                     % (live, self._sink_present(),
+                        self._sink_gone,
+                        self._source_present(),
+                        self._mic_gone, self._busy,
+                        self.mic_picker.core.node))
         if not live and not self._busy:
             # the tracer law, third service: a locked pult
             # names the missing end out loud -- the field saw
@@ -2161,6 +2182,8 @@ class MeasureWindow(Adw.Window):
                 # being born), so the mic banner sleeps -- the
                 # tracer names the state and the way out.
                 miss = "mic not resolved -- re-pick the mic"
+            debug.mic_trace("pult %r core=%r"
+                         % (miss, self.mic_picker.core.node))
             if self.center.get_text() != miss:
                 self.center.set_text(miss)
         self.play_btn.set_sensitive(not self._busy and live)
@@ -2494,6 +2517,8 @@ class MeasureWindow(Adw.Window):
         changes -- not only at create."""
         src = self._selected_source()
         if not src:
+            debug.mic_trace("persist skip core=%r"
+                         % self.mic_picker.core.node)
             return
         existing = self.mic_store.match(src["name"])
         cal = {str(i): p for i, p in self.cal.items() if p}

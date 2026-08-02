@@ -30,6 +30,11 @@ segfault); user picks defer their reconciliation to idle,
 after the emission unwinds.
 """
 
+import sys
+
+from . import debug
+
+
 class PickerCore:
     """Rows, placement and pick semantics, GTK-free."""
 
@@ -49,6 +54,9 @@ class PickerCore:
     def set_node(self, name, desc=None):
         """Move the current node; desc resolves from the graph
         when not given, falling back to the previous desc."""
+        debug.mic_trace("set_node %r -> %r via %s"
+               % (self.node, name,
+                  sys._getframe(1).f_code.co_name))
         self.node = name
         if desc is not None:
             self.desc = desc
@@ -192,6 +200,9 @@ class NodePicker:
         if self._guard:
             return
         hit = self.core.pick(self.dd.get_selected(), self._shown)
+        debug.mic_trace("on_selected idx=%r hit=%r shown=%d"
+               % (self.dd.get_selected(), hit,
+                  len(self._shown or [])))
         if hit is None:
             return
         node, desc = hit
