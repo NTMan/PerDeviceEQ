@@ -9,7 +9,7 @@ applies it to the live node and re-applies on every reconnect. Reading state
 pw-metadata. No GTK here; only stdlib + the PipeWire CLI tools.
 """
 
-import json, re, shutil, subprocess, threading
+import json, os, re, shutil, subprocess, threading
 
 from .config import METADATA_NAME
 
@@ -42,7 +42,13 @@ def missing_tools(tools=REQUIRED_TOOLS):
 
 def meter_available():
     """pw-record is needed only by the tier-2 live meter: its absence
-    degrades the app to the static tier-1 estimate, nothing more."""
+    degrades the app to the static tier-1 estimate, nothing more.
+
+    PDEQ_NO_METER=1 forces the degraded mode for diagnostics: the GUI
+    then runs without its sink-monitor tap, so a measurement can be
+    compared with and without that stream present."""
+    if os.environ.get("PDEQ_NO_METER"):
+        return False
     return shutil.which("pw-record") is not None
 
 
