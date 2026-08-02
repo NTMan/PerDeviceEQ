@@ -462,6 +462,36 @@ def set_sink_volume(sink_id, cubic):
         raise MeasureError("wpctl set-volume failed: %s" % r.stderr.strip())
 
 
+def await_sink_volume(sink_id, cubic, timeout_s=2.5):
+    """Poll the sink until a just-written volume actually LANDS
+    (channelVolumes ~= cubic**3), or the deadline passes. The
+    field corpse: a take whose head played at the user's
+    listening volume with our measurement level ramping in 2.6
+    seconds later -- a 16 dB step mid-sweep, once per session,
+    under first-take congestion. The old cure ("settle a
+    Bluetooth sink") trusted the transport to name the risk;
+    the write's round trip can be late on ANY sink, so the
+    settle is now a READBACK, not a faith. Returns True when
+    the volume is seen in place; on timeout returns False and
+    says so -- a late volume must never fail the take, only
+    stop being silent."""
+    target = float(cubic) ** 3
+    tol = max(0.02 * target, 1e-4)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            cv, _ = sink_applied_volumes(pw_dump(), sink_id)
+        except Exception:
+            cv = None
+        if cv and max(abs(v - target) for v in cv) <= tol:
+            return True
+        if time.monotonic() >= deadline:
+            print("volume settle timeout on sink %s; "
+                  "sweeping anyway" % sink_id)
+            return False
+        time.sleep(0.05)
+
+
 def sink_applied_volumes(dump, sink_id):
     """(channelVolumes, softVolumes) linear arrays from the sink's
     Props. channelVolumes is the user-facing volume cubed; softVolumes
@@ -1360,9 +1390,14 @@ class MeasureSession:
             self.eq_state = eq.__enter__()  # bypass the device EQ for it
             try:
                 changed = self._set_meas_volume(True)  # meas. level
-                if changed and (self.sink_ident.get("device_api")
-                                or "").startswith("bluez"):
-                    self._warm_sink()
+                if changed:
+                    # readback settle on EVERY transport; the
+                    # warm-up stays as the Bluetooth link wake
+                    await_sink_volume(self.sink["id"],
+                                      self._v_cur)
+                    if (self.sink_ident.get("device_api")
+                            or "").startswith("bluez"):
+                        self._warm_sink()
                 try:
                     data, info = run_take(self.sink, self.source, self.wav,
                                           self.wav_duration, cfg.channels,

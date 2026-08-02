@@ -828,3 +828,31 @@ def test_debug_env_keeps_the_raw(tmp_path, monkeypatch):
     assert not ses2._ephemeral
     assert own.raw_capture_dump is False
     assert str(tmp_path / "own") in ses2.outdir
+
+
+def test_await_sink_volume_reads_back(monkeypatch):
+    """The settle is a readback, not a faith in transports: the
+    field corpse was a take whose head played at the listening
+    volume, our level ramping in 2.6 s later -- a 16 dB step
+    mid-sweep. The await polls until channelVolumes land."""
+    seq = [([0.9 ** 3, 0.9 ** 3], [1.0, 1.0]),
+           ([0.9 ** 3, 0.9 ** 3], [1.0, 1.0]),
+           ([0.614 ** 3, 0.614 ** 3], [1.0, 1.0])]
+    calls = {"n": 0}
+
+    def fake_dump():
+        return "dump"
+
+    def fake_applied(dump, sink_id):
+        i = min(calls["n"], len(seq) - 1)
+        calls["n"] += 1
+        return seq[i]
+    monkeypatch.setattr(ms, "pw_dump", fake_dump)
+    monkeypatch.setattr(ms, "sink_applied_volumes",
+                        fake_applied)
+    assert ms.await_sink_volume(7, 0.614, timeout_s=2.0)
+    assert calls["n"] == 3
+
+    calls["n"] = 0
+    seq[:] = [([0.9 ** 3, 0.9 ** 3], [1.0, 1.0])]
+    assert not ms.await_sink_volume(7, 0.614, timeout_s=0.15)
