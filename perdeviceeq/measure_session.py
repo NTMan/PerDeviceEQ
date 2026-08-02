@@ -956,6 +956,7 @@ class TakeRecord:
     h2_db: object = None            # harmonic confession, core axes
     h3_db: object = None
     thd_db: object = None
+    thd_noise_db: object = None     # the floor of the same reading
 
 
 def spread_trust_bound(spread, n_takes):
@@ -1554,7 +1555,8 @@ class MeasureSession:
                          capture_channel=capture,
                          created_utc=_utc_now(),
                          h2_db=t.h2_db, h3_db=t.h3_db,
-                         thd_db=t.thd_db)
+                         thd_db=t.thd_db,
+                         thd_noise_db=t.thd_noise_db)
         self._takes.setdefault(channel, []).append((rec, chan))
         return TakeOutcome("take", take=rec,
                            spread_db=self.spread_db(channel), notes=notes)

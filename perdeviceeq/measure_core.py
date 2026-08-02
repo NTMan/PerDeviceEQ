@@ -297,6 +297,7 @@ class Take:
     #                           NaN where the sweep cannot testify
     h3_db: object = None      # 3rd ditto
     thd_db: object = None     # power sum of harmonics 2..5, same axis
+    thd_noise_db: object = None  # the floor of the same measurement
 
 
 def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
@@ -310,17 +311,27 @@ def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
     field seconds -- the images sit in every take already; only the
     math was being thrown away.
 
-    Returns (h2_db, h3_db, thd_db) arrays on `freqs`, NaN where the
-    sweep cannot testify (k*f beyond the sweep's top or Nyquist
-    guard, or the image window off the recording); (None, None,
-    None) when no image is extractable at all. THD is the power sum
-    over the available orders."""
+    Returns (h2_db, h3_db, thd_db, noise_db) arrays on `freqs`,
+    NaN where the sweep cannot testify (k*f beyond the sweep's top
+    or Nyquist guard, or the image window off the recording);
+    (None, None, None, None) when no image is extractable at all.
+    THD is the power sum over the available orders. noise_db is
+    the floor of the SAME measurement: for each order a window of
+    the image's own length, taken from the quiet land BEFORE the
+    earliest image, read with the same spectrum machinery at k*f
+    and ratioed to the same fundamental -- then power-summed like
+    the THD itself. A reading within a few dB of this line is the
+    instrument speaking, not the device; the field corpse was a
+    quiet run whose mid-band THD stopped following the drive
+    because it had landed on this very floor, invisibly."""
     fs = sweep.fs
     L = sweep.sweep_rate_l
     fmax_img = min(sweep.f_end, 0.45 * fs)
     freqs = np.asarray(freqs, float)
     main = np.asarray(main_mag_db, float)
-    ratios = {}
+    quiet_end = peak - int(round((L * math.log(max(ks))
+                                  + 0.05) * fs))
+    ratios, floors = {}, {}
     for k in ks:
         center = peak - int(round(L * math.log(k) * fs))
         d_lo = math.log((k + 1) / k)
@@ -337,16 +348,39 @@ def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
         r = np.full(len(freqs), np.nan)
         r[valid] = m - main[valid]
         ratios[k] = r
+        # the quiet land can be shorter than the image's own
+        # window (the real rig leaves ~0.26 s before the k=5
+        # image); a white-noise floor read with a shrunken
+        # window corrects exactly by 10*log10(W/W_used)
+        lo_q = int(0.02 * fs)
+        avail = (quiet_end - lo_q) // 2
+        h_use = min(half, avail)
+        if h_use >= int(0.008 * fs):
+            n_c = quiet_end - h_use
+            nseg = np.array(ir[n_c - h_use:n_c + h_use + 1],
+                            float)
+            nseg *= np.hanning(len(nseg))
+            nm = ir_to_magnitude(nseg, fs, freqs[valid] * k)
+            nm += 10.0 * math.log10(half / max(h_use, 1))
+            nr = np.full(len(freqs), np.nan)
+            nr[valid] = nm - main[valid]
+            floors[k] = nr
+
+    def psum(d):
+        if not d:
+            return None
+        stack = np.array(list(d.values()))
+        with np.errstate(all="ignore"):
+            p = np.nansum(10.0 ** (stack / 10.0), axis=0)
+            cnt = np.sum(np.isfinite(stack), axis=0)
+            return np.where(cnt > 0,
+                            10.0 * np.log10(
+                                np.maximum(p, 1e-30)),
+                            np.nan)
     if not ratios:
-        return None, None, None
-    stack = np.array(list(ratios.values()))
-    with np.errstate(all="ignore"):
-        p = np.nansum(10.0 ** (stack / 10.0), axis=0)
-        cnt = np.sum(np.isfinite(stack), axis=0)
-        thd = np.where(cnt > 0,
-                       10.0 * np.log10(np.maximum(p, 1e-30)),
-                       np.nan)
-    return ratios.get(2), ratios.get(3), thd
+        return None, None, None, None
+    return (ratios.get(2), ratios.get(3), psum(ratios),
+            psum(floors))
 
 
 def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
@@ -357,9 +391,10 @@ def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
                                   post_ms)
     mag = ir_to_magnitude(seg, sweep.fs, freqs)
     snr, sig_db, noise_db = estimate_snr(recording, peak, sweep)
-    h2, h3, thd = extract_harmonics(ir, sweep, freqs, peak, mag)
+    h2, h3, thd, nfl = extract_harmonics(ir, sweep, freqs, peak,
+                                         mag)
     return Take(freqs, mag, 1000.0 * peak / sweep.fs, snr, sig_db, noise_db,
-                h2_db=h2, h3_db=h3, thd_db=thd)
+                h2_db=h2, h3_db=h3, thd_db=thd, thd_noise_db=nfl)
 
 
 def average_takes(takes):

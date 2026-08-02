@@ -265,3 +265,41 @@ def test_the_sweep_confesses_known_harmonics():
     tl = mc.analyze_take(lin, sweep, freqs)
     h2l = np.asarray(tl.h2_db, float)[band]
     assert float(np.median(h2l)) < -70.0
+
+
+def test_the_noise_floor_rides_the_confession():
+    """The gray line law: a clean sweep in noise must read THD
+    hugging its own floor (both are the same noise, measured
+    the same way), and a truly distorted sweep must stand far
+    above it. The field corpse: a quiet run whose mid-band THD
+    stopped following the drive because it had landed on this
+    floor, invisibly."""
+    fs = 48000
+    sweep = mc.generate_sweep(n_samples=2 * fs, fs=fs,
+                              f_start=20.0, f_end=20000.0)
+    rng = np.random.default_rng(11)
+    x = sweep.signal
+    # a realistic second of pre-silence: the session's own
+    # pre_silence is 1.0 s, and the quiet land BEFORE the
+    # earliest harmonic image is where the floor is read
+    lead = np.zeros(fs)
+    freqs = mc.log_grid(50.0, 8000.0, 48)
+    band = (freqs >= 100.0) & (freqs <= 4000.0)
+
+    lin = np.concatenate([lead, x, np.zeros(fs // 2)])
+    lin = lin + rng.normal(0.0, 10 ** (-70.0 / 20.0),
+                           len(lin))
+    tl = mc.analyze_take(lin, sweep, freqs)
+    thd = np.asarray(tl.thd_db, float)[band]
+    nfl = np.asarray(tl.thd_noise_db, float)[band]
+    assert np.all(np.isfinite(nfl))
+    assert abs(float(np.median(thd - nfl))) < 4.0
+
+    a, b = 0.02, 0.04
+    y = np.concatenate([lead, x + a * x * x + b * x ** 3,
+                        np.zeros(fs // 2)])
+    y = y + rng.normal(0.0, 10 ** (-70.0 / 20.0), len(y))
+    td = mc.analyze_take(y, sweep, freqs)
+    gap = (np.asarray(td.thd_db, float)
+           - np.asarray(td.thd_noise_db, float))[band]
+    assert float(np.median(gap)) > 15.0
