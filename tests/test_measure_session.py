@@ -21,6 +21,24 @@ from perdeviceeq import measure_session as ms
 
 ROOT = Path(__file__).resolve().parent.parent
 SHIMS = ROOT / "tests" / "shims"
+
+# The minimal live graph for construction-time tests that resolve at
+# birth without the shim PATH: an alsa sink with a Props volume block
+# and an alsa source. Tests that need subprocess behavior request the
+# shim_state fixture instead.
+TWO_NODE_GRAPH = [
+    {"id": 1, "type": "PipeWire:Interface:Node",
+     "info": {"props": {"node.name": "test_sink",
+                        "media.class": "Audio/Sink",
+                        "device.api": "alsa"},
+              "params": {"Props": [{
+                  "channelVolumes": [0.074087, 0.074087],
+                  "mute": False}]}}},
+    {"id": 2, "type": "PipeWire:Interface:Node",
+     "info": {"props": {"node.name": "test_source",
+                        "media.class": "Audio/Source",
+                        "device.api": "alsa"}}},
+]
 F_LO_CHECK, F_HI_CHECK = 40.0, 16000.0
 TOL_DB = 0.5
 
@@ -811,6 +829,8 @@ def test_debug_env_keeps_the_raw(tmp_path, monkeypatch):
     an investigation can receive the raw material without
     stuffing megabytes of base64 into the profile. An explicit
     save_dir outranks the environment hand."""
+    monkeypatch.setattr(ms, "pw_dump",
+                        lambda: TWO_NODE_GRAPH)
     monkeypatch.setenv(ms.DEBUG_RAW_ENV, str(tmp_path / "dbg"))
     cfg = ms.SessionConfig(sink="test_sink",
                            source="test_source",
@@ -858,10 +878,12 @@ def test_await_sink_volume_reads_back(monkeypatch):
     assert not ms.await_sink_volume(7, 0.614, timeout_s=0.15)
 
 
-def test_start_volume_outranks_sink_read(tmp_path):
+def test_start_volume_outranks_sink_read(tmp_path, monkeypatch):
     """The explicit hand beats the environment: an unarmed
     session wears cfg.start_volume from birth, not the sink's
     current cubic; without the hand, the sink read stands."""
+    monkeypatch.setattr(ms, "pw_dump",
+                        lambda: TWO_NODE_GRAPH)
     cfg = ms.SessionConfig(sink="test_sink",
                            source="test_source",
                            samples=131072,
