@@ -116,6 +116,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 import numpy as np
+
+from . import debug
 from scipy.stats import chi2
 
 from . import measure_core as mc
@@ -460,6 +462,46 @@ def set_sink_volume(sink_id, cubic):
     r = _run(["wpctl", "set-volume", str(sink_id), "%.4f" % cubic])
     if r.returncode != 0:
         raise MeasureError("wpctl set-volume failed: %s" % r.stderr.strip())
+
+
+def watch_volume_ends(sink_id, stop_evt, source_id=None):
+    """Sample every volume that can affect a take, ten times a
+    second, and print any change with a timestamp
+    (PDEQ_TRACE_VOL=1). Watched: the sink device, the source
+    device, and every Stream/* node -- the playback and
+    capture streams carry their own channelVolumes and
+    softVolumes, which no device slider shows and which
+    session policy may touch asynchronously after connect."""
+    t0 = time.monotonic()
+    last = {}
+    while not stop_evt.wait(0.1):
+        try:
+            dump = pw_dump()
+        except Exception:
+            continue
+        for o in _nodes(dump):
+            props = _props(o)
+            cls = props.get("media.class") or ""
+            oid = o["id"]
+            if not (oid in (sink_id, source_id)
+                    or cls.startswith("Stream/")):
+                continue
+            d = props_param(o)
+            cv = tuple(float(v) for v in
+                       d.get("channelVolumes") or ())
+            sv = tuple(float(v) for v in
+                       d.get("softVolumes") or ())
+            if oid not in last:
+                last[oid] = (cv, sv)
+                continue
+            if last[oid] != (cv, sv):
+                name = props.get("node.name") or "?"
+                debug.vol_trace(
+                    "t=+%.3fs end=%s(%d) cv=%s sv=%s"
+                    % (time.monotonic() - t0, name, oid,
+                       ["%.4f" % v for v in cv],
+                       ["%.4f" % v for v in sv]))
+                last[oid] = (cv, sv)
 
 
 def await_sink_volume(sink_id, cubic, timeout_s=2.5):
@@ -1409,6 +1451,14 @@ class MeasureSession:
                     if (self.sink_ident.get("device_api")
                             or "").startswith("bluez"):
                         self._warm_sink()
+                vstop = threading.Event()
+                if os.environ.get("PDEQ_TRACE_VOL"):
+                    threading.Thread(
+                        target=watch_volume_ends,
+                        args=(self.sink["id"], vstop),
+                        kwargs={"source_id":
+                                self.source["id"]},
+                        daemon=True).start()
                 try:
                     data, info = run_take(self.sink, self.source, self.wav,
                                           self.wav_duration, cfg.channels,
@@ -1419,6 +1469,7 @@ class MeasureSession:
                                           channel_map=cmap)
                     gains = self._applied_gains(channel)
                 finally:
+                    vstop.set()
                     self._set_meas_volume(False)  # restore listening volume
             finally:
                 eq.__exit__(None, None, None)   # restore the EQ right after

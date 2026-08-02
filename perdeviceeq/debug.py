@@ -10,6 +10,19 @@ import os
 import sys
 
 
+def vol_trace(*a):
+    """Volume tracing during a take, PDEQ_TRACE_VOL=1.
+
+    A take once showed a flat -14 dB drop while both device
+    volumes were proven constant by independent checks; the
+    only volumes left unobserved were the playback and
+    capture streams' own. With this variable set, every take
+    runs a sampler that prints any volume change with a
+    timestamp and the node's name."""
+    if os.environ.get("PDEQ_TRACE_VOL"):
+        print("vol-trace:", *a, file=sys.stderr)
+
+
 def mic_trace(*a):
     """The mic-binding trace, PDEQ_TRACE_MIC=1.
 
