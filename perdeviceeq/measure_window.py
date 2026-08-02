@@ -1738,6 +1738,14 @@ class MeasureWindow(Adw.Window):
         self._sync_cal_labels()
         self._persist_mic()
         self._reset_unarmed_session()
+        # the field's stale verdict: the pult judged BEFORE the
+        # mic was born (constructor order), the prefill then
+        # bound the canonical node, and nobody re-judged -- the
+        # "mic not resolved" text and the locked buttons
+        # outlived their own truth until the next graph event.
+        # The law: the court sits again after every move of the
+        # rig -- prefill, profile restore, user pick, cal alike.
+        self._update_pult()
 
     def _reset_unarmed_session(self):
         """The mic or its capsule count changed before anything was
@@ -1774,6 +1782,14 @@ class MeasureWindow(Adw.Window):
         self._sync_cal_labels()
         self._persist_mic()
         self._reset_unarmed_session()
+        # the field's stale verdict: the pult judged BEFORE the
+        # mic was born (constructor order), the prefill then
+        # bound the canonical node, and nobody re-judged -- the
+        # "mic not resolved" text and the locked buttons
+        # outlived their own truth until the next graph event.
+        # The law: the court sits again after every move of the
+        # rig -- prefill, profile restore, user pick, cal alike.
+        self._update_pult()
 
     def _mic_channels(self):
         src = self._selected_source()
@@ -2186,6 +2202,16 @@ class MeasureWindow(Adw.Window):
                          % (miss, self.mic_picker.core.node))
             if self.center.get_text() != miss:
                 self.center.set_text(miss)
+            self._pult_missed = True
+        elif not self._busy and getattr(self, "_pult_missed",
+                                        False):
+            # the court announces the acquittal too: a verdict
+            # written before the mic was born used to outlive
+            # its own truth -- the live passes moved the
+            # buttons but never erased the text, and the field
+            # judged the window by the words
+            self.center.set_text("Click a speaker to measure")
+            self._pult_missed = False
         self.play_btn.set_sensitive(not self._busy and live)
         if getattr(self, "relevel_btn", None) is not None:
             self.relevel_btn.set_sensitive(not self._busy and live)
