@@ -856,3 +856,21 @@ def test_await_sink_volume_reads_back(monkeypatch):
     calls["n"] = 0
     seq[:] = [([0.9 ** 3, 0.9 ** 3], [1.0, 1.0])]
     assert not ms.await_sink_volume(7, 0.614, timeout_s=0.15)
+
+
+def test_start_volume_outranks_sink_read(tmp_path):
+    """The explicit hand beats the environment: an unarmed
+    session wears cfg.start_volume from birth, not the sink's
+    current cubic; without the hand, the sink read stands."""
+    cfg = ms.SessionConfig(sink="test_sink",
+                           source="test_source",
+                           samples=131072,
+                           start_volume=0.42)
+    ses = ms.MeasureSession(cfg)
+    assert abs(ses._v_cur - 0.42) < 1e-9
+
+    bare = ms.SessionConfig(sink="test_sink",
+                            source="test_source",
+                            samples=131072)
+    ses2 = ms.MeasureSession(bare)
+    assert ses2._v_cur == ses2.volume_start

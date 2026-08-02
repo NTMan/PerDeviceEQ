@@ -1145,7 +1145,15 @@ class MeasureSession:
         self.eq_state = None
         self._stack = None
         self._cancel = threading.Event()    # set by cancel() to abort a sweep
-        self._v_cur = self.volume_start
+        # the explicit hand outranks the environment read: an
+        # unarmed session used to wear the sink's CURRENT cubic
+        # as its level until the first sweep armed it, so the
+        # fader showed the listening volume while cfg named the
+        # remembered one -- the very fallback the window's
+        # refresh docstring warned about, alive one floor down
+        self._v_cur = (cfg.start_volume
+                       if cfg.start_volume is not None
+                       else self.volume_start)
         self._leveled = not cfg.auto_level
         self._auto_ctl = AutoLevel()
         # where the current sweep level came from: "remembered" (a
@@ -1210,7 +1218,9 @@ class MeasureSession:
     def __enter__(self):
         if not self._resolved:
             self._resolve(pw_dump())
-            self._v_cur = self.volume_start
+            self._v_cur = (self.cfg.start_volume
+                           if self.cfg.start_volume is not None
+                           else self.volume_start)
         if self.outdir is None:             # ephemeral working dir
             self.outdir = tempfile.mkdtemp(
                 prefix="per-device-eq-%s-" % self._slug)

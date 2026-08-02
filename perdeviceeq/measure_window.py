@@ -1173,6 +1173,7 @@ class MeasureWindow(Adw.Window):
         and a pending hunt can never wear the same face again."""
         if self.session is not None:
             v = getattr(self.session, "_v_cur", None)
+            debug.mic_trace("refresh session_v=%r" % v)
             if v is not None:
                 self._set_volume_display(v)
         else:
@@ -1184,6 +1185,8 @@ class MeasureWindow(Adw.Window):
             src = self._source_name()
             v = (self.memory.volume_for(self.sink_node, src)
                  if src else None)
+            debug.mic_trace("refresh mem_v=%r src=%r"
+                            % (v, src))
             self._set_volume_display(v if v is not None
                                      else 0.0)
 
@@ -1738,6 +1741,28 @@ class MeasureWindow(Adw.Window):
         self._sync_cal_labels()
         self._persist_mic()
         self._reset_unarmed_session()
+        # the pair's remembered level lands the moment both
+        # ends are known: the restore branch in
+        # _refresh_volume was honest but unreachable -- the
+        # session is built in the constructor now, so the
+        # display always showed session._v_cur, seeded from
+        # the fader widget's hardcoded birth value; the pair
+        # memory (which held the hand's own 42 all along) was
+        # never consulted. Before the session exists this
+        # paints the fader, and the session then reads its
+        # start level from that very widget; with a session
+        # alive (a mid-life pair change) the level is set
+        # directly.
+        rv = self.memory.volume_for(self.sink_node,
+                                    self._source_name())
+        debug.mic_trace("level rv=%r src=%r session=%s "
+                        "spin=%.0f"
+                        % (rv, self._source_name(),
+                           self.session is not None,
+                           self.vol_spin.get_value()))
+        if rv is not None and self.session is not None:
+            self.session.set_level(rv)
+        self._refresh_volume()
         # the field's stale verdict: the pult judged BEFORE the
         # mic was born (constructor order), the prefill then
         # bound the canonical node, and nobody re-judged -- the
@@ -1782,6 +1807,28 @@ class MeasureWindow(Adw.Window):
         self._sync_cal_labels()
         self._persist_mic()
         self._reset_unarmed_session()
+        # the pair's remembered level lands the moment both
+        # ends are known: the restore branch in
+        # _refresh_volume was honest but unreachable -- the
+        # session is built in the constructor now, so the
+        # display always showed session._v_cur, seeded from
+        # the fader widget's hardcoded birth value; the pair
+        # memory (which held the hand's own 42 all along) was
+        # never consulted. Before the session exists this
+        # paints the fader, and the session then reads its
+        # start level from that very widget; with a session
+        # alive (a mid-life pair change) the level is set
+        # directly.
+        rv = self.memory.volume_for(self.sink_node,
+                                    self._source_name())
+        debug.mic_trace("level rv=%r src=%r session=%s "
+                        "spin=%.0f"
+                        % (rv, self._source_name(),
+                           self.session is not None,
+                           self.vol_spin.get_value()))
+        if rv is not None and self.session is not None:
+            self.session.set_level(rv)
+        self._refresh_volume()
         # the field's stale verdict: the pult judged BEFORE the
         # mic was born (constructor order), the prefill then
         # bound the canonical node, and nobody re-judged -- the
