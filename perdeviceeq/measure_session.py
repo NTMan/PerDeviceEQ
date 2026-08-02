@@ -873,6 +873,9 @@ def default_save_base():
 
 # --- session: the wizard-facing single-take API ---------------------------
 
+DEBUG_RAW_ENV = "PDEQ_DEBUG_RAW"
+
+
 @dataclass
 class SessionConfig:
     """Everything a measurement session needs up front. The analyzed
@@ -895,7 +898,7 @@ class SessionConfig:
     save_dir: str = None    # None -> throwaway tempdir, wiped on exit
     mute_others: bool = False
     auto_level: bool = False
-    raw_capture_dump: bool = False
+    raw_capture_dump: bool = False  # also forced on by DEBUG_RAW_ENV
     start_volume: float = None      # applied on enter when not auto_level
 
 
@@ -1082,6 +1085,19 @@ class MeasureSession:
         slug = re.sub(r"[^\w.+-]+", "_",
                       cfg.device or self.sink_ident["name"]
                       or "device").strip("_")
+        dbg = os.environ.get(DEBUG_RAW_ENV)
+        if dbg and not cfg.save_dir:
+            # the debug hand: an investigation sometimes needs the
+            # RAW material -- the sweep files, every take%02d.wav
+            # and the multichannel raw%02d.wav dumps -- and the
+            # profile is the wrong home for megabytes of base64
+            # (the package stays bare; the canvas is the record).
+            # Both halves already existed unwired: save_dir keeps
+            # the session dir, raw_capture_dump writes the raw
+            # captures. The environment hand joins them; an
+            # explicit save_dir outranks it.
+            cfg.save_dir = os.path.expanduser(dbg)
+            cfg.raw_capture_dump = True
         if cfg.save_dir:
             self.outdir = os.path.join(
                 cfg.save_dir,

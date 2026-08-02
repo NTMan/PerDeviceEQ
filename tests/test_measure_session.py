@@ -802,3 +802,29 @@ def test_take_fails_honestly_when_an_end_left(shim_state, tmp_path,
         with pytest.raises(ms.MeasureError,
                            match="failed to open"):
             ses.take(0)
+
+
+def test_debug_env_keeps_the_raw(tmp_path, monkeypatch):
+    """PDEQ_DEBUG_RAW joins two organs that always existed --
+    save_dir (persistent session dir, never reaped) and
+    raw_capture_dump (multichannel raw%02d.wav per take) -- so
+    an investigation can receive the raw material without
+    stuffing megabytes of base64 into the profile. An explicit
+    save_dir outranks the environment hand."""
+    monkeypatch.setenv(ms.DEBUG_RAW_ENV, str(tmp_path / "dbg"))
+    cfg = ms.SessionConfig(sink="test_sink",
+                           source="test_source",
+                           samples=131072)
+    ses = ms.MeasureSession(cfg)
+    assert not ses._ephemeral
+    assert cfg.raw_capture_dump is True
+    assert ses.outdir and str(tmp_path / "dbg") in ses.outdir
+
+    own = ms.SessionConfig(sink="test_sink",
+                           source="test_source",
+                           samples=131072,
+                           save_dir=str(tmp_path / "own"))
+    ses2 = ms.MeasureSession(own)
+    assert not ses2._ephemeral
+    assert own.raw_capture_dump is False
+    assert str(tmp_path / "own") in ses2.outdir
