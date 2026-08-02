@@ -492,6 +492,18 @@ def watch_volume_ends(sink_id, stop_evt, source_id=None):
             sv = tuple(float(v) for v in
                        d.get("softVolumes") or ())
             if oid not in last:
+                # census: announce every end on first sight,
+                # including streams born mid-take -- a live
+                # watcher is distinguishable from a dead one,
+                # and a census missing our own streams
+                # convicts the node filter
+                debug.vol_trace(
+                    "t=+%.3fs seen %s(%d) %s cv=%s sv=%s"
+                    % (time.monotonic() - t0,
+                       props.get("node.name") or "?",
+                       oid, cls or "device",
+                       ["%.4f" % v for v in cv],
+                       ["%.4f" % v for v in sv]))
                 last[oid] = (cv, sv)
                 continue
             if last[oid] != (cv, sv):
