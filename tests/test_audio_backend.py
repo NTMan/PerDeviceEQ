@@ -34,7 +34,8 @@ class FakeBackend(AudioBackend):
         return ["token"] if mute else None
 
     def _pull(self):
-        return {"sinks": ["s1"], "sources": ["m1"],
+        return {"sinks": [{"name": "s1"}],
+                "sources": [{"name": "m1"}],
                 "default_sink": "s1"}
 
     def capture(self, device, channels, rate):
@@ -136,7 +137,8 @@ def test_observe_notifies_on_change_only():
     assert f.refresh() is True
     assert f.refresh() is False
     assert seen == ["s1"]
-    assert f.sinks == ["s1"] and f.sources == ["m1"]
+    assert f.sinks == [{"name": "s1"}]
+    assert f.sources == [{"name": "m1"}]
 
 
 def test_seed_restores_what_the_server_had():

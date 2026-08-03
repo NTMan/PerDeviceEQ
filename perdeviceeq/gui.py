@@ -155,7 +155,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._loading = False
         self.sinks = []
         self._node_gone = False
-        self._pw = pipewire.app_state()
+        self._pw = pw_backend.backend()
         self._pw_unsub = None
         self._measure_win = None
 

@@ -211,13 +211,66 @@ class PipeWireBackend(AudioBackend):
 
     # -- observed side ---------------------------------------------------
 
-    def _pull(self):
-        dump = pipewire.pw_dump()
+    def _pull(self, dump=None):
+        if dump is None:
+            dump = pipewire.pw_dump()
+        default = pipewire.default_sink_from_dump(dump)
+        if default is None:
+            default = pipewire.default_sink_name()
         return {
-            "sinks": pipewire.list_sinks(dump),
+            "sinks": pipewire.list_sinks(dump, default=default),
             "sources": pipewire.list_sources(dump),
-            "default_sink": pipewire.default_sink_from_dump(dump),
+            "default_sink": default,
         }
+
+    def update(self, dump=None):
+        """Refresh from one pw_dump (fetched if not given). Returns
+        True if the population changed. Synchronous; tests and the
+        birth reconcile call it directly."""
+        return self._ingest(self._pull(dump))
+
+    # -- the heartbeat: one poll feeds every window ----------------------
+
+    POLL_S = 3
+
+    _timer = 0
+    _busy = False
+    _glib = None
+
+    def start(self, interval_s=None):
+        """Begin the periodic refresh (idempotent). Uses GLib; only
+        the app calls this -- tests drive update() directly."""
+        if self._timer:
+            return
+        from gi.repository import GLib
+        self._glib = GLib
+        self._timer = GLib.timeout_add_seconds(
+            interval_s or self.POLL_S, self._tick)
+
+    def stop(self):
+        if self._timer and self._glib is not None:
+            self._glib.source_remove(self._timer)
+        self._timer = 0
+
+    def _tick(self):
+        if self._busy:
+            return True                  # previous refresh running
+        self._busy = True
+
+        def work():
+            snap = None
+            try:
+                snap = self._pull()
+            finally:
+                self._glib.idle_add(self._apply_snap, snap)
+        pipewire._in_thread(work)
+        return True                      # keep the timer running
+
+    def _apply_snap(self, snap):
+        self._busy = False
+        if snap is not None:
+            self._ingest(snap)
+        return False
 
     # -- measurement streams ---------------------------------------------
 

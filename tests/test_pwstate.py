@@ -1,6 +1,7 @@
 """PWState: one snapshot (sinks/sources/default) with change detection and
 subscriptions. GTK-free core, driven by update() against synthetic dumps."""
 from perdeviceeq import pipewire as pw
+from perdeviceeq import pw_backend as pwb
 
 
 def _node(nid, name, cls, prio=0):
@@ -31,7 +32,7 @@ def test_default_sink_from_dump_absent():
 
 
 def test_pwstate_update_fills_and_detects_change():
-    st = pw.PWState()
+    st = pwb.PipeWireBackend()
     d1 = [_default_meta("spk"), _node(1, "spk", "Audio/Sink"),
           _node(2, "mic", "Audio/Source")]
     assert st.update(d1) is True             # first snapshot -> changed
@@ -44,7 +45,7 @@ def test_pwstate_update_fills_and_detects_change():
 
 
 def test_pwstate_default_change_is_a_change():
-    st = pw.PWState()
+    st = pwb.PipeWireBackend()
     nodes = [_node(1, "spk", "Audio/Sink"), _node(2, "hp", "Audio/Sink")]
     st.update([_default_meta("spk")] + nodes)
     assert st.update([_default_meta("hp")] + nodes) is True
@@ -52,7 +53,7 @@ def test_pwstate_default_change_is_a_change():
 
 
 def test_pwstate_subscribe_notify_unsubscribe():
-    st = pw.PWState()
+    st = pwb.PipeWireBackend()
     seen = []
     off = st.subscribe(lambda s: seen.append(s.default_sink))
     st.default_sink = "x"
@@ -64,4 +65,4 @@ def test_pwstate_subscribe_notify_unsubscribe():
 
 
 def test_app_state_is_singleton():
-    assert pw.app_state() is pw.app_state()
+    assert pwb.backend() is pwb.backend()

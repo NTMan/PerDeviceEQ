@@ -208,22 +208,44 @@ class AudioBackend(ABC):
     def refresh(self):
         """Pull one snapshot from the server into the observed store;
         notify subscribers when it changed. Synchronous; heirs may
-        drive it from a timer."""
-        snap = self._pull()
-        changed = (snap.get("sinks") != self.sinks
-                   or snap.get("sources") != self.sources
-                   or snap.get("default_sink") != self.default_sink)
+        drive it from a timer. Change means the POPULATION changed
+        (names or the default), not any property: a volume tick must
+        not rebuild every picker."""
+        return self._ingest(self._pull())
+
+    def _ingest(self, snap):
         self.sinks = snap.get("sinks", [])
         self.sources = snap.get("sources", [])
         self.default_sink = snap.get("default_sink")
+        sig = (tuple(s.get("name") for s in self.sinks),
+               tuple(s.get("name") for s in self.sources),
+               self.default_sink)
+        changed = sig != getattr(self, "_sig", None)
+        self._sig = sig
         if changed:
-            for cb in list(self._subs):
-                cb(self)
+            self._notify()
         return changed
 
+    def _notify(self):
+        for cb in list(self._subs):
+            try:
+                cb(self)
+            except Exception:
+                pass
+
     def subscribe(self, cb):
-        """Called with this backend after every observed change."""
+        """Register cb(state), called after each observed change.
+        Returns a callable that unsubscribes; windows MUST call it
+        on teardown so a closed window's callback is not fired on
+        dead widgets."""
         self._subs.append(cb)
+
+        def off():
+            try:
+                self._subs.remove(cb)
+            except ValueError:
+                pass
+        return off
 
     # -- heir verbs: the only platform-dependent surface ----------------
 

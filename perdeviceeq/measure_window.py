@@ -28,6 +28,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, GLib, Gdk, Adw, Pango  # noqa: E402
 
 from . import config, pipewire, measure_build       # noqa: E402
+from . import pw_backend
 from . import focus                                  # noqa: E402
 from . import debug
 from .picker import NodePicker                       # noqa: E402
@@ -215,7 +216,7 @@ class MeasureWindow(Adw.Window):
         self._speakers = {}         # ch index -> Gtk.Button
         self._speaker_counts = {}   # ch index -> Gtk.Label (# takes)
 
-        self._pw = pipewire.app_state()   # needed by _sink_present below
+        self._pw = pw_backend.backend()   # needed by _sink_present below
         self._pw_unsub = None
         self._build_ui()
         self._select_channel(0)
