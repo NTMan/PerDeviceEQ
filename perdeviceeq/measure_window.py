@@ -180,6 +180,10 @@ class MeasureWindow(Adw.Window):
 
         self.mic_store = measure_prefs.MicProfileStore()
         self.memory = measure_prefs.MeasureMemory()
+        # The backend handle is born before anything asks it:
+        # sources are read a few lines below, _sink_present later.
+        self._pw = pw_backend.backend()
+        self._pw_unsub = None
         try:
             self.ch_keys = pw_backend.backend().output_channels(sink_node) or ["FL", "FR"]
         except Exception:
@@ -217,8 +221,6 @@ class MeasureWindow(Adw.Window):
         self._speakers = {}         # ch index -> Gtk.Button
         self._speaker_counts = {}   # ch index -> Gtk.Label (# takes)
 
-        self._pw = pw_backend.backend()   # needed by _sink_present below
-        self._pw_unsub = None
         self._build_ui()
         self._select_channel(0)
         self.connect("close-request", self._on_close)
