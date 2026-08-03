@@ -121,7 +121,7 @@ from . import debug
 from scipy.stats import chi2
 
 from . import measure_core as mc
-from .pipewire import sink_channels
+from .pw_backend import sink_channels
 from . import pw_backend
 
 METADATA_NAME = "per-device-eq"          # same object the app + WP hook use

@@ -1,5 +1,5 @@
 """source_channels/sink_channels read a node's Format position from a dump."""
-from perdeviceeq import pipewire as pw
+from perdeviceeq import pw_backend as pw
 
 
 def _dump(name, position=None, channels=None):

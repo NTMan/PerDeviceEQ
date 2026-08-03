@@ -4,7 +4,7 @@ config) and the desktop entry + themed icon into the user's home, plus the
 matching uninstall. Everything is reversible and writes only under the user's
 ~/.config and ~/.local/share (the system /usr/share files belong to a package).
 
-No GTK; filesystem + a couple of best-effort CLI refreshes via pipewire._run.
+No GTK; filesystem + a couple of best-effort CLI refreshes via pw_backend._run.
 """
 
 import os, re, sys
@@ -12,7 +12,7 @@ import os, re, sys
 from .config import (HOOK_SRC_CANDIDATES, WP_SCRIPT, WP_SCRIPT_STALE, WP_CONF,
                      HOOK_CONF, SYS_DESKTOP_FILE, ICON_SRC_CANDIDATES,
                      DESKTOP_SRC_CANDIDATES, USER_ICON_FILE, USER_DESKTOP_FILE)
-from .pipewire import _run
+from .pw_backend import _run
 
 
 # ============================ WirePlumber hook ============================

@@ -7,8 +7,8 @@ import json, sys
 
 from .config import CLEAN_ID
 from .profiles import ProfileStore
-from .pipewire import (list_sinks, list_sources, node_params,
-                       metadata_set, metadata_clear)
+from .pw_backend import (list_sinks, list_sources, node_params,
+                         metadata_set, metadata_clear)
 
 
 def cmd_list():

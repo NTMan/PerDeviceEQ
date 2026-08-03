@@ -1,6 +1,5 @@
 """PWState: one snapshot (sinks/sources/default) with change detection and
 subscriptions. GTK-free core, driven by update() against synthetic dumps."""
-from perdeviceeq import pipewire as pw
 from perdeviceeq import pw_backend as pwb
 
 
@@ -20,15 +19,15 @@ def _default_meta(sink_name, as_string=False):
 
 def test_default_sink_from_dump_dict_value():
     d = [_default_meta("spk"), _node(1, "spk", "Audio/Sink")]
-    assert pw.default_sink_from_dump(d) == "spk"
+    assert pwb.default_sink_from_dump(d) == "spk"
 
 
 def test_default_sink_from_dump_json_string_value():
-    assert pw.default_sink_from_dump([_default_meta("spk", True)]) == "spk"
+    assert pwb.default_sink_from_dump([_default_meta("spk", True)]) == "spk"
 
 
 def test_default_sink_from_dump_absent():
-    assert pw.default_sink_from_dump([_node(1, "spk", "Audio/Sink")]) is None
+    assert pwb.default_sink_from_dump([_node(1, "spk", "Audio/Sink")]) is None
 
 
 def test_pwstate_update_fills_and_detects_change():

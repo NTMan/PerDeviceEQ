@@ -3,8 +3,7 @@
 No subprocess: synthetic pw-dump dicts are passed straight to the
 listing functions, so these test the filtering/shaping logic itself.
 """
-from perdeviceeq import pipewire
-from perdeviceeq import pw_backend as pwb
+from perdeviceeq import pw_backend as pipewire
 
 
 def _node(nid, name, cls, desc=None, prio=0):
@@ -60,9 +59,8 @@ def test_monitor_capture_pins_the_tap(monkeypatch):
             seen["cmd"] = cmd
             self.stdout = None
 
-    from perdeviceeq import pw_backend as pwb
-    monkeypatch.setattr(pwb.subprocess, "Popen", FakePopen)
-    pwb.PipeWireBackend().monitor_capture("some.sink", 2, 48000)
+    monkeypatch.setattr(pipewire.subprocess, "Popen", FakePopen)
+    pipewire.PipeWireBackend().monitor_capture("some.sink", 2, 48000)
     cmd = seen["cmd"]
     props = cmd[cmd.index("-P") + 1]
     assert "node.dont-reconnect = true" in props
@@ -84,12 +82,12 @@ def test_hook_protocol_states(monkeypatch):
         'Found "per-device-eq" metadata 99\n'
         "update: id:0 key:'protocol' value:'1' "
         "type:'Spa:String:JSON'\n"))
-    assert pwb.PipeWireBackend().hook_protocol() == (True, "1")
+    assert pipewire.PipeWireBackend().hook_protocol() == (True, "1")
 
     monkeypatch.setattr(
         pipewire, "_run",
         fake('Found "per-device-eq" metadata 99\n'))
-    assert pwb.PipeWireBackend().hook_protocol() == (True, None)
+    assert pipewire.PipeWireBackend().hook_protocol() == (True, None)
 
     monkeypatch.setattr(pipewire, "_run", fake(""))
-    assert pwb.PipeWireBackend().hook_protocol() == (False, None)
+    assert pipewire.PipeWireBackend().hook_protocol() == (False, None)

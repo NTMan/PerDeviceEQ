@@ -5,7 +5,6 @@ import types
 
 import pytest
 
-from perdeviceeq import pipewire
 from perdeviceeq import pw_backend as pwb
 from perdeviceeq.pw_backend import PipeWireBackend, StreamHandle
 
@@ -51,8 +50,8 @@ def rig(monkeypatch):
         return types.SimpleNamespace(returncode=0, stdout="",
                                      stderr="")
 
-    monkeypatch.setattr(pipewire, "_run", fake_run)
-    monkeypatch.setattr(pipewire, "pw_dump", lambda: FAKE_DUMP)
+    monkeypatch.setattr(pwb, "_run", fake_run)
+    monkeypatch.setattr(pwb, "pw_dump", lambda: FAKE_DUMP)
     return PipeWireBackend(), calls
 
 

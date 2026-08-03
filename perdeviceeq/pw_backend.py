@@ -1,6 +1,6 @@
 """PipeWireBackend: the heir of AudioBackend that speaks PipeWire.
 
-Every verb delegates to the battle-tested functions in pipewire.py
+Every verb delegates to the battle-tested functions in py
 where one exists; what did not exist there yet (stream mute, sink
 volume) landed there as this heir's permanent verbs. Reading the
 graph dump is this class's native tongue: the foreign-stream reader
@@ -9,6 +9,198 @@ step routes the program through the backend.
 
 One instance per process: use backend().
 """
+
+# ---- engine room (formerly py) ----
+# Runtime bridge to PipeWire and, through the 'per-device-eq' metadata object,
+# to the WirePlumber Lua hook.
+#
+# The app never talks to Lua directly: it writes a device's inline graph string
+# into the metadata (`metadata_set`) and the hook -- subscribed to that object --
+# applies it to the live node and re-applies on every reconnect. Reading state
+# (sinks, channels, params, default) is done by shelling out to pw-dump /
+# pw-metadata. No GTK here; only stdlib + the PipeWire CLI tools.
+
+def _run(cmd, timeout=2.0):
+    """Run a helper. A hung pw-* child is the classic way to freeze the GUI, so
+    every call is bounded by a timeout; on timeout/failure we kill the child and
+    return a sentinel CompletedProcess instead of blocking forever."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", "timeout")
+    except Exception as e:
+        return subprocess.CompletedProcess(cmd, 1, "", str(e))
+
+
+
+
+
+
+
+def pw_dump():
+    try:
+        return json.loads(_run(["pw-dump"], timeout=5.0).stdout)
+    except Exception:
+        return []
+
+def default_sink_name():
+    try:
+        out = _run(["pw-metadata", "-n", "default", "0", "default.audio.sink"]).stdout
+        m = re.search(r"value:'?(\{.*?\})'?", out)
+        if m:
+            return json.loads(m.group(1)).get("name")
+    except Exception:
+        pass
+    return None
+
+
+def default_sink_from_dump(dump):
+    """Default sink name from the 'default' Metadata object in a pw dump,
+    or None -- lets one dump yield the default without a pw-metadata call."""
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Metadata":
+            continue
+        props = o.get("props") or (o.get("info") or {}).get("props") or {}
+        if props.get("metadata.name") != "default":
+            continue
+        for e in (o.get("metadata") or []):
+            if e.get("key") == "default.audio.sink":
+                v = e.get("value")
+                if isinstance(v, dict):
+                    return v.get("name")
+                if isinstance(v, str):
+                    try:
+                        return json.loads(v).get("name")
+                    except Exception:
+                        pass
+    return None
+
+
+def list_sinks(dump=None, default=None):
+    dump = dump if dump is not None else pw_dump()
+    if default is None:
+        default = default_sink_name()
+    sinks = []
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("media.class") == "Audio/Sink":
+            name = p.get("node.name")
+            if not name:
+                continue
+            sinks.append({"id": o["id"], "name": name,
+                          "desc": p.get("node.description") or name,
+                          "prio": p.get("priority.session") or 0,
+                          "default": name == default})
+    sinks.sort(key=lambda s: -(s["prio"] or 0))
+    return sinks
+
+def list_sources(dump=None):
+    """Audio/Source nodes (measurement mics live here): id, name, desc,
+    priority.session, sorted by priority. No 'default' flag on purpose --
+    the system default source is the comms/webcam mic, never the
+    measurement rig, so the measure window pre-selects the last-used
+    source (per-sink recall) instead of the default."""
+    dump = dump if dump is not None else pw_dump()
+    sources = []
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("media.class") == "Audio/Source":
+            name = p.get("node.name")
+            if not name:
+                continue
+            sources.append({"id": o["id"], "name": name,
+                            "desc": p.get("node.description") or name,
+                            "prio": p.get("priority.session") or 0})
+    sources.sort(key=lambda s: -(s["prio"] or 0))
+    return sources
+
+def node_params(name, dump=None):
+    dump = dump if dump is not None else pw_dump()
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("node.name") == name:
+            return (o.get("info") or {}).get("params") or {}, o["id"]
+    return None, None
+
+def resolve_sink_id(name, dump=None):
+    _, nid = node_params(name, dump)
+    return nid
+
+def graph_loaded(name, dump=None):
+    """Best-effort: a loaded in-node graph shows up as an extra Props block
+    whose only key is 'params'."""
+    params, _ = node_params(name, dump)
+    if not params:
+        return False
+    for d in params.get("Props", []):
+        if isinstance(d, dict) and list(d.keys()) == ["params"]:
+            return True
+    return False
+
+def metadata_set(node_name, graph):
+    """Write a device's graph into the 'per-device-eq' metadata. The WP hook is
+    subscribed and applies it to the live node (and on every later reconnect).
+    Stored as a plain string (no type tag), which the hook reads verbatim."""
+    r = _run(["pw-metadata", "-n", METADATA_NAME, "0", node_name, graph])
+    return r.returncode == 0 and "Found" in (r.stdout + r.stderr)
+
+
+def metadata_clear(node_name):
+    """Delete a device's key (Clean / unbound). The hook flattens the live node."""
+    r = _run(["pw-metadata", "-n", METADATA_NAME, "-d", "0", node_name])
+    return r.returncode == 0
+
+_POS_FALLBACK = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"]
+
+
+
+def _node_channels(name, dump=None):
+    """Channel keys for any node (sink or source) from its negotiated
+    Format position, falling back to channelVolumes length, then stereo."""
+    params, _ = node_params(name, dump)
+    pos, nch = None, None
+    if params:
+        for blk in (params.get("Format") or []):
+            if isinstance(blk, dict):
+                if blk.get("position"):
+                    pos = blk["position"]
+                if blk.get("channels"):
+                    nch = blk["channels"]
+        if nch is None:
+            for d in (params.get("Props") or []):
+                if isinstance(d, dict) and isinstance(d.get("channelVolumes"), list):
+                    nch = len(d["channelVolumes"])
+    if isinstance(pos, list) and pos:
+        keys = [str(p) for p in pos]
+    elif nch:
+        keys = _POS_FALLBACK[:nch] if nch <= len(_POS_FALLBACK) \
+               else ["Ch%d" % (i + 1) for i in range(nch)]
+    else:
+        keys = ["FL", "FR"]
+    seen, out = {}, []
+    for k in keys:
+        if k in seen:
+            seen[k] += 1; out.append("%s.%d" % (k, seen[k]))
+        else:
+            seen[k] = 0; out.append(k)
+    return out
+
+
+def sink_channels(name, dump=None):
+    return _node_channels(name, dump)
+
+
+def source_channels(name, dump=None):
+    """Capture-channel keys for a source (mic/rig), e.g. ['FL','FR']. A
+    measurement rig is 1- or 2-channel; the count is how many calibration
+    files it needs, one per capture channel."""
+    return _node_channels(name, dump)
 
 def in_thread(fn):
     """Run fn on a daemon thread (off-main-loop subprocess work)."""
@@ -34,20 +226,21 @@ _STREAM_PROPS = ("{ node.name = %s, node.target = %d, "
                  "node.dont-reconnect = true, application.name = "
                  "\"per-device-eq measure\" }")
 
+import json
 import os
 import re
 import subprocess
 import sys
 
-from . import pipewire
+from .config import METADATA_NAME
 from .audio_backend import AudioBackend
 
 
-# The heir's own verbs: they lived in pipewire.py while the trio
+# The heir's own verbs: they lived in py while the trio
 # still had twins there; the doomed module only slims now, so the
 # code that exists solely for this class lives with this class.
 def metadata_get(key):
-    r = pipewire._run(["pw-metadata", "-n", pipewire.METADATA_NAME, "0", key])
+    r = _run(["pw-metadata", "-n", METADATA_NAME, "0", key])
     m = re.search(r"key:'%s' value:'(.*?)' type:" % re.escape(key),
                   r.stdout, re.S)
     return m.group(1) if m else None
@@ -80,7 +273,7 @@ def set_stream_mute(node_id, mute):
     """Props mute on a stream node; True on success. The backend's
     verb; the session's private twin retires when the weaving step
     routes it here."""
-    r = pipewire._run(["pw-cli", "set-param", str(node_id), "Props",
+    r = _run(["pw-cli", "set-param", str(node_id), "Props",
               "{ mute = %s }" % ("true" if mute else "false")])
     return r.returncode == 0
 
@@ -88,7 +281,7 @@ def set_stream_mute(node_id, mute):
 def set_sink_volume(sink_id, cubic):
     """wpctl writes through to the device Route where one exists; raw
     Props writes on ALSA sinks do not stick. Raises on failure."""
-    r = pipewire._run(["wpctl", "set-volume", str(sink_id), "%.4f" % cubic])
+    r = _run(["wpctl", "set-volume", str(sink_id), "%.4f" % cubic])
     if r.returncode != 0:
         raise RuntimeError("wpctl set-volume failed: %s"
                            % r.stderr.strip())
@@ -146,11 +339,11 @@ class PipeWireBackend(AudioBackend):
 
     def _push_graph(self, device, value):
         if value is None:
-            return pipewire.metadata_clear(device)
-        return pipewire.metadata_set(device, value)
+            return metadata_clear(device)
+        return metadata_set(device, value)
 
     def _push_volume(self, device, cubic):
-        sink_id = pipewire.resolve_sink_id(device)
+        sink_id = resolve_sink_id(device)
         set_sink_volume(sink_id, cubic)
 
     def _push_stream_mutes(self, sink, mute, prior=None):
@@ -158,8 +351,8 @@ class PipeWireBackend(AudioBackend):
             for node_id in (prior or []):
                 set_stream_mute(node_id, False)
             return None
-        dump = pipewire.pw_dump()
-        sink_id = pipewire.resolve_sink_id(sink, dump)
+        dump = pw_dump()
+        sink_id = resolve_sink_id(sink, dump)
         muted = []
         for st in self._foreign_output_streams(dump, sink_id):
             if st["prior_mute"]:
@@ -207,9 +400,9 @@ class PipeWireBackend(AudioBackend):
         return value, ("wpstate" if value is not None else None)
 
     def _read_volume(self, device):
-        dump = pipewire.pw_dump()
+        dump = pw_dump()
         try:
-            sink_id = pipewire.resolve_sink_id(device, dump)
+            sink_id = resolve_sink_id(device, dump)
         except Exception:
             return None
         for o in dump:
@@ -251,30 +444,30 @@ class PipeWireBackend(AudioBackend):
         (WirePlumber or the hook is not up -- the install/restart
         narrations own that story, say nothing extra); found True
         with version None = a pre-versioning hook."""
-        r = pipewire._run(["pw-metadata", "-n", pipewire.METADATA_NAME, "0", "protocol"])
+        r = _run(["pw-metadata", "-n", METADATA_NAME, "0", "protocol"])
         out = (r.stdout or "") + (r.stderr or "")
         m = re.search(r"key:'protocol'\s+value:'([^']*)'", out)
         return ("Found" in out), (m.group(1) if m else None)
 
     def output_channels(self, device):
         """Channel positions of an output device."""
-        return pipewire.sink_channels(device)
+        return sink_channels(device)
 
     def input_channels(self, device):
         """Channel positions of an input device."""
-        return pipewire.source_channels(device)
+        return source_channels(device)
 
     # -- observed side ---------------------------------------------------
 
     def _pull(self, dump=None):
         if dump is None:
-            dump = pipewire.pw_dump()
-        default = pipewire.default_sink_from_dump(dump)
+            dump = pw_dump()
+        default = default_sink_from_dump(dump)
         if default is None:
-            default = pipewire.default_sink_name()
+            default = default_sink_name()
         return {
-            "sinks": pipewire.list_sinks(dump, default=default),
-            "sources": pipewire.list_sources(dump),
+            "sinks": list_sinks(dump, default=default),
+            "sources": list_sources(dump),
             "default_sink": default,
         }
 
@@ -318,7 +511,7 @@ class PipeWireBackend(AudioBackend):
                 snap = self._pull()
             finally:
                 self._glib.idle_add(self._apply_snap, snap)
-        pipewire._in_thread(work)
+        in_thread(work)
         return True                      # keep the timer running
 
     def _apply_snap(self, snap):
