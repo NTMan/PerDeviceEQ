@@ -2,7 +2,7 @@
 """Tier-2 live post-EQ meter engine (ROADMAP Task 2). No GTK in here.
 
 The sink monitor taps PRE-EQ in the in-node topology, so the true
-post-EQ level is computed, not tapped: pipewire.monitor_capture() (the
+post-EQ level is computed, not tapped: the backend's monitor_capture (the
 module owning ALL PipeWire interaction) streams the monitor as raw f32 and a worker thread runs each channel through the
 profile's biquads (eq.biquad -- coefficient-identical to PipeWire's
 param_eq) block by block with filter state carried across blocks. Peaks
@@ -111,11 +111,12 @@ class MeterEngine:
         n = self.n_channels
         if not n:
             raise RuntimeError("set_chains() before start()")
-        from . import pipewire
-        self._proc = pipewire.monitor_capture(node, n, self.fs)
+        from . import pw_backend
+        self._proc = pw_backend.backend().monitor_capture(
+            node, n, self.fs)
         self._stop.clear()
         self._thread = threading.Thread(target=self._run,
-                                        args=(self._proc.stdout,),
+                                        args=(self._proc,),
                                         daemon=True)
         self._thread.start()
 
@@ -129,13 +130,9 @@ class MeterEngine:
         self._stop.set()
         if self._proc is not None:
             try:
-                self._proc.terminate()
-                self._proc.wait(timeout=1.0)
+                self._proc.terminate(kill_after=1.0)
             except Exception:
-                try:
-                    self._proc.kill()
-                except Exception:
-                    pass
+                pass
             self._proc = None
         if self._thread is not None:
             self._thread.join(timeout=1.0)

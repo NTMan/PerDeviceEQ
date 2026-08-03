@@ -233,9 +233,39 @@ class PipeWireBackend(AudioBackend):
                                 stderr=subprocess.DEVNULL)
         return StreamHandle(proc)
 
-    def monitor_capture(self, sink, channels, rate):
-        return StreamHandle(
-            pipewire.monitor_capture(sink, channels, rate))
+    def monitor_capture(self, sink, channels, rate=48000):
+        """Spawn pw-record on a sink's monitor (PRE-EQ tap in the in-node
+        topology) streaming raw interleaved f32 to stdout. Returns the Popen;
+        the caller owns its lifetime and reads .stdout.
+
+        Privacy note (field-verified observations): this capture alone does
+        NOT light GNOME's microphone indicator (monitor-source recordings are
+        excluded), and gnome-control-center's Sound page alone does not
+        either -- the icon appears only when BOTH run, and dies with the
+        panel while this capture keeps going. The trigger is therefore an
+        interaction (likely an extra meter stream the panel creates in
+        reaction to a foreign recording); `pactl list source-outputs` while
+        the icon is lit names the culprit. The stream stays named anyway, so
+        mixer UIs show who is listening to what.
+
+        node.dont-reconnect pins the tap to its pipe: without it,
+        WirePlumber re-parents a capture whose target died onto the
+        DEFAULT sink's monitor, and rerouted streams do not come home
+        when the target returns. A sink that forks per card profile
+        (IL-DSP: analog and iec958 alternate, one node at a time) can
+        die and be reborn between two of our polls, so the wander was
+        invisible to the app -- the meter kept dancing to another
+        device's music (field catch). With the flag the tap dies with
+        its pipe; the GUI notices the dead worker and re-arms."""
+        cmd = ["pw-record", "--target", str(sink),
+               "-P", "{ stream.capture.sink = true, node.name = per-device-eq-meter,"
+                     " node.dont-reconnect = true,"
+                     " application.name = \"Per-Device EQ\" }",
+               "--format", "f32", "--rate", str(int(rate)),
+               "--channels", str(int(channels)), "-"]
+        return StreamHandle(subprocess.Popen(
+            cmd, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL))
 
     def play(self, device, wav_path, stream_volume=1.0,
              channel_map=None):

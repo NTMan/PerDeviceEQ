@@ -129,16 +129,16 @@ def test_chain_swap_resets_state():
 
 
 def test_monitor_capture_command(monkeypatch):
-    """The capture belongs to pipewire.py: right tool, the PRE-EQ monitor
-    prop, pinned format/rate/channels, streaming to stdout."""
-    from perdeviceeq import pipewire
+    """The capture belongs to the backend now: right tool, the
+    PRE-EQ monitor prop, pinned format/rate/channels, stdout."""
+    from perdeviceeq import pw_backend as pwb
     seen = {}
     class FakePopen:
         def __init__(self, cmd, **kw):
             seen["cmd"], seen["kw"] = cmd, kw
             self.stdout = None
-    monkeypatch.setattr(pipewire.subprocess, "Popen", FakePopen)
-    pipewire.monitor_capture("bluez_output.X.1", 2, 48000)
+    monkeypatch.setattr(pwb.subprocess, "Popen", FakePopen)
+    pwb.PipeWireBackend().monitor_capture("bluez_output.X.1", 2, 48000)
     c = seen["cmd"]
     assert c[0] == "pw-record" and c[-1] == "-"
     assert any("stream.capture.sink = true" in a for a in c)
@@ -146,7 +146,7 @@ def test_monitor_capture_command(monkeypatch):
     assert c[c.index("--target") + 1] == "bluez_output.X.1"
     assert c[c.index("--channels") + 1] == "2"
     assert c[c.index("--format") + 1] == "f32"
-    assert seen["kw"]["stdout"] is pipewire.subprocess.PIPE
+    assert seen["kw"]["stdout"] is pwb.subprocess.PIPE
 
 
 def test_count_changing_swap_is_deferred_to_restart():

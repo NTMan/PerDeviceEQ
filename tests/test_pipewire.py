@@ -59,8 +59,9 @@ def test_monitor_capture_pins_the_tap(monkeypatch):
             seen["cmd"] = cmd
             self.stdout = None
 
-    monkeypatch.setattr(pipewire.subprocess, "Popen", FakePopen)
-    pipewire.monitor_capture("some.sink", 2, 48000)
+    from perdeviceeq import pw_backend as pwb
+    monkeypatch.setattr(pwb.subprocess, "Popen", FakePopen)
+    pwb.PipeWireBackend().monitor_capture("some.sink", 2, 48000)
     cmd = seen["cmd"]
     props = cmd[cmd.index("-P") + 1]
     assert "node.dont-reconnect = true" in props
