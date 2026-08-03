@@ -28,6 +28,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Gtk, GLib, Gdk, Adw, Pango  # noqa: E402
 
 from . import config, measure_build       # noqa: E402
+from . import curve_view as cv                      # noqa: E402
 from . import pw_backend
 from . import focus                                  # noqa: E402
 from . import debug
@@ -53,6 +54,10 @@ CHAN_ANGLE = {
 FIT_BANDS = 12
 FIT_FLO = 20.0
 FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
+# the architect's decree: stop economising pixels down the
+# vertical -- one axis has to carry the response AND its
+# harmonics fifty decibels below it, and that needs room
+FACE_H, ROW_H = 300, 200
 
 
 SPEAKER_NAMES = {
@@ -185,7 +190,8 @@ class MeasureWindow(Adw.Window):
         self._pw = pw_backend.backend()
         self._pw_unsub = None
         try:
-            self.ch_keys = pw_backend.backend().output_channels(sink_node) or ["FL", "FR"]
+            self.ch_keys = pw_backend.backend(). \
+                output_channels(sink_node) or ["FL", "FR"]
         except Exception:
             self.ch_keys = ["FL", "FR"]
         self.n_ch = len(self.ch_keys)
@@ -512,13 +518,14 @@ class MeasureWindow(Adw.Window):
 
     def _build_page(self):
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        summary = Gtk.DrawingArea()
-        summary.update_property(
+        graph = Gtk.DrawingArea()
+        graph.update_property(
             [Gtk.AccessibleProperty.LABEL],
-            ["Measured responses of every channel, overlaid"])
-        summary.set_content_height(120)
-        summary.set_visible(False)
-        summary.set_hexpand(True)
+            ["Mean response of the channel with its distortion "
+             "and the reading's own noise floor"])
+        graph.set_content_height(FACE_H)
+        graph.set_visible(False)
+        graph.set_hexpand(True)
         # The summary IS the accordion's face: the channel's
         # result with a chevron on the right -- the same expander
         # grammar as the main window's cards, Revealer breath
@@ -553,16 +560,18 @@ class MeasureWindow(Adw.Window):
         chev.set_visible(False)
         trow.append(chev)
         face.append(trow)
-        face.append(summary)
-        dist = Gtk.DrawingArea()
-        dist.update_property(
-            [Gtk.AccessibleProperty.LABEL],
-            ["Distortion of the mean take with the reading's "
-             "own noise floor"])
-        dist.set_content_height(110)
-        dist.set_visible(False)
-        dist.set_hexpand(True)
-        face.append(dist)
+        face.append(graph)
+        # the legend's hands: hover lights a name, a click pins
+        # it. A hit CLAIMS the sequence so the face's own click
+        # (which folds the takes) does not fire underneath.
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._on_legend_motion)
+        motion.connect("leave", self._on_legend_leave)
+        graph.add_controller(motion)
+        lclick = Gtk.GestureClick()
+        lclick.set_button(1)
+        lclick.connect("pressed", self._on_legend_press)
+        graph.add_controller(lclick)
         face.add_css_class("card-header")
         click = Gtk.GestureClick()
         click.set_button(1)
@@ -581,8 +590,12 @@ class MeasureWindow(Adw.Window):
         card.append(rev)
         col.append(card)
         self._takes_open = True
+        self._hl = cv.Highlight()
+        self._face = None
+        self._win = (-80.0, 0.0)
         self._page = {"title": title, "header": header,
-                      "summary": summary, "dist": dist,
+                      "graph": graph, "plot": None,
+                      "canvases": [graph],
                       "takes_list": lb,
                       "takes_rev": rev, "card": card,
                       "chevron": chev, "take_rows": []}
@@ -598,98 +611,47 @@ class MeasureWindow(Adw.Window):
         self._page["takes_rev"].set_reveal_child(
             self._takes_open)
 
-    def _make_curve_draw(self, rec, lo, hi, mean=None, shift=0.0):
-        """The take's raw curve; where the (gain-compensated) take
-        strays from the channel mean past the trust threshold the
-        segment is painted red -- a lone bad take lights up alone, a
-        collective scatter lights the same region on EVERY row, and
-        "which take shrank the range" reads off the list."""
-        freqs = rec.freq_hz
-        mag = rec.mag_db
-        thd = getattr(rec, "thd_db", None)
-        if thd is not None and len(thd) != len(freqs):
-            thd = None
+    def _conf_curves(self, mag, thd, h2, h3, noise):
+        """The confession as LEVELS on the response's own axis:
+        the harmonic ratio lifted onto the fundamental, which is
+        what a REW distortion plot shows and what makes the gap
+        between signal and distortion readable at a glance. A
+        line the take cannot testify about is simply absent."""
+        out = []
+        for name, arr, col, wd in (("H2", h2, cv.C_H2, 1.0),
+                                   ("H3", h3, cv.C_H3, 1.0),
+                                   ("THD", thd, cv.C_THD, 1.6)):
+            lv = cv.as_level(mag, arr)
+            if lv is not None:
+                out.append(cv.Curve(name, lv, col, wd,
+                                    harmonic=True))
+        lv = cv.as_level(mag, noise)
+        if lv is not None:
+            out.append(cv.Curve("noise", lv, cv.C_NOISE, 1.2,
+                                harmonic=True, land=True))
+        return out
 
-        def draw(_area, cr, w, h, *_):
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
-            cr.rectangle(0, 0, w, h)
-            cr.fill()
-            span = max(1e-6, hi - lo)
-
-            # the ruler: 6 dB horizontals on the channel's own
-            # window (shared by every row of the channel, so the
-            # grid aligns down the list) and decade verticals
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
-            cr.set_line_width(1.0)
-            g = -(-int(lo) // 6) * 6          # first multiple >= lo
-            while g <= hi:
-                gy = h - 3 - (g - lo) / span * (h - 6)
-                cr.move_to(0, gy)
-                cr.line_to(w, gy)
-                g += 6
-            for gf in (100.0, 1000.0, 10000.0):
-                gx = _log_x(gf, 2, w - 4)
-                cr.move_to(gx, 0)
-                cr.line_to(gx, h)
-            cr.stroke()
-
-            if thd is not None:
-                # the take's own distortion layer: fixed -10..-80
-                # dBr over the full height; abstentions (NaN)
-                # break the pen
-                cr.set_source_rgba(0.95, 0.55, 0.15, 0.9)
-                cr.set_line_width(1.2)
-                pen = False
-                for j in _stride_idx(len(freqs)):
-                    v = float(thd[j])
-                    if v != v:
-                        if pen:
-                            cr.stroke()
-                        pen = False
-                        continue
-                    ty = 3 + (-10.0 - v) / 70.0 * (h - 6)
-                    ty = max(1, min(h - 1, ty))
-                    tx = _log_x(freqs[j], 2, w - 4)
-                    if pen:
-                        cr.line_to(tx, ty)
-                    else:
-                        cr.move_to(tx, ty)
-                    pen = True
-                if pen:
-                    cr.stroke()
-
-            def xy(j):
-                x = _log_x(freqs[j], 2, w - 4)
-                y = h - 3 - (float(mag[j]) - lo) / span * (h - 6)
-                return x, max(1, min(h - 1, y))
-
-            idx = _stride_idx(len(freqs))
-            cr.set_source_rgb(0.22, 0.52, 0.90)
-            cr.set_line_width(1.4)
-            first = True
-            for j in idx:
-                x, y = xy(j)
-                cr.move_to(x, y) if first else cr.line_to(x, y)
-                first = False
-            cr.stroke()
-            if mean is None:
-                return
-            cr.set_source_rgb(0.87, 0.23, 0.23)
-            cr.set_line_width(1.8)
-            pen = False
-            for j in idx:
-                bad = abs(float(mag[j]) + shift
-                          - float(mean[j])) > ms.SPREAD_MAX_DB
-                if bad:
-                    x, y = xy(j)
-                    cr.move_to(x, y) if not pen else cr.line_to(x, y)
-                    pen = True
-                elif pen:
-                    cr.stroke()
-                    pen = False
-            if pen:
-                cr.stroke()
-        return draw
+    def _take_curves(self, rec, mean=None, shift=0.0):
+        """One take's lines: its raw curve, the red segments where
+        the (gain-compensated) take strays from the channel mean
+        past the trust threshold -- a lone bad take lights alone, a
+        collective scatter lights the same region on EVERY row --
+        and its own confession."""
+        mag = np.asarray(rec.mag_db, float)
+        out = [cv.Curve("take", mag, cv.C_RESPONSE, 1.4)]
+        if mean is not None:
+            m = np.asarray(mean, float)
+            bad = np.abs(mag + shift - m) > ms.SPREAD_MAX_DB
+            out.append(cv.Curve("off mean",
+                                np.where(bad, mag, np.nan),
+                                cv.C_BAD, 1.8, legend=False))
+        out.extend(self._conf_curves(
+            mag,
+            getattr(rec, "thd_db", None),
+            getattr(rec, "h2_db", None),
+            getattr(rec, "h3_db", None),
+            getattr(rec, "thd_noise_db", None)))
+        return out
 
     def _take_passport(self, ch, rec):
         """The take's provenance off its canvas passport (schema
@@ -870,9 +832,12 @@ class MeasureWindow(Adw.Window):
             [Gtk.AccessibleProperty.LABEL],
             ["Frequency response of this take"])
         curve.set_content_width(150)
-        curve.set_content_height(96)
-        curve.set_draw_func(
-            self._make_curve_draw(rec, lo, hi, mean, shift))
+        curve.set_content_height(ROW_H)
+        plot = cv.Plot(rec.freq_hz,
+                       self._take_curves(rec, mean, shift),
+                       lo, hi, state=self._hl, legend=False)
+        curve.set_draw_func(plot.draw)
+        self._page["canvases"].append(curve)
         body.append(curve)
 
         # wrap in an explicit row: add_row auto-wraps a bare widget in a
@@ -1352,17 +1317,25 @@ class MeasureWindow(Adw.Window):
             lb.remove(row)
         self._page["take_rows"].clear()
         takes = self.session.takes_of(ch) if self.session else []
-        if takes:
-            lo = min(float(min(r.mag_db)) for r in takes) - 1.0
-            hi = max(float(max(r.mag_db)) for r in takes) + 1.0
-        else:
-            lo, hi = -1.0, 1.0
+        self._page["canvases"] = [self._page["graph"]]
         mean, shifts = None, {}
         if self.session is not None and takes:
             mean, _sp = self.session.average_and_spread(ch)
             sh = self.session.comp_shift_db(ch)
             if sh is not None:
                 shifts = {r.id: s for r, s in zip(takes, sh)}
+        # ONE vertical window for the whole channel -- the face and
+        # every row are painted on the same axis, harmonics and
+        # noise floor included, so the grid aligns down the list
+        # and neighbouring rows compare line to line
+        self._face = self._face_curves(ch, takes)
+        allc = list(self._face[1]) if self._face else []
+        band = self._face[2] if self._face else None
+        for rec in takes:
+            allc.extend(self._take_curves(
+                rec, mean, shifts.get(rec.id, 0.0)))
+        lo, hi = cv.window_db(allc, band)
+        self._win = (lo, hi)
         rows = []
         for rec in takes:
             row = self._make_take_row(ch, rec, lo, hi,
@@ -1391,19 +1364,17 @@ class MeasureWindow(Adw.Window):
         self._page["chevron"].set_visible(bool(takes))
         self._refresh_summary(ch, takes)
 
-    def _refresh_summary(self, ch, takes):
-        """The channel's result at a glance: the mean response over the
-        takes with the take-to-take spread as a band around it, greyed
-        outside the EQ range, red where the spread is untrustworthy.
-        Level moves between takes are compensated with the session's
-        recorded gains, so the mean matches what finalize will build.
-        When the channel's L<->R mirror partner is measured on the
-        same capsule, its drive-corrected mean is drawn as a dashed
-        ghost: the pair's symmetry, visible before Create profile."""
-        area = self._page["summary"]
-        if not takes:
-            area.set_visible(False)
-            return
+    def _face_curves(self, ch, takes):
+        """The channel's result as lines: the mean response over
+        the takes, the take-to-take spread as a band around it,
+        the mirror partner as a dashed ghost, and the mean
+        confession lifted onto the mean. Level moves between takes
+        are compensated with the session's recorded gains, so the
+        mean matches what finalize will build. None when the
+        channel has no takes -- and then nothing is drawn at all,
+        because a confession without a take confesses nothing."""
+        if not takes or self.session is None:
+            return None
         shifts = self.session.comp_shift_db(ch)
         by_id = {}
         if shifts is not None:
@@ -1415,105 +1386,69 @@ class MeasureWindow(Adw.Window):
         mean = sum(r.mag_db + by_id.get(r.id, 0.0)
                    for r in base) / len(base)
         spread = self.session.spread_db(ch)
-        sp = spread if spread is not None else mean * 0.0
+        sp = np.asarray(
+            spread if spread is not None else mean * 0.0, float)
         ghost, glabel = self._partner_ghost(ch, mean)
-        lo = float((mean - sp / 2.0).min()) - 1.0
-        hi = float((mean + sp / 2.0).max()) + 1.0
+        curves = [cv.Curve("mean", mean, cv.C_RESPONSE, 1.8)]
         if ghost is not None:
-            lo = min(lo, float(ghost.min()) - 1.0)
-            hi = max(hi, float(ghost.max()) + 1.0)
-        area.set_draw_func(self._make_summary_draw(
-            base[0].freq_hz, mean, sp, lo, hi, ghost, glabel))
+            curves.append(cv.Curve("partner", ghost, cv.C_GHOST,
+                                   1.2, dash=(4.0, 3.0)))
+        curves.extend(self._conf_curves(
+            mean, *(measure_build.mean_confession(base)
+                    or (None, None, None, None))))
+        band = (mean - sp / 2.0, mean + sp / 2.0,
+                sp >= ms.SPREAD_MAX_DB)
+        return base[0].freq_hz, curves, band, glabel
+
+    def _refresh_summary(self, ch, takes):
+        """The face canvas. One gate for the whole picture: no
+        takes, no canvas -- the old code hid the response and
+        returned BEFORE the distortion canvas, which then kept
+        yesterday's confession hanging over an empty list."""
+        area = self._page["graph"]
+        if not takes or self._face is None:
+            self._page["plot"] = None
+            area.set_visible(False)
+            return
+        freqs, curves, band, title = self._face
+        plot = cv.Plot(freqs, curves, self._win[0], self._win[1],
+                       band=band, state=self._hl, legend=True,
+                       title=title,
+                       dim_outside=(self.fit_lo, self.fit_hi))
+        self._page["plot"] = plot
+        area.set_draw_func(plot.draw)
         area.set_visible(True)
         area.queue_draw()
-        dist = self._page.get("dist")
-        if dist is not None:
-            conf = measure_build.mean_confession(base)
-            if conf is None:
-                dist.set_visible(False)
-            else:
-                dist.set_draw_func(self._make_dist_draw(
-                    base[0].freq_hz, *conf))
-                dist.set_visible(True)
-                dist.queue_draw()
 
-    def _make_dist_draw(self, freqs, thd, h2, h3, noise):
-        """The confession under the summary: THD dark, H2/H3
-        thin, and the gray line of the reading's OWN noise
-        floor with the land under it shaded -- a reading on
-        the line is the instrument speaking, not the device.
-        Fixed axis -70..-20 dB re fundamental; 1% and 0.1%
-        gridlines for the eye."""
-        lo, hi = -70.0, -20.0
+    def _repaint_curves(self):
+        for a in self._page.get("canvases", []):
+            a.queue_draw()
 
-        def yof(v):
-            y = 3 + (hi - float(v)) / (hi - lo) * (110 - 6)
-            return max(1.0, min(109.0, y))
+    def _on_legend_motion(self, _ctrl, x, y):
+        plot = self._page.get("plot") if self._page else None
+        if plot is None:
+            return
+        name = plot.legend_at(x, y)
+        if name != plot.state.hover:
+            plot.state.hover = name
+            self._repaint_curves()
 
-        def path(cr, arr, close_land=False):
-            first = True
-            x0 = None
-            for j in _stride_idx(len(freqs)):
-                v = arr[j] if j < len(arr) else float("nan")
-                if not np.isfinite(v):
-                    first = True
-                    continue
-                x = _log_x(freqs[j], 2, _W[0] - 4)
-                if first and close_land and x0 is None:
-                    x0 = x
-                if first:
-                    cr.move_to(x, yof(v))
-                else:
-                    cr.line_to(x, yof(v))
-                first = False
-                xl = x
-            return x0, (xl if not first else None)
+    def _on_legend_leave(self, _ctrl):
+        plot = self._page.get("plot") if self._page else None
+        if plot is not None and plot.state.hover is not None:
+            plot.state.hover = None
+            self._repaint_curves()
 
-        def draw(_area, cr, w, h, *_):
-            _W[0] = w
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
-            cr.rectangle(0, 0, w, h)
-            cr.fill()
-            for v, lab in ((-40.0, "1%"), (-60.0, "0.1%")):
-                y = yof(v)
-                cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
-                cr.set_line_width(0.8)
-                cr.move_to(2, y)
-                cr.line_to(w - 2, y)
-                cr.stroke()
-                cr.set_source_rgba(0.5, 0.5, 0.5, 0.7)
-                cr.set_font_size(9)
-                cr.move_to(4, y - 2)
-                cr.show_text(lab)
-            if noise is not None:
-                cr.set_source_rgba(0.55, 0.55, 0.55, 0.30)
-                x0, xl = path(cr, noise, close_land=True)
-                if xl is not None:
-                    cr.line_to(xl, h - 1)
-                    cr.line_to(x0 or 2, h - 1)
-                    cr.close_path()
-                    cr.fill()
-                cr.set_source_rgba(0.5, 0.5, 0.5, 0.9)
-                cr.set_line_width(1.3)
-                path(cr, noise)
-                cr.stroke()
-            for arr, rgba, wd in (
-                    (h2, (0.76, 0.13, 0.13, 0.75), 1.0),
-                    (h3, (0.90, 0.57, 0.0, 0.75), 1.0),
-                    (thd, (0.15, 0.15, 0.15, 1.0), 1.8)):
-                if arr is None:
-                    continue
-                cr.set_source_rgba(*rgba)
-                cr.set_line_width(wd)
-                path(cr, arr)
-                cr.stroke()
-            cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
-            cr.set_font_size(10)
-            cr.move_to(6, 12)
-            cr.show_text("distortion, dB re fundamental")
-
-        _W = [400]
-        return draw
+    def _on_legend_press(self, gesture, _n, x, y):
+        plot = self._page.get("plot") if self._page else None
+        if plot is None:
+            return
+        name = plot.legend_at(x, y)
+        if name is None:
+            return
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        if plot.state.hit(name):
+            self._repaint_curves()
 
     def _partner_ghost(self, ch, mean):
         """(curve, label) of the mirror partner's compensated mean --
@@ -1551,70 +1486,6 @@ class MeasureWindow(Adw.Window):
         aligned = pavg - float(np.asarray(pavg)[ref].mean()) \
             + float(np.asarray(mean)[ref].mean())
         return aligned, "%s · shape only" % pk
-
-    def _make_summary_draw(self, freqs, mean, spread, lo, hi,
-                           ghost=None, ghost_label=None):
-        flo, fhi = self.fit_lo, self.fit_hi
-
-        def draw(_area, cr, w, h, *_):
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
-            cr.rectangle(0, 0, w, h)
-            cr.fill()
-            span = max(1e-6, hi - lo)
-
-            def yof(v):
-                y = h - 3 - (float(v) - lo) / span * (h - 6)
-                return max(1, min(h - 1, y))
-
-            if ghost is not None:
-                cr.save()
-                cr.set_source_rgba(0.45, 0.45, 0.45, 0.9)
-                cr.set_line_width(1.2)
-                cr.set_dash([4.0, 3.0])
-                first = True
-                for j in _stride_idx(len(freqs)):
-                    x = _log_x(freqs[j], 2, w - 4)
-                    y = yof(ghost[j])
-                    cr.move_to(x, y) if first else cr.line_to(x, y)
-                    first = False
-                cr.stroke()
-                cr.restore()
-                if ghost_label:
-                    cr.set_source_rgba(0.45, 0.45, 0.45, 0.9)
-                    cr.set_font_size(10)
-                    ext = cr.text_extents(ghost_label)
-                    cr.move_to(w - ext.width - 6, 12)
-                    cr.show_text(ghost_label)
-            idx = _stride_idx(len(freqs))
-            bw = max(1.0, (w - 4) / max(1, len(idx)))
-            for j in idx:
-                x = _log_x(freqs[j], 2, w - 4)
-                sv = float(spread[j]) if j < len(spread) else 0.0
-                yt, yb = yof(mean[j] + sv / 2.0), yof(mean[j] - sv / 2.0)
-                if sv >= ms.SPREAD_MAX_DB:
-                    cr.set_source_rgba(0.87, 0.19, 0.19, 0.35)
-                else:
-                    cr.set_source_rgba(0.22, 0.52, 0.90, 0.18)
-                cr.rectangle(x, yt, bw, max(1.0, yb - yt))
-                cr.fill()
-            cr.set_source_rgb(0.22, 0.52, 0.90)
-            cr.set_line_width(1.6)
-            first = True
-            for j in idx:
-                x = _log_x(freqs[j], 2, w - 4)
-                y = yof(mean[j])
-                cr.move_to(x, y) if first else cr.line_to(x, y)
-                first = False
-            cr.stroke()
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.38)
-            xlo, xhi = _log_x(flo, 2, w - 4), _log_x(fhi, 2, w - 4)
-            if xlo > 0:
-                cr.rectangle(0, 0, xlo, h)
-                cr.fill()
-            if xhi < w:
-                cr.rectangle(xhi, 0, w - xhi, h)
-                cr.fill()
-        return draw
 
     # ---- callbacks (config) -----------------------------------------------
     def _on_pw_state(self, st):
