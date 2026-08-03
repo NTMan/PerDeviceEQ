@@ -2562,6 +2562,15 @@ class MeasureWindow(Adw.Window):
                             int(g.get("ppo", mc.GRID_PPO)))
         key_to_ch = {k: i for i, k in
                      enumerate(self.ch_keys[:self.n_ch])}
+
+        def conf(a):
+            # stored abstentions are None (JSON has no NaN);
+            # the pen wants NaN back
+            if a is None:
+                return None
+            return [float("nan") if v is None else float(v)
+                    for v in a]
+
         for t in takes:
             ch = key_to_ch.get(t.get("channel"))
             if ch is None:
@@ -2576,7 +2585,11 @@ class MeasureWindow(Adw.Window):
                 soft_vol=t.get("soft_vol"),
                 noise_dbfs=t.get("noise_dbfs"),
                 capture_channel=t.get("capture_channel"),
-                created_utc=t.get("created_utc"))
+                created_utc=t.get("created_utc"),
+                h2_db=conf(t.get("h2_db")),
+                h3_db=conf(t.get("h3_db")),
+                thd_db=conf(t.get("thd_db")),
+                thd_noise_db=conf(t.get("thd_noise_db")))
             self.session.adopt_take(ch, rec)
             self._canvas_ids[(ch, rec.id)] = rec.id
         self._refresh_all()

@@ -11,10 +11,8 @@ the provenance legacy and keeps the original next to the file as
 """
 import json
 
-import pytest
 
 from perdeviceeq import profiles
-import migrate_profiles_v2_to_v3 as mig
 
 
 def _v2():
@@ -51,45 +49,22 @@ def _store(tmp_path, monkeypatch):
     return profiles.ProfileStore()
 
 
-def test_migrate_restamps_and_marks_legacy():
-    m = mig.migrate_body(_v2())
-    assert m["version"] == 3
-    assert m["provenance"] == {"kind": "legacy"}
-    assert m["preamp"] == -3.0                  # playback body untouched
-    assert m["channels"]["FL"]["bands"]
-    assert mig.migrate_body(m) is m             # v3 passes through as is
 
 
-def test_migrate_refuses_v1():
-    v1 = {"apply_all": True, "all": {"preamp": -1.0, "bands": []}}
-    with pytest.raises(ValueError, match="migrate_profiles_v1_to_v2"):
-        mig.migrate_body(v1)
 
-
-def test_convert_dir_roundtrip(tmp_path):
+def test_store_skips_pre_epoch_loads_current(tmp_path, monkeypatch,
+                                             capsys):
+    """Pre-THD profiles are deprecated, not converted: the store
+    skips them with the epoch's own words and loads only the
+    current schema."""
     (tmp_path / "old.json").write_text(json.dumps(_v2()))
-    (tmp_path / "new.json").write_text(
-        json.dumps(mig.migrate_body(_v2())))
-    (tmp_path / "ancient.json").write_text(json.dumps(
-        {"apply_all": True, "all": {"preamp": 0.0, "bands": []}}))
-    assert mig.convert_dir(str(tmp_path)) == (1, 1, 1)
-    got = json.loads((tmp_path / "old.json").read_text())
-    assert got["version"] == mig.SCHEMA_VERSION   # the TOOL's target
-    assert got["provenance"]["kind"] == "legacy"
-    assert (tmp_path / "old.json.v2").exists()       # backup kept
-    # a second run converts nothing and still refuses the v1 file
-    assert mig.convert_dir(str(tmp_path)) == (0, 2, 1)
-
-
-def test_store_skips_old_loads_current(tmp_path, monkeypatch,
-                                       capsys):
-    (tmp_path / "old.json").write_text(json.dumps(_v2()))
-    good = dict(mig.migrate_body(_v2()), id="good", name="Good",
+    good = dict(_v2(), id="good", name="Good",
                 version=profiles.SCHEMA_VERSION)
     (tmp_path / "good.json").write_text(json.dumps(good))
     st = _store(tmp_path, monkeypatch)
     assert "good" in st.profiles and "x" not in st.profiles
-    assert "migrate_profiles_v3_to_v4" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "deprecated" in err and "re-measure" in err
 
 
 def test_save_load_round_trip_keeps_blocks(tmp_path, monkeypatch):

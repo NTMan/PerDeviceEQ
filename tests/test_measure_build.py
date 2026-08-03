@@ -338,3 +338,21 @@ def test_mean_confession_averages_and_abstains():
     assert abs(nfl[0] - (-62.03)) < 0.1
     silent = R(None)
     assert mb.mean_confession([silent]) is None
+
+
+def test_stored_take_carries_the_confession():
+    """Schema 5: the confession rides the take itself -- rounded
+    values, abstentions as None (JSON has no NaN), so deleting a
+    take deletes one index and nothing else."""
+    freqs = mc.log_grid(20.0, 20000.0, 12)
+    n = len(freqs)
+    rec = ms.TakeRecord(
+        "t1", 0, list(freqs), [0.0] * n, 1.0, 40.0, -12.0, 0, 0,
+        None, thd_db=[-40.0] * (n - 1) + [float("nan")],
+        h2_db=[-50.0] * n)
+    from perdeviceeq import measure_build as mb
+    out = mb.take_dict(rec, "s1", "FL", freqs)
+    assert out["thd_db"][0] == -40.0
+    assert out["thd_db"][-1] is None
+    assert out["h2_db"][5] == -50.0
+    assert "h3_db" not in out          # absent confession stays absent

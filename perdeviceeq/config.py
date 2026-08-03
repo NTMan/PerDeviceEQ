@@ -96,9 +96,12 @@ TYPE_TO_LABEL = {"PK": "bq_peaking", "LSC": "bq_lowshelf",
                  # hand -- they never join TYPE_NAMES below
                  "HP": "bq_highpass", "LP": "bq_lowpass"}
 TYPE_NAMES = ["PK", "LSC", "HSC"]
-SCHEMA_VERSION = 4      # profile body schema; older files convert once via
-#                         tools/migrate_profiles_v1_to_v2.py (v1 -> v2) and
-#                         tools/migrate_profiles_v2_to_v3.py (v2 -> v3)
+SCHEMA_VERSION = 5      # profile body schema. 5 is the 711/THD epoch:
+#                         a take's harmonic confession is provenance
+#                         recorded at measurement time; no converter can
+#                         materialize one, so pre-5 profiles are
+#                         deprecated and there are no converters --
+#                         re-measure with the current core.
 # the optional v3 blocks the store/GUI carry verbatim through save /
 # import / export; producers own their shape (see perdeviceeq/profiles.py)
 V3_BLOCKS = ("provenance", "device", "fit", "measurement")
