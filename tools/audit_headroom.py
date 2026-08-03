@@ -15,8 +15,8 @@ Usage:
 profile.json is either this tool's own schema ({"preamp": g, "channels":
 {"FL": [band, ...]}}, band key "on") or a profile saved by the app
 (~/.config/per-device-eq/profiles/*.json, v2+: one shared preamp, band
-key "enabled", optional linked "all" slot; v1 files must be converted
-with tools/migrate_profiles_v1_to_v2.py first). --profile NAME resolves
+key "enabled", optional linked "all" slot; v1 files are pre-epoch and
+no converter exists any more). --profile NAME resolves
 a saved app profile by its "name" field: case-insensitive, an
 unambiguous substring is enough. The suggestion is a single shared value
 set by the worst channel -- inherently balance-preserving.
@@ -62,8 +62,9 @@ def normalize_profile(raw):
         return chains, {"name": raw.get("name"), "mode": "audit"}
     # app schema is v2: ONE shared top-level preamp, slots carry bands only
     if "preamp" not in raw:
-        sys.exit("schema v1 app profile (per-slot preamps); run "
-                 "tools/migrate_profiles_v1_to_v2.py once to convert")
+        sys.exit("schema v1 app profile (per-slot preamps): the "
+                 "converters retired with the confession epoch -- "
+                 "re-measure the device in the app")
     g = float(raw["preamp"])
     if raw.get("apply_all", True):
         return ([("all", g, _app_bands(raw.get("all")))],

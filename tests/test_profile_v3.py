@@ -1,5 +1,8 @@
-"""Profile schema v3 (optional measurement blocks, "version": 3) and the
-one-shot v2 converter in tools/migrate_profiles_v2_to_v3.py.
+"""Profile schema v3 (optional measurement blocks, "version": 3):
+the block law it minted, still carried by the current schema. The
+one-shot converters this court once guarded are gone with the
+confession epoch -- what remains here is the law, and the skip a
+pre-epoch file earns at load.
 
 v3 keeps the v2 playback body verbatim and adds room for four optional
 dict blocks -- "provenance", "device", "fit", "measurement" -- that the

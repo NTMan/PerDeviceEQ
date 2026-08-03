@@ -2424,7 +2424,7 @@ class MeasureWindow(Adw.Window):
         # mixed canvas is judged by its own statistics -- the
         # per-take-calibrated spread feeds spread_trust_bound,
         # trust sinks, the trusted band shrinks. The per-take
-        # passports (schema v4) will mark foreign takes in the
+        # passports (schema v5) will mark foreign takes in the
         # take rows; the whole-canvas subtitle enumeration died
         # with measurement.source.
         g = m.get("grid") or {}

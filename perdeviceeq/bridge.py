@@ -150,7 +150,7 @@ def parse_curve(path):
 
 
 def _rig_meta(profile):
-    """Schema v4: the rig lives on the sessions; report the LAST
+    """Schema v5: the rig lives on the sessions; report the LAST
     sitting's stamp and the file names of every cal the canvas
     consumed (from the append-only library)."""
     m = profile.get("measurement") or {}

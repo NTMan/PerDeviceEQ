@@ -118,7 +118,7 @@ def test_cal_applied_from_embedded_points():
 
 
 def test_mixed_cals_within_channel_calibrate_per_take():
-    """Schema v4 (field doctrine): a channel may mix takes from
+    """Schema v5 (field doctrine): a channel may mix takes from
     different rigs; each take is corrected by ITS OWN cal before
     the statistics, so the spread judges the seating on one
     shared acoustic reference -- no refusal, the numbers speak."""

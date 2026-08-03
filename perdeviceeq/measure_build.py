@@ -9,12 +9,15 @@ refit_and_save() settles the profile from the whole stored canvas
 when the caller decides the house is full. Plus the serialization
 helpers they stand on: take_dict() puts an uncalibrated magnitude
 onto the canvas grid, cal_entry() embeds a cal file as points + sha,
-fit_fingerprint() hashes everything a fit consumed. Schema v4:
+fit_fingerprint() hashes everything a fit consumed. Schema v5:
 every take carries its own passport -- cal_sha into the append-only
-measurement.cal_library, the rig stamp on its session -- and the
-statistics judge a mixed canvas (per-take-calibrated curves feed the
-spread and spread_trust_bound), not a name gate. Runtime reads ONE
-shape; tools/migrate_profiles_v3_to_v4.py converts older files once.
+measurement.cal_library, the rig stamp on its session, and its own
+harmonic confession -- and the statistics judge a mixed canvas
+(per-take-calibrated curves feed the spread and spread_trust_bound),
+not a name gate. Runtime reads ONE shape and there are NO converters:
+the confession is provenance of the moment of measurement, no tool
+can invent it for an older file, so pre-epoch profiles are skipped
+with a word and re-measured.
 No GTK and no store construction here; the store is injected.
 """
 import hashlib

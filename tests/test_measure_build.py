@@ -177,7 +177,7 @@ def test_commit_take_builds_the_canvas(shim_state, store, tmp_path):
 def test_commit_take_accepts_a_foreign_rig(shim_state, store,
                                            tmp_path):
     """The append gate fell (field doctrine): a foreign-rig take
-    commits and the canvas grows; schema v4 keeps the truth per
+    commits and the canvas grows; schema v5 keeps the truth per
     sitting -- each session wears its own rig stamp."""
     pid = _bare(store, "g", "Gate")
     ses = _session(tmp_path, [(0, 0)])

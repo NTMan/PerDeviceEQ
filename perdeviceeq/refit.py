@@ -45,7 +45,7 @@ def channel_results(measurement, take_ids=None, smoothing=6):
     onto the quietest recorded software gain (the session scales the
     raw samples by gain_comp_factors; in the magnitude domain that is
     an exact dB shift), corrected PER TAKE by each take's own cal
-    from measurement.cal_library (schema v4: the statistics must
+    from measurement.cal_library (schema v5: the statistics must
     judge calibrated curves -- uncalibrated ones from different mics
     differ by the mics' own responses, not by the seating), then
     power-averaged and box-smoothed on the stored grid. The result
