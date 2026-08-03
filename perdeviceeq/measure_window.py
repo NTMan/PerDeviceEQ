@@ -606,12 +606,57 @@ class MeasureWindow(Adw.Window):
         "which take shrank the range" reads off the list."""
         freqs = rec.freq_hz
         mag = rec.mag_db
+        thd = getattr(rec, "thd_db", None)
+        if thd is not None and len(thd) != len(freqs):
+            thd = None
 
         def draw(_area, cr, w, h, *_):
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
             cr.rectangle(0, 0, w, h)
             cr.fill()
             span = max(1e-6, hi - lo)
+
+            # the ruler: 6 dB horizontals on the channel's own
+            # window (shared by every row of the channel, so the
+            # grid aligns down the list) and decade verticals
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
+            cr.set_line_width(1.0)
+            g = -(-int(lo) // 6) * 6          # first multiple >= lo
+            while g <= hi:
+                gy = h - 3 - (g - lo) / span * (h - 6)
+                cr.move_to(0, gy)
+                cr.line_to(w, gy)
+                g += 6
+            for gf in (100.0, 1000.0, 10000.0):
+                gx = _log_x(gf, 2, w - 4)
+                cr.move_to(gx, 0)
+                cr.line_to(gx, h)
+            cr.stroke()
+
+            if thd is not None:
+                # the take's own distortion layer: fixed -10..-80
+                # dBr over the full height; abstentions (NaN)
+                # break the pen
+                cr.set_source_rgba(0.95, 0.55, 0.15, 0.9)
+                cr.set_line_width(1.2)
+                pen = False
+                for j in _stride_idx(len(freqs)):
+                    v = float(thd[j])
+                    if v != v:
+                        if pen:
+                            cr.stroke()
+                        pen = False
+                        continue
+                    ty = 3 + (-10.0 - v) / 70.0 * (h - 6)
+                    ty = max(1, min(h - 1, ty))
+                    tx = _log_x(freqs[j], 2, w - 4)
+                    if pen:
+                        cr.line_to(tx, ty)
+                    else:
+                        cr.move_to(tx, ty)
+                    pen = True
+                if pen:
+                    cr.stroke()
 
             def xy(j):
                 x = _log_x(freqs[j], 2, w - 4)
@@ -825,7 +870,7 @@ class MeasureWindow(Adw.Window):
             [Gtk.AccessibleProperty.LABEL],
             ["Frequency response of this take"])
         curve.set_content_width(150)
-        curve.set_content_height(60)
+        curve.set_content_height(96)
         curve.set_draw_func(
             self._make_curve_draw(rec, lo, hi, mean, shift))
         body.append(curve)
