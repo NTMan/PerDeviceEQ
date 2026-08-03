@@ -125,8 +125,8 @@ from .pipewire import sink_channels
 from . import pw_backend
 
 METADATA_NAME = "per-device-eq"          # same object the app + WP hook use
-PLAY_NODE = "pde-measure-sweep"
-CAPTURE_NODE = "pde-measure-capture"
+PLAY_NODE = pw_backend.PLAY_NODE
+CAPTURE_NODE = pw_backend.CAPTURE_NODE
 SINK_API_PREFIXES = ("alsa", "bluez")    # "real device" whitelist
 AUTO_MAX_ADJUST = 8                      # ramp-up + a few bisection steps
 AUTO_START_VOLUME = 0.15                 # cubic; "start quiet"
@@ -599,22 +599,11 @@ class CaptureStream:
         self.channels = channels
         self.rate = rate
         self.target = int(target)
-        # --raw is REQUIRED: without it pw-record prefixes the stdout stream
-        # with a format descriptor (rate/channels POD), whose bytes we would
-        # read as audio -- its 0xffffffff field decodes to a NaN at the start
-        # of channel 0 every capture. --raw gives a bare interleaved f32
-        # stream. Pin to the source via node.target (NOT --target, which the
-        # session manager relinks to the default source); node.dont-reconnect
-        # keeps it there if the source blinks.
-        cmd = ["pw-record", "--raw",
-               "-P", "{ node.name = %s, node.target = %d, "
-                     "node.dont-reconnect = true, application.name = "
-                     "\"per-device-eq measure\" }"
-                     % (CAPTURE_NODE, self.target),
-               "--format", "f32", "--rate", str(int(rate)),
-               "--channels", str(int(channels)), "-"]
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL)
+        # The spawn (--raw, node.target pinning, the measure dress)
+        # is the backend's verb now; the exact-frame framing below
+        # stays measurement law.
+        self.proc = pw_backend.backend().capture(
+            self.target, channels, rate)
         self._chunks = []
         self._bytes = 0
         self._lock = threading.Lock()
@@ -623,7 +612,7 @@ class CaptureStream:
 
     def _reader(self):
         while True:
-            chunk = self.proc.stdout.read(65536)
+            chunk = self.proc.read(65536)
             if not chunk:
                 return
             with self._lock:
@@ -648,12 +637,7 @@ class CaptureStream:
                            % (self._bytes // (4 * self.channels), n_frames))
 
     def stop(self):
-        if self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
+        self.proc.terminate(kill_after=3)
         self._thread.join(timeout=3)
 
     def data(self):
@@ -668,7 +652,7 @@ class CaptureStream:
 def _play_error(play):
     return MeasureError("pw-play failed (rc=%d): %s"
                         % (play.returncode,
-                           (play.stderr.read() or "").strip()))
+                           play.stderr_read().strip()))
 
 
 def verify_path(sink, play):
@@ -773,17 +757,9 @@ def run_take(sink, source, wav_path, wav_duration_s, channels, rate,
         time.sleep(CAPTURE_LEAD_S)
         if verify:
             cap_info = verify_capture(source, cap)
-        play_cmd = ["pw-play", "--volume", "1.0",
-                    "-P", "{ node.name = %s, node.target = %d, "
-                          "node.dont-reconnect = true, application.name = "
-                          "\"per-device-eq measure\" }"
-                          % (PLAY_NODE, sink["id"])]
-        if channel_map:
-            play_cmd += ["--channel-map", channel_map]
-        play_cmd.append(wav_path)
-        play = subprocess.Popen(
-            play_cmd,
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        play = pw_backend.backend().play(
+            sink["id"], wav_path, stream_volume=1.0,
+            channel_map=channel_map)
         if verify:
             time.sleep(VERIFY_AFTER_S)
             path_info = verify_path(sink, play)
@@ -1240,13 +1216,8 @@ class MeasureSession:
                 sf.write(wav, np.zeros(int(BT_WARM_S * self.sweep.fs),
                                        dtype=np.float32),
                          self.sweep.fs)
-            subprocess.run(
-                ["pw-play", "--volume", "1.0",
-                 "-P", "{ node.target = %d, node.dont-reconnect = true,"
-                       " application.name = \"per-device-eq warmup\" }"
-                       % self.sink["id"], wav],
-                timeout=BT_WARM_S + 5.0,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            pw_backend.backend().play(
+                self.sink["id"], wav).wait(timeout=BT_WARM_S + 5.0)
         except Exception:
             pass
 

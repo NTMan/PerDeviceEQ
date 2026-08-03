@@ -273,6 +273,8 @@ class AudioBackend(ABC):
         capture()."""
 
     @abstractmethod
-    def play(self, device, wav_path, stream_volume=1.0):
+    def play(self, device, wav_path, stream_volume=1.0,
+             channel_map=None):
         """Play a file into `device`. Returns a handle with .wait(),
-        .terminate() and .alive() -- the sweep rides this verb."""
+        .poll(), .returncode, .stderr_read(), .terminate() and
+        .alive() -- the sweep rides this verb."""

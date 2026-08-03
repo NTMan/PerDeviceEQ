@@ -10,6 +10,12 @@ step routes the program through the backend.
 One instance per process: use backend().
 """
 
+PLAY_NODE = "pde-measure-sweep"
+CAPTURE_NODE = "pde-measure-capture"
+_STREAM_PROPS = ("{ node.name = %s, node.target = %d, "
+                 "node.dont-reconnect = true, application.name = "
+                 "\"per-device-eq measure\" }")
+
 import os
 import re
 import subprocess
@@ -73,7 +79,8 @@ def set_sink_volume(sink_id, cubic):
 class StreamHandle:
     """A live capture or playback stream. read(n) for captures
     (raw interleaved bytes from stdout), wait() for playbacks,
-    terminate() and alive() for both."""
+    terminate() and alive() for both; poll(), returncode and
+    stderr_read() serve the path courts."""
 
     def __init__(self, proc):
         self._proc = proc
@@ -84,9 +91,30 @@ class StreamHandle:
     def wait(self, timeout=None):
         return self._proc.wait(timeout=timeout)
 
-    def terminate(self):
+    def poll(self):
+        return self._proc.poll()
+
+    @property
+    def returncode(self):
+        return self._proc.returncode
+
+    def stderr_read(self):
+        if self._proc.stderr is None:
+            return ""
+        return self._proc.stderr.read() or ""
+
+    def kill(self):
+        if self._proc.poll() is None:
+            self._proc.kill()
+        self._proc.wait()
+
+    def terminate(self, kill_after=3.0):
         if self._proc.poll() is None:
             self._proc.terminate()
+            try:
+                self._proc.wait(timeout=kill_after)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
         self._proc.wait()
 
     def alive(self):
@@ -194,12 +222,13 @@ class PipeWireBackend(AudioBackend):
     # -- measurement streams ---------------------------------------------
 
     def capture(self, device, channels, rate):
+        """Raw interleaved f32 from `device` (a node id), pinned via
+        node.target (NOT --target, which the session manager relinks
+        to the default source) and named for the path courts."""
         cmd = ["pw-record", "--raw",
-               "-P", "{ node.name = pde-backend-capture, "
-                     "node.dont-reconnect = true }",
+               "-P", _STREAM_PROPS % (CAPTURE_NODE, int(device)),
                "--format", "f32", "--rate", str(int(rate)),
-               "--channels", str(int(channels)),
-               "--target", device, "-"]
+               "--channels", str(int(channels)), "-"]
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL)
         return StreamHandle(proc)
@@ -208,11 +237,17 @@ class PipeWireBackend(AudioBackend):
         return StreamHandle(
             pipewire.monitor_capture(sink, channels, rate))
 
-    def play(self, device, wav_path, stream_volume=1.0):
-        cmd = ["pw-play", "--volume", "%.4f" % stream_volume,
-               "--target", device, wav_path]
-        proc = subprocess.Popen(cmd,
-                                stderr=subprocess.DEVNULL)
+    def play(self, device, wav_path, stream_volume=1.0,
+             channel_map=None):
+        """Play a wav into `device` (a node id), pinned and named
+        like capture(); stderr is kept for the play court."""
+        cmd = ["pw-play", "--volume", "%.1f" % stream_volume,
+               "-P", _STREAM_PROPS % (PLAY_NODE, int(device))]
+        if channel_map:
+            cmd += ["--channel-map", channel_map]
+        cmd.append(wav_path)
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, text=True)
         return StreamHandle(proc)
 
 

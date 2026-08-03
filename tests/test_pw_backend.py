@@ -155,3 +155,54 @@ def test_stream_handle_lifecycle():
     assert h.read(4) == b"xxxx"
     h.terminate()
     assert not h.alive()
+
+
+def test_capture_speaks_the_measure_dialect(rig, monkeypatch):
+    b, _ = rig
+    seen = {}
+
+    class FakeProc:
+        def __init__(self, cmd, **kw):
+            seen["cmd"] = cmd
+            self.stdout = None
+            self.stderr = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(pwb.subprocess, "Popen", FakeProc)
+    b.capture(11, 1, 48000)
+    cmd = seen["cmd"]
+    assert cmd[0:2] == ["pw-record", "--raw"]
+    props = cmd[cmd.index("-P") + 1]
+    assert "node.name = pde-measure-capture" in props
+    assert "node.target = 11" in props
+    assert "node.dont-reconnect = true" in props
+    assert "--target" not in cmd
+    assert cmd[-1] == "-"
+
+
+def test_play_speaks_the_measure_dialect(rig, monkeypatch):
+    b, _ = rig
+    seen = {}
+
+    class FakeProc:
+        def __init__(self, cmd, **kw):
+            seen["cmd"] = cmd
+            self.stdout = None
+            self.stderr = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(pwb.subprocess, "Popen", FakeProc)
+    b.play(10, "/tmp/x.wav", stream_volume=1.0,
+           channel_map="FL,FR")
+    cmd = seen["cmd"]
+    assert cmd[0] == "pw-play"
+    assert cmd[cmd.index("--volume") + 1] == "1.0"
+    props = cmd[cmd.index("-P") + 1]
+    assert "node.name = pde-measure-sweep" in props
+    assert "node.target = 10" in props
+    assert cmd[cmd.index("--channel-map") + 1] == "FL,FR"
+    assert cmd[-1] == "/tmp/x.wav"
