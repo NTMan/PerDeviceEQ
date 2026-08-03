@@ -10,6 +10,24 @@ step routes the program through the backend.
 One instance per process: use backend().
 """
 
+def in_thread(fn):
+    """Run fn on a daemon thread (off-main-loop subprocess work)."""
+    import threading
+    threading.Thread(target=fn, daemon=True).start()
+
+
+# The PipeWire command-line tools we shell out to. Names are the same
+# across distributions; the *package* that ships them is not, so we
+# check for the tools and let the user install them as their distro
+# prefers.
+REQUIRED_TOOLS = ["pw-metadata", "pw-dump"]
+
+def missing_tools_message(missing):
+    return ("These PipeWire command-line tools are required but were not found "
+            "in PATH:\n\n    %s\n\nInstall the PipeWire utilities with your "
+            "distribution's package manager and try again." % "  ".join(missing))
+
+
 PLAY_NODE = "pde-measure-sweep"
 CAPTURE_NODE = "pde-measure-capture"
 _STREAM_PROPS = ("{ node.name = %s, node.target = %d, "
@@ -208,6 +226,43 @@ class PipeWireBackend(AudioBackend):
         print("CRITICAL: failed to restore the EQ profile; put it "
               "back manually:\n  pw-metadata -n per-device-eq 0 "
               "'%s' '%s'" % (device, value), file=sys.stderr)
+
+    def missing_requirements(self):
+        """Command-line tools the platform still needs."""
+        import shutil
+        return [t for t in REQUIRED_TOOLS
+                if shutil.which(t) is None]
+
+    def meter_available(self):
+        """pw-record is needed only by the tier-2 live meter: its
+        absence degrades the app to the static tier-1 estimate,
+        nothing more. PDEQ_NO_METER=1 forces the degraded mode for
+        diagnostics: the GUI then runs without its sink-monitor tap,
+        so a measurement can be compared with and without that
+        stream present."""
+        import shutil
+        if os.environ.get("PDEQ_NO_METER"):
+            return False
+        return shutil.which("pw-record") is not None
+
+    def hook_protocol(self):
+        """The protocol the LOADED hook stamped into the channel.
+        Returns (found, version): found False = no metadata object
+        (WirePlumber or the hook is not up -- the install/restart
+        narrations own that story, say nothing extra); found True
+        with version None = a pre-versioning hook."""
+        r = pipewire._run(["pw-metadata", "-n", pipewire.METADATA_NAME, "0", "protocol"])
+        out = (r.stdout or "") + (r.stderr or "")
+        m = re.search(r"key:'protocol'\s+value:'([^']*)'", out)
+        return ("Found" in out), (m.group(1) if m else None)
+
+    def output_channels(self, device):
+        """Channel positions of an output device."""
+        return pipewire.sink_channels(device)
+
+    def input_channels(self, device):
+        """Channel positions of an input device."""
+        return pipewire.source_channels(device)
 
     # -- observed side ---------------------------------------------------
 

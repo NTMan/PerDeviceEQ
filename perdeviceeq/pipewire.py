@@ -9,7 +9,7 @@ applies it to the live node and re-applies on every reconnect. Reading state
 pw-metadata. No GTK here; only stdlib + the PipeWire CLI tools.
 """
 
-import json, os, re, shutil, subprocess, threading
+import json, re, subprocess
 
 from .config import METADATA_NAME
 
@@ -26,37 +26,9 @@ def _run(cmd, timeout=2.0):
         return subprocess.CompletedProcess(cmd, 1, "", str(e))
 
 
-def _in_thread(fn):
-    """Run fn on a daemon thread (for off-main-loop subprocess work)."""
-    threading.Thread(target=fn, daemon=True).start()
-
-
-# The PipeWire command-line tools we shell out to. Names are the same across
-# distributions; the *package* that ships them is not, so we check for the tools
-# themselves and let the user install them however their distro prefers.
-REQUIRED_TOOLS = ["pw-metadata", "pw-dump"]
-
-def missing_tools(tools=REQUIRED_TOOLS):
-    return [t for t in tools if shutil.which(t) is None]
-
-
-def meter_available():
-    """pw-record is needed only by the tier-2 live meter: its absence
-    degrades the app to the static tier-1 estimate, nothing more.
-
-    PDEQ_NO_METER=1 forces the degraded mode for diagnostics: the GUI
-    then runs without its sink-monitor tap, so a measurement can be
-    compared with and without that stream present."""
-    if os.environ.get("PDEQ_NO_METER"):
-        return False
-    return shutil.which("pw-record") is not None
 
 
 
-def missing_tools_message(missing):
-    return ("These PipeWire command-line tools are required but were not found "
-            "in PATH:\n\n    %s\n\nInstall the PipeWire utilities with your "
-            "distribution's package manager and try again." % "  ".join(missing))
 
 
 def pw_dump():
@@ -171,17 +143,6 @@ def metadata_set(node_name, graph):
     Stored as a plain string (no type tag), which the hook reads verbatim."""
     r = _run(["pw-metadata", "-n", METADATA_NAME, "0", node_name, graph])
     return r.returncode == 0 and "Found" in (r.stdout + r.stderr)
-
-def hook_protocol():
-    """The protocol the LOADED hook stamped into the channel.
-    Returns (found, version): found False = no metadata object
-    (WirePlumber or the hook is not up -- the install/restart
-    narrations own that story, say nothing extra); found True
-    with version None = a pre-versioning hook."""
-    r = _run(["pw-metadata", "-n", METADATA_NAME, "0", "protocol"])
-    out = (r.stdout or "") + (r.stderr or "")
-    m = re.search(r"key:'protocol'\s+value:'([^']*)'", out)
-    return ("Found" in out), (m.group(1) if m else None)
 
 
 def metadata_clear(node_name):

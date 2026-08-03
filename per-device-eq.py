@@ -34,7 +34,8 @@ for _cand in (_HERE,
         break
 
 from perdeviceeq.config import SYS_DESKTOP_FILE
-from perdeviceeq.pipewire import missing_tools, missing_tools_message
+from perdeviceeq.pw_backend import (backend,
+                                    missing_tools_message)
 from perdeviceeq.integration import (install_full, uninstall_hook,
                                       restart_wireplumber,
                                       uninstall_desktop_integration)
@@ -77,7 +78,7 @@ def main():
 
     if (args.list_sinks or args.list_sources or args.inspect
             or args.apply):
-        miss = missing_tools()
+        miss = backend().missing_requirements()
         if miss:
             print(missing_tools_message(miss), file=sys.stderr)
             return 2

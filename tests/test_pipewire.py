@@ -4,6 +4,7 @@ No subprocess: synthetic pw-dump dicts are passed straight to the
 listing functions, so these test the filtering/shaping logic itself.
 """
 from perdeviceeq import pipewire
+from perdeviceeq import pw_backend as pwb
 
 
 def _node(nid, name, cls, desc=None, prio=0):
@@ -83,12 +84,12 @@ def test_hook_protocol_states(monkeypatch):
         'Found "per-device-eq" metadata 99\n'
         "update: id:0 key:'protocol' value:'1' "
         "type:'Spa:String:JSON'\n"))
-    assert pipewire.hook_protocol() == (True, "1")
+    assert pwb.PipeWireBackend().hook_protocol() == (True, "1")
 
     monkeypatch.setattr(
         pipewire, "_run",
         fake('Found "per-device-eq" metadata 99\n'))
-    assert pipewire.hook_protocol() == (True, None)
+    assert pwb.PipeWireBackend().hook_protocol() == (True, None)
 
     monkeypatch.setattr(pipewire, "_run", fake(""))
-    assert pipewire.hook_protocol() == (False, None)
+    assert pwb.PipeWireBackend().hook_protocol() == (False, None)

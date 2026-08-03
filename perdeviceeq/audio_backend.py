@@ -199,6 +199,10 @@ class AudioBackend(ABC):
     def moratorium_active(self):
         return self._moratorium is not None
 
+    def volume_of(self, device):
+        """The device's current volume (cubic), or None."""
+        return self._read_volume(device)
+
     @property
     def pending_count(self):
         return len(self._pending)

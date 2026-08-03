@@ -27,7 +27,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, GLib, Gdk, Adw, Pango  # noqa: E402
 
-from . import config, pipewire, measure_build       # noqa: E402
+from . import config, measure_build       # noqa: E402
 from . import pw_backend
 from . import focus                                  # noqa: E402
 from . import debug
@@ -181,12 +181,13 @@ class MeasureWindow(Adw.Window):
         self.mic_store = measure_prefs.MicProfileStore()
         self.memory = measure_prefs.MeasureMemory()
         try:
-            self.ch_keys = pipewire.sink_channels(sink_node) or ["FL", "FR"]
+            self.ch_keys = pw_backend.backend().output_channels(sink_node) or ["FL", "FR"]
         except Exception:
             self.ch_keys = ["FL", "FR"]
         self.n_ch = len(self.ch_keys)
 
-        self.sources = pipewire.list_sources()
+        self._pw.update()
+        self.sources = self._pw.sources
         self.cal = {}               # mic capture-channel idx -> cal
         self.mic_ch = 2             # rig capture channels (1 or 2)
         self.mic_of = {}            # sink channel -> analyzed mic ch
@@ -1127,13 +1128,7 @@ class MeasureWindow(Adw.Window):
 
     def _query_volume(self):
         try:
-            dump = pipewire.pw_dump()
-            sid = next((s["id"] for s in pipewire.list_sinks(dump)
-                        if s["name"] == self.sink_node), None)
-            if sid is None:
-                return None
-            v, _, _ = ms.sink_volume_state(dump, sid)
-            return v
+            return pw_backend.backend().volume_of(self.sink_node)
         except Exception:
             return None
 
@@ -1847,7 +1842,7 @@ class MeasureWindow(Adw.Window):
         if prof and prof.get("channels") in (1, 2):
             return prof["channels"]     # the user pinned it for this rig
         try:
-            n = len(pipewire.source_channels(src["name"]))
+            n = len(pw_backend.backend().input_channels(src["name"]))
         except Exception:
             n = 2
         return max(1, min(2, n))        # a measurement rig is 1- or 2-ch

@@ -38,7 +38,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
-from . import __version__, config, eq, pipewire, pw_backend, integration
+from . import __version__, config, eq, pw_backend, integration
 from .picker import NodePicker
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE, UI_STATE_FILE,
                      UI_FILE_CANDIDATES)
@@ -1029,7 +1029,7 @@ class EqWindow(Adw.ApplicationWindow):
         hook is not up (other narrations own that story);
         object without the stamp = a pre-versioning hook --
         the same one-click offer, honestly labeled."""
-        found, ver = pipewire.hook_protocol()
+        found, ver = pw_backend.backend().hook_protocol()
         if not found or ver == config.PROTOCOL:
             return False
         try:
@@ -1220,7 +1220,7 @@ class EqWindow(Adw.ApplicationWindow):
     def _init_devices(self):
         """Fill the device dropdown from PipeWire and select the default sink."""
         self.sinks = []
-        miss = pipewire.missing_tools()
+        miss = pw_backend.backend().missing_requirements()
         if miss:
             self.live = False
             self.node = None
@@ -1235,8 +1235,9 @@ class EqWindow(Adw.ApplicationWindow):
                 Gtk.PropertyExpression.new(Gtk.StringObject, None, "string"))
         except Exception:
             pass
-        dump = pipewire.pw_dump()
-        self.sinks = pipewire.list_sinks(dump)
+        b = pw_backend.backend()
+        b.update()
+        self.sinks = b.sinks
         default = next((s["name"] for s in self.sinks if s["default"]), None)
         self.node = default or (self.sinks[0]["name"] if self.sinks else None)
         self.picker.refresh(self.sinks)
@@ -1462,7 +1463,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._clear_box(self.channel_bar)
         self._chan_buttons = {}
         keys = ["all"] if self.apply_all else list(self.ch_keys)
-        show_meters = pipewire.meter_available()
+        show_meters = pw_backend.backend().meter_available()
         first = None
         for k in keys:
             btn = Gtk.ToggleButton(
@@ -1617,7 +1618,7 @@ class EqWindow(Adw.ApplicationWindow):
             dev = []
             if self.live and self.node:
                 try:
-                    dev = pipewire.sink_channels(self.node)
+                    dev = pw_backend.backend().output_channels(self.node)
                 except Exception:
                     dev = []
             pch = list(p.get("ch_keys") or list((p.get("channels") or {}).keys()))
@@ -1774,10 +1775,10 @@ class EqWindow(Adw.ApplicationWindow):
                   and not self.pref_layers.active_has_content())
         auth = pw_backend.backend()
         if self.bypass_row.get_active() or silent:
-            pipewire._in_thread(lambda: auth.clear_graph(node))
+            pw_backend.in_thread(lambda: auth.clear_graph(node))
         else:
             graph = eq.profile_graph(body, extra=extra)
-            pipewire._in_thread(lambda: auth.publish_graph(node,
+            pw_backend.in_thread(lambda: auth.publish_graph(node,
                                                            graph))
 
     # ---- undo / redo -------------------------------------------------------
@@ -2184,7 +2185,7 @@ class EqWindow(Adw.ApplicationWindow):
         while the window is mapped."""
         want = bool(self.live and self.node
                     and not self._node_gone and self.get_mapped()
-                    and pipewire.meter_available())
+                    and pw_backend.backend().meter_available())
         if want and self._meter is None:
             try:
                 from .meter import Ballistics, MeterEngine  # lazy: scipy
