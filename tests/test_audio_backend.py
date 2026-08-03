@@ -167,3 +167,14 @@ def test_volume_none_skips_the_dose_and_the_restore():
     f.moratorium_begin("dev", None)
     f.moratorium_end()
     assert all(e[0] != "volume" for e in f.log)
+
+
+def test_queueing_speaks_with_the_callers_voice(capsys):
+    f = FakeBackend()
+    f.moratorium_begin("dev", None, mute_others=False)
+    f.publish_graph("dev", "LATE")
+    err = capsys.readouterr().err
+    assert "queued graph for dev" in err
+    assert "caller:" in err
+    f.moratorium_end()
+    assert ("graph", "dev", "LATE") in f.log

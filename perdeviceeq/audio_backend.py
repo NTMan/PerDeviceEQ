@@ -38,7 +38,9 @@ No GTK, no windows, no knowledge of who calls: the presence of a
 measure window must never gate code anywhere else.
 """
 
+import sys
 import threading
+import traceback
 from abc import ABC, abstractmethod
 
 
@@ -76,30 +78,43 @@ class AudioBackend(ABC):
 
     # -- equalization state -------------------------------------------
 
+    def _queue(self, kind, device, value):
+        self._pending[(kind, device)] = value
+        names = [f.name for f in
+                 traceback.extract_stack(limit=7)][:-2]
+        print("backend: queued %s for %s until the moratorium "
+              "lifts (caller: %s)"
+              % (kind, device, " > ".join(names)),
+              file=sys.stderr)
+
     def publish_graph(self, device, value):
         """Desire `value` on `device`. Applied now, or queued until
-        the moratorium lifts (last write per key wins)."""
-        self._graphs[device] = value
-        if self._moratorium is not None:
-            self._pending[("graph", device)] = value
-            return
-        self._push_graph(device, value)
+        the moratorium lifts (last write per key wins; the queueing
+        is logged with the caller's path)."""
+        with self._lock:
+            self._graphs[device] = value
+            if self._moratorium is not None:
+                self._queue("graph", device, value)
+                return
+            self._push_graph(device, value)
 
     def clear_graph(self, device):
         """Desire a clean `device` (no DSP)."""
-        self._graphs[device] = None
-        if self._moratorium is not None:
-            self._pending[("graph", device)] = None
-            return
-        self._push_graph(device, None)
+        with self._lock:
+            self._graphs[device] = None
+            if self._moratorium is not None:
+                self._queue("graph", device, None)
+                return
+            self._push_graph(device, None)
 
     def set_volume(self, device, cubic):
         """Desire a device volume (cubic, 0..1)."""
-        self._volumes[device] = cubic
-        if self._moratorium is not None:
-            self._pending[("volume", device)] = cubic
-            return
-        self._push_volume(device, cubic)
+        with self._lock:
+            self._volumes[device] = cubic
+            if self._moratorium is not None:
+                self._queue("volume", device, cubic)
+                return
+            self._push_volume(device, cubic)
 
     # -- the moratorium ------------------------------------------------
 

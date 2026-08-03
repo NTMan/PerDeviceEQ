@@ -31,7 +31,7 @@ Deferred to a later increment: dragging band handles on the graph, GtkColumnView
 for the band table, per-row sparklines, the online AutoEQ catalog.
 """
 
-import json, math, os, sys, threading, traceback
+import json, math, os, sys, threading
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -1759,23 +1759,11 @@ class EqWindow(Adw.ApplicationWindow):
 
         The publish rides the backend authority: the editor's wish
         lands in its desired store and the store pushes the server,
-        one door for the whole program.
-
-        Suppressed while a measure window is open: a measurement holds
-        the node deliberately flat (profile bypass), and a publish from
-        here -- e.g. the meter machinery relinking its capture -- would
-        put the EQ back in the middle of a take. The suppression is
-        logged with the call path so the exact trigger is visible.
-        The brace stays until the session claims the moratorium; then
-        queueing replaces it.
+        one door for the whole program. During a measurement the
+        authority queues it -- last write per key -- and applies it
+        once the moratorium lifts; the queueing is logged there with
+        the caller's path. No window gates any code here.
         """
-        if self._measure_win is not None:
-            names = [f.name for f in
-                     traceback.extract_stack(limit=6)][:-1]
-            print("apply_now: suppressed graph publish during "
-                  "measurement (caller: %s)" % " > ".join(names),
-                  file=sys.stderr)
-            return
         self._update_meter()
         if not self.live or not self.node:
             return
