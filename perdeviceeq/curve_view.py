@@ -30,8 +30,13 @@ import numpy as np
 FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 TICKS_HZ = (20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000)
 ML, MR, MT, MB = 38, 8, 10, 18          # plot margins in pixels
-DB_STEP = 6.0                           # horizontal ruler pitch
+DB_STEP = 6.0                           # ruler pitch of last resort
+GRID_STEPS = (3.0, 6.0, 12.0, 24.0, 48.0)
+GRID_MAX_LINES = 10                     # denser than this is hatching
 PAD_DB = 3.0                            # air above and below data
+MAX_SPAN_DB = 80.0                      # response to the deepest floor
+FLOOR_Q = 2.0                           # percentile that sets the floor
+SMOOTH_OCT = 1.0 / 12.0                 # display smoothing of harmonics
 
 C_RESPONSE = (0.22, 0.52, 0.90, 1.00)
 C_GHOST = (0.45, 0.45, 0.45, 0.90)
@@ -62,6 +67,46 @@ def log_x(freq, x0, w):
     lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
     f = min(max(float(freq), FMIN_PLOT), FMAX_PLOT)
     return x0 + (math.log10(f) - lo) / (hi - lo) * w
+
+
+def grid_pitch(span):
+    """The ruler adapts. Six decibels over a hundred-decibel window
+    is nineteen lines, which the eye reads as hatching and not as a
+    ruler; pick the finest pitch that still keeps the count sane."""
+    for p in GRID_STEPS:
+        if span / p <= GRID_MAX_LINES:
+            return p
+    return GRID_STEPS[-1]
+
+
+def smooth_oct(freqs, values, frac=SMOOTH_OCT):
+    """Fractional-octave smoothing of the PEN, not of the data.
+    A harmonic line read per bin is hairy and a hairy line reads as
+    noise even when it is signal; a twelfth-octave window is what a
+    published distortion plot shows. Two laws keep it honest: the
+    stored arrays are untouched (this runs on the copy handed to the
+    painter), and an abstention stays exactly where it was -- a NaN
+    is never filled in from its neighbours, so the line still ends
+    where the evidence ends."""
+    if values is None:
+        return None
+    v = np.asarray(values, float)
+    f = np.asarray(freqs, float)
+    if len(v) != len(f) or len(v) < 3:
+        return v
+    lg = np.log2(np.maximum(f, 1e-9))
+    half = frac / 2.0
+    lo = np.searchsorted(lg, lg - half, side="left")
+    hi = np.searchsorted(lg, lg + half, side="right")
+    ok = np.isfinite(v)
+    filled = np.where(ok, v, 0.0)
+    csum = np.concatenate(([0.0], np.cumsum(filled)))
+    ccnt = np.concatenate(([0], np.cumsum(ok.astype(int))))
+    n = ccnt[hi] - ccnt[lo]
+    s = csum[hi] - csum[lo]
+    with np.errstate(all="ignore"):
+        out = np.where(n > 0, s / np.maximum(n, 1), np.nan)
+    return np.where(ok, out, np.nan)
 
 
 def tick_label(f):
@@ -132,24 +177,46 @@ def _finite(arr):
     return a[np.isfinite(a)]
 
 
-def window_db(curves, band=None):
-    """The shared vertical window: every finite value of every
-    curve, plus the spread band, plus air, snapped to the ruler's
-    pitch. Computed ONCE per channel and handed to every canvas so
-    the grids align down the list."""
-    vals = [_finite(c.values) for c in curves if c is not None]
+def window_db(curves, band=None, max_span=MAX_SPAN_DB):
+    """The shared vertical window, computed ONCE per channel and
+    handed to every canvas so the grids align down the list.
+
+    The floor is NOT the minimum. A handful of dives in the third
+    harmonic used to drag the window to -132 and press the response
+    -- the curve the whole picture exists for -- into the top
+    fifteen percent of the canvas as a flat thread. So the floor
+    reads a low percentile of the harmonic lines (the body of the
+    distortion, not its spikes) and is then held to at most
+    max_span below the response itself. What falls out the bottom
+    is a few excursions of a line that is already at the noise."""
+    resp, harm = [], []
+    for c in curves:
+        if c is None:
+            continue
+        (harm if c.harmonic else resp).append(_finite(c.values))
     if band is not None:
-        vals.append(_finite(band[0]))
-        vals.append(_finite(band[1]))
-    vals = [v for v in vals if len(v)]
-    if not vals:
+        resp.append(_finite(band[0]))
+        resp.append(_finite(band[1]))
+    resp = [v for v in resp if len(v)]
+    harm = [v for v in harm if len(v)]
+    if not resp and not harm:
         return -80.0, 0.0
-    lo = float(min(float(v.min()) for v in vals)) - PAD_DB
-    hi = float(max(float(v.max()) for v in vals)) + PAD_DB
-    lo = math.floor(lo / DB_STEP) * DB_STEP
-    hi = math.ceil(hi / DB_STEP) * DB_STEP
-    if hi - lo < DB_STEP * 2:
-        hi = lo + DB_STEP * 2
+    allv = np.concatenate(resp + harm)
+    hi = float(allv.max()) + PAD_DB
+    if harm:
+        hv = np.concatenate(harm)
+        floor = float(np.percentile(hv, FLOOR_Q)) - PAD_DB
+    else:
+        floor = float(allv.min()) - PAD_DB
+    if resp:
+        rv = np.concatenate(resp)
+        floor = max(floor, float(rv.max()) - max_span)
+        floor = min(floor, float(rv.min()) - PAD_DB)
+    pitch = grid_pitch(max(hi - floor, 1e-6))
+    lo = math.floor(floor / pitch) * pitch
+    hi = math.ceil(hi / pitch) * pitch
+    if hi - lo < pitch * 2:
+        hi = lo + pitch * 2
     return lo, hi
 
 
@@ -176,7 +243,7 @@ class Plot:
 
     def __init__(self, freqs, curves, lo, hi, band=None,
                  state=None, legend=True, title=None,
-                 dim_outside=None):
+                 dim_outside=None, say_evidence=True):
         self.freqs = np.asarray(freqs, float)
         self.curves = [c for c in curves if c is not None]
         self.lo, self.hi = float(lo), float(hi)
@@ -185,6 +252,7 @@ class Plot:
         self.legend = legend
         self.title = title
         self.dim_outside = dim_outside
+        self.say_evidence = say_evidence
         self.hits = []
         self.ev_hi = evidence_hi(self.freqs, self.curves)
 
@@ -251,7 +319,8 @@ class Plot:
             ext = cr.text_extents(lab)
             cr.move_to(x - ext.width / 2.0, MT + ph + 13)
             cr.show_text(lab)
-        g = math.ceil(self.lo / DB_STEP) * DB_STEP
+        pitch = grid_pitch(max(self.hi - self.lo, 1e-6))
+        g = math.ceil(self.lo / pitch) * pitch
         while g <= self.hi + 1e-9:
             y = y_of(g)
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
@@ -261,7 +330,7 @@ class Plot:
             cr.set_source_rgba(0.4, 0.4, 0.4, 0.85)
             cr.move_to(2, y + 3)
             cr.show_text("%d" % int(round(g)))
-            g += DB_STEP
+            g += pitch
         cr.set_source_rgba(0.4, 0.4, 0.4, 0.85)
         cr.set_font_size(9)
         cr.move_to(2, MT + ph + 13)
@@ -279,6 +348,8 @@ class Plot:
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.12)
         cr.rectangle(x, MT, ML + pw - x, ph)
         cr.fill()
+        if not self.say_evidence:
+            return                       # said once, on the face
         cr.set_source_rgba(0.45, 0.45, 0.45, 0.95)
         cr.set_font_size(9)
         lab = "no harmonic evidence"

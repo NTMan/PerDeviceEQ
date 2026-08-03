@@ -611,7 +611,7 @@ class MeasureWindow(Adw.Window):
         self._page["takes_rev"].set_reveal_child(
             self._takes_open)
 
-    def _conf_curves(self, mag, thd, h2, h3, noise):
+    def _conf_curves(self, freqs, mag, thd, h2, h3, noise):
         """The confession as LEVELS on the response's own axis:
         the harmonic ratio lifted onto the fundamental, which is
         what a REW distortion plot shows and what makes the gap
@@ -623,11 +623,13 @@ class MeasureWindow(Adw.Window):
                                    ("THD", thd, cv.C_THD, 1.6)):
             lv = cv.as_level(mag, arr)
             if lv is not None:
-                out.append(cv.Curve(name, lv, col, wd,
-                                    harmonic=True))
+                out.append(cv.Curve(name,
+                                    cv.smooth_oct(freqs, lv),
+                                    col, wd, harmonic=True))
         lv = cv.as_level(mag, noise)
         if lv is not None:
-            out.append(cv.Curve("noise", lv, cv.C_NOISE, 1.2,
+            out.append(cv.Curve("noise", cv.smooth_oct(freqs, lv),
+                                cv.C_NOISE, 1.2,
                                 harmonic=True, land=True))
         return out
 
@@ -646,7 +648,7 @@ class MeasureWindow(Adw.Window):
                                 np.where(bad, mag, np.nan),
                                 cv.C_BAD, 1.8, legend=False))
         out.extend(self._conf_curves(
-            mag,
+            rec.freq_hz, mag,
             getattr(rec, "thd_db", None),
             getattr(rec, "h2_db", None),
             getattr(rec, "h3_db", None),
@@ -835,7 +837,8 @@ class MeasureWindow(Adw.Window):
         curve.set_content_height(ROW_H)
         plot = cv.Plot(rec.freq_hz,
                        self._take_curves(rec, mean, shift),
-                       lo, hi, state=self._hl, legend=False)
+                       lo, hi, state=self._hl, legend=False,
+                       say_evidence=False)
         curve.set_draw_func(plot.draw)
         self._page["canvases"].append(curve)
         body.append(curve)
@@ -1394,8 +1397,9 @@ class MeasureWindow(Adw.Window):
             curves.append(cv.Curve("partner", ghost, cv.C_GHOST,
                                    1.2, dash=(4.0, 3.0)))
         curves.extend(self._conf_curves(
-            mean, *(measure_build.mean_confession(base)
-                    or (None, None, None, None))))
+            base[0].freq_hz, mean,
+            *(measure_build.mean_confession(base)
+              or (None, None, None, None))))
         band = (mean - sp / 2.0, mean + sp / 2.0,
                 sp >= ms.SPREAD_MAX_DB)
         return base[0].freq_hz, curves, band, glabel

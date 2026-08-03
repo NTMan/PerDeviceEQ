@@ -203,3 +203,72 @@ def test_the_spread_band_paints_and_the_red_says_untrustworthy():
     reds = [c for c in cr.colors if c[0] > 0.8 and c[1] < 0.3]
     assert reds, "the untrustworthy half of the band must be red"
     assert len(cr.rects) >= 6
+
+def test_the_floor_reads_the_body_not_the_dives():
+    """A handful of third-harmonic dives used to drag the window
+    a hundred and thirty decibels down and press the response into
+    a flat thread at the top."""
+    f = np.geomspace(20.0, 20000.0, 400)
+    body = np.full(400, -92.0)
+    body[::40] = -130.0
+    curves = [cv.Curve("mean", np.full(400, -40.0), cv.C_RESPONSE),
+              cv.Curve("THD", body, cv.C_THD, harmonic=True)]
+    lo, hi = cv.window_db(curves)
+    assert lo > -125.0          # the dives fall out the bottom
+    assert lo < -95.0           # the body stays in
+    assert len(f) == 400
+
+
+def test_the_response_never_loses_more_than_the_cap():
+    curves = [cv.Curve("mean", np.full(4, -30.0), cv.C_RESPONSE),
+              cv.Curve("THD", np.full(4, -400.0), cv.C_THD,
+                       harmonic=True)]
+    lo, hi = cv.window_db(curves)
+    assert lo >= -30.0 - cv.MAX_SPAN_DB - cv.GRID_STEPS[-1]
+    assert lo <= -30.0 - cv.MAX_SPAN_DB + cv.GRID_STEPS[-1]
+
+
+def test_the_response_alone_keeps_its_own_floor():
+    curves = [cv.Curve("mean", np.array([-40.0, -20.0]),
+                       cv.C_RESPONSE)]
+    lo, hi = cv.window_db(curves)
+    assert lo <= -43.0 and hi >= -17.0
+
+
+def test_the_ruler_thins_as_the_window_grows():
+    assert cv.grid_pitch(18.0) == 3.0
+    assert cv.grid_pitch(84.0) == 12.0
+    assert cv.grid_pitch(400.0) == cv.GRID_STEPS[-1]
+    p = cv.Plot(FREQS, [cv.Curve("take", np.full(6, -30.0),
+                                 cv.C_RESPONSE)],
+                -108.0, -24.0, legend=False)
+    cr = paint(p)
+    dbs = [t for t in cr.texts if t.startswith("-") and t != "-"]
+    assert len(dbs) <= cv.GRID_MAX_LINES
+
+
+def test_smoothing_calms_the_pen_and_keeps_every_abstention():
+    f = np.geomspace(20.0, 20000.0, 300)
+    v = np.full(300, -90.0)
+    v[150] = -120.0
+    v[200] = np.nan
+    s = cv.smooth_oct(f, v)
+    assert -105.0 < s[150] < -90.0        # the spike is calmed
+    assert np.isnan(s[200])               # the abstention survives
+    assert not np.isnan(s[199])
+    assert np.isnan(v[200]) and v[150] == -120.0   # data untouched
+    assert cv.smooth_oct(f, None) is None
+
+
+def test_the_evidence_note_is_said_once():
+    thd = np.array([-80.0] * 5 + [np.nan])
+    curves = [cv.Curve("take", np.full(6, -30.0), cv.C_RESPONSE),
+              cv.Curve("THD", thd, cv.C_THD, harmonic=True)]
+    face = cv.Plot(FREQS, curves, -90.0, -24.0, legend=False)
+    row = cv.Plot(FREQS, curves, -90.0, -24.0, legend=False,
+                  say_evidence=False)
+    assert "no harmonic evidence" in paint(face).texts
+    cr = paint(row)
+    assert "no harmonic evidence" not in cr.texts
+    x10k = cv.log_x(10000.0, cv.ML, 700 - cv.ML - cv.MR)
+    assert any(abs(r[0] - x10k) < 1.0 for r in cr.rects)
