@@ -38,7 +38,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
-from . import __version__, config, eq, pipewire, integration
+from . import __version__, config, eq, pipewire, pw_backend, integration
 from .picker import NodePicker
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE, UI_STATE_FILE,
                      UI_FILE_CANDIDATES)
@@ -1757,11 +1757,17 @@ class EqWindow(Adw.ApplicationWindow):
         """Publish the device's live state to the per-device-eq metadata:
         the graph string, or key removal when bypassed / empty.
 
+        The publish rides the backend authority: the editor's wish
+        lands in its desired store and the store pushes the server,
+        one door for the whole program.
+
         Suppressed while a measure window is open: a measurement holds
         the node deliberately flat (profile bypass), and a publish from
         here -- e.g. the meter machinery relinking its capture -- would
         put the EQ back in the middle of a take. The suppression is
         logged with the call path so the exact trigger is visible.
+        The brace stays until the session claims the moratorium; then
+        queueing replaces it.
         """
         if self._measure_win is not None:
             names = [f.name for f in
@@ -1778,12 +1784,13 @@ class EqWindow(Adw.ApplicationWindow):
         extra = self.pref_layers.active_bands()
         silent = (not eq.profile_has_content(body)
                   and not self.pref_layers.active_has_content())
+        auth = pw_backend.backend()
         if self.bypass_row.get_active() or silent:
-            pipewire._in_thread(lambda: pipewire.metadata_clear(node))
+            pipewire._in_thread(lambda: auth.clear_graph(node))
         else:
             graph = eq.profile_graph(body, extra=extra)
-            pipewire._in_thread(lambda: pipewire.metadata_set(node,
-                                                              graph))
+            pipewire._in_thread(lambda: auth.publish_graph(node,
+                                                           graph))
 
     # ---- undo / redo -------------------------------------------------------
     def _snapshot(self):
