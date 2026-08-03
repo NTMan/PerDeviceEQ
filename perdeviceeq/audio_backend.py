@@ -38,6 +38,7 @@ No GTK, no windows, no knowledge of who calls: the presence of a
 measure window must never gate code anywhere else.
 """
 
+import threading
 from abc import ABC, abstractmethod
 
 
@@ -60,6 +61,7 @@ class AudioBackend(ABC):
     """
 
     def __init__(self):
+        self._lock = threading.Lock()
         # desired
         self._graphs = {}          # device -> value or None (clean)
         self._volumes = {}         # device -> cubic float
@@ -101,44 +103,82 @@ class AudioBackend(ABC):
 
     # -- the moratorium ------------------------------------------------
 
-    def moratorium_begin(self, sink, measure_cubic):
-        """A measurement claims the server: strip the DSP off `sink`,
-        mute foreign streams, set the measurement volume; remember
-        everything for the restore. Raises if one is already
-        active."""
-        if self._moratorium is not None:
-            raise RuntimeError("moratorium already active")
-        restore = {
-            "graph": self._graphs.get(sink),
-            "volume": self._volumes.get(sink),
-            "mutes": self._push_stream_mutes(sink, True),
-        }
-        self._moratorium = {"sink": sink, "restore": restore}
-        self._push_graph(sink, None)
-        self._push_volume(sink, measure_cubic)
+    def moratorium_begin(self, sink, measure_cubic=None,
+                         mute_others=True):
+        """A measurement claims the server for ONE sweep: mute foreign
+        streams (when asked), strip the DSP off `sink`, set the
+        measurement volume (when given). The restore is read from the
+        SERVER at this very begin -- graph (with its source) and
+        volume -- so any process, however fresh, restores what the
+        server actually had, every sweep, exactly as the old per-sweep
+        law did. Returns the evidence dict the session records as
+        eq_profile_state. Raises if one is already active."""
+        with self._lock:
+            if self._moratorium is not None:
+                raise RuntimeError("moratorium already active")
+            value, source = self._read_graph(sink)
+            self._graphs[sink] = value
+            state = {"metadata_key": sink, "profile": value,
+                     "profile_source":
+                         source if value is not None else None,
+                     "bypass": False, "restored": None}
+            restore = {
+                "graph": value,
+                "volume": (self._read_volume(sink)
+                           if measure_cubic is not None else None),
+                "mutes": (self._push_stream_mutes(sink, True)
+                          if mute_others else None),
+                "state": state,
+            }
+            self._moratorium = {"sink": sink, "restore": restore,
+                                "muted": mute_others}
+            if restore["graph"] is not None:
+                self._push_graph(sink, None)
+                state["bypass"] = True
+            if measure_cubic is not None:
+                self._push_volume(sink, measure_cubic)
+            return state
 
     def moratorium_end(self):
-        """Measurement over (normal end or forced stop): restore
-        mutes and volume, then apply everything that accumulated,
-        one pass, last write per key. Pending writes for the
-        measured sink outrank its restore."""
+        """Measurement over (normal end or forced stop): restore in
+        the sweep's own order -- volume back, EQ back, unmute -- then
+        apply everything that accumulated, one pass, last write per
+        key. Pending writes for the measured sink outrank its
+        restore. Fills state["restored"]."""
+        with self._lock:
+            m = self._moratorium
+            if m is None:
+                return
+            self._moratorium = None
+            sink, restore = m["sink"], m["restore"]
+            state = restore["state"]
+            if ("volume", sink) not in self._pending \
+                    and restore["volume"] is not None:
+                self._push_volume(sink, restore["volume"])
+            if ("graph", sink) not in self._pending \
+                    and restore["graph"] is not None:
+                ok = bool(self._push_graph(sink,
+                                           restore["graph"]))
+                state["restored"] = ok
+                if not ok:
+                    self._restore_failed(sink, restore["graph"])
+            if m["muted"]:
+                self._push_stream_mutes(sink, False,
+                                        restore["mutes"])
+            pending, self._pending = self._pending, {}
+            for (kind, device), value in pending.items():
+                if kind == "graph":
+                    self._push_graph(device, value)
+                else:
+                    self._push_volume(device, value)
+
+    def moratorium_muted_ids(self):
+        """Stream ids the active moratorium muted -- the session's
+        evidence bookkeeping reads them right after begin."""
         m = self._moratorium
         if m is None:
-            return
-        self._moratorium = None
-        sink, restore = m["sink"], m["restore"]
-        self._push_stream_mutes(sink, False, restore["mutes"])
-        if ("volume", sink) not in self._pending \
-                and restore["volume"] is not None:
-            self._push_volume(sink, restore["volume"])
-        if ("graph", sink) not in self._pending:
-            self._push_graph(sink, restore["graph"])
-        pending, self._pending = self._pending, {}
-        for (kind, device), value in pending.items():
-            if kind == "graph":
-                self._push_graph(device, value)
-            else:
-                self._push_volume(device, value)
+            return []
+        return list(m["restore"]["mutes"] or [])
 
     @property
     def moratorium_active(self):
@@ -174,7 +214,8 @@ class AudioBackend(ABC):
 
     @abstractmethod
     def _push_graph(self, device, value):
-        """Make the server wear `value` on `device`; None = clean."""
+        """Make the server wear `value` on `device`; None = clean.
+        Returns truthy on success -- the restore's evidence."""
 
     @abstractmethod
     def _push_volume(self, device, cubic):
@@ -184,6 +225,18 @@ class AudioBackend(ABC):
     def _push_stream_mutes(self, sink, mute, prior=None):
         """Mute (or restore with `prior`) foreign playback streams on
         `sink`. Returns the restore token when muting."""
+
+    @abstractmethod
+    def _read_graph(self, device):
+        """(value, source) the server holds for `device` right now --
+        for seeding the restore in a process that never published."""
+
+    @abstractmethod
+    def _read_volume(self, device):
+        """The device's current cubic volume, or None."""
+
+    def _restore_failed(self, device, value):
+        """A graph restore was refused; heirs say how to recover."""
 
     @abstractmethod
     def _pull(self):

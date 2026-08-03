@@ -13,8 +13,18 @@ class FakeBackend(AudioBackend):
         super().__init__()
         self.log = []
 
+    server_graph = (None, None)
+    server_volume = None
+
     def _push_graph(self, device, value):
         self.log.append(("graph", device, value))
+        return True
+
+    def _read_graph(self, device):
+        return self.server_graph
+
+    def _read_volume(self, device):
+        return self.server_volume
 
     def _push_volume(self, device, cubic):
         self.log.append(("volume", device, cubic))
@@ -68,23 +78,27 @@ def test_moratorium_coalesces_last_write_wins():
 
 def test_begin_strips_mutes_and_doses():
     f = FakeBackend()
-    f.publish_graph("dev", "TASTE")
-    f.set_volume("dev", 0.61)
-    f.moratorium_begin("dev", 0.074)
+    f.server_graph = ("TASTE", "metadata")
+    f.server_volume = 0.61
+    state = f.moratorium_begin("dev", 0.074)
     assert f.log[-3:] == [("mutes", "dev", True),
                           ("graph", "dev", None),
                           ("volume", "dev", 0.074)]
+    assert state["bypass"] is True
+    assert state["profile"] == "TASTE"
+    assert state["profile_source"] == "metadata"
 
 
 def test_end_restores_when_nothing_pended():
     f = FakeBackend()
-    f.publish_graph("dev", "TASTE")
-    f.set_volume("dev", 0.61)
-    f.moratorium_begin("dev", 0.074)
+    f.server_graph = ("TASTE", "metadata")
+    f.server_volume = 0.61
+    state = f.moratorium_begin("dev", 0.074)
     f.moratorium_end()
-    assert f.log[-3:] == [("mutes", "dev", False),
-                          ("volume", "dev", 0.61),
-                          ("graph", "dev", "TASTE")]
+    assert f.log[-3:] == [("volume", "dev", 0.61),
+                          ("graph", "dev", "TASTE"),
+                          ("mutes", "dev", False)]
+    assert state["restored"] is True
     assert not f.moratorium_active
 
 
@@ -123,3 +137,33 @@ def test_observe_notifies_on_change_only():
     assert f.refresh() is False
     assert seen == ["s1"]
     assert f.sinks == ["s1"] and f.sources == ["m1"]
+
+
+def test_seed_restores_what_the_server_had():
+    f = FakeBackend()
+    f.server_graph = ("SRV", "wpstate")
+    f.server_volume = 0.61
+    state = f.moratorium_begin("dev", 0.074)
+    assert state["profile"] == "SRV"
+    assert state["profile_source"] == "wpstate"
+    f.moratorium_end()
+    tail = [e for e in f.log if e[0] == "graph"]
+    assert tail == [("graph", "dev", None), ("graph", "dev", "SRV")]
+    assert ("volume", "dev", 0.61) in f.log
+
+
+def test_clean_server_means_no_strip_and_no_restore():
+    f = FakeBackend()
+    f.moratorium_begin("dev", None, mute_others=False)
+    f.moratorium_end()
+    assert all(e[0] != "graph" for e in f.log)
+    assert all(e[0] != "volume" for e in f.log)
+    assert all(e[0] != "mutes" for e in f.log)
+
+
+def test_volume_none_skips_the_dose_and_the_restore():
+    f = FakeBackend()
+    f.publish_graph("dev", "TASTE")
+    f.moratorium_begin("dev", None)
+    f.moratorium_end()
+    assert all(e[0] != "volume" for e in f.log)

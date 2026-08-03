@@ -122,6 +122,7 @@ from scipy.stats import chi2
 
 from . import measure_core as mc
 from .pipewire import sink_channels
+from . import pw_backend
 
 METADATA_NAME = "per-device-eq"          # same object the app + WP hook use
 PLAY_NODE = "pde-measure-sweep"
@@ -325,12 +326,6 @@ def foreign_streams(dump, sink_id):
 
 # --- per-device-eq metadata (profile bypass) ---------------------------------
 
-def metadata_get(key):
-    r = _run(["pw-metadata", "-n", METADATA_NAME, "0", key])
-    m = re.search(r"key:'%s' value:'(.*?)' type:" % re.escape(key),
-                  r.stdout, re.S)
-    return m.group(1) if m else None
-
 
 def metadata_set(key, value):
     r = _run(["pw-metadata", "-n", METADATA_NAME, "0", key, value])
@@ -341,104 +336,6 @@ def metadata_clear(key):
     return _run(["pw-metadata", "-n", METADATA_NAME, "-d", "0", key]) \
         .returncode == 0
 
-
-def wpstate_get(key):
-    """Read a sink's graph from the WirePlumber hook's persisted state
-    (a GKeyFile at $XDG_STATE_HOME/wireplumber/per-device-eq). The hook
-    seeds its runtime table from here on a cold start and does NOT
-    publish persisted graphs into the metadata, so a freshly-booted
-    session where the GUI was never opened has the profile ONLY here."""
-    base = os.environ.get("XDG_STATE_HOME") \
-        or os.path.expanduser("~/.local/state")
-    path = os.path.join(base, "wireplumber", "per-device-eq")
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.rstrip("\n")
-                if line.startswith("[") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)     # node.name has no '=' itself
-                if k == key:
-                    return v or None
-    except OSError:
-        pass
-    return None
-
-
-class ProfileBypass:
-    """Bypass our EQ on the sink for the duration of the measurement.
-
-    This is exactly the app's own Bypass: clear the sink's key from the
-    'per-device-eq' metadata and the WP hook flattens the node (applies a
-    0 dB graph); write the graph back on exit to un-bypass. The graph is
-    read from the metadata, or -- when the GUI has not published it this
-    session -- from the hook's persisted state. Restore ALWAYS runs,
-    exceptions and ^C included. The returned dict is `eq_profile_state`.
-    """
-
-    def __init__(self, key):
-        self.key = key
-        self.state = {"metadata_key": key, "profile": None,
-                      "profile_source": None, "bypass": False,
-                      "restored": None}
-
-    def __enter__(self):
-        prof = metadata_get(self.key)
-        src = "metadata" if prof is not None else None
-        if prof is None:
-            prof = wpstate_get(self.key)
-            src = "wpstate" if prof is not None else None
-        self.state["profile"] = prof
-        self.state["profile_source"] = src
-        if prof is not None:
-            if not metadata_clear(self.key):
-                raise MeasureError("failed to clear %r from the %s metadata"
-                                   % (self.key, METADATA_NAME))
-            self.state["bypass"] = True
-        return self.state
-
-    def __exit__(self, *exc):
-        if self.state["profile"] is None:
-            return False
-        ok = metadata_set(self.key, self.state["profile"])
-        self.state["restored"] = bool(ok)
-        if not ok:
-            print("CRITICAL: failed to restore the EQ profile; put it back "
-                  "manually:\n  pw-metadata -n %s 0 '%s' '%s'"
-                  % (METADATA_NAME, self.key, self.state["profile"]),
-                  file=sys.stderr)
-        return False
-
-
-class MuteOthers:
-    """Mute foreign streams (Props mute=true) for the measurement and
-    restore each stream's previous mute state after."""
-
-    def __init__(self, streams, enabled):
-        self.streams = streams if enabled else []
-
-    @staticmethod
-    def _set_mute(node_id, mute):
-        r = _run(["pw-cli", "set-param", str(node_id), "Props",
-                  "{ mute = %s }" % ("true" if mute else "false")])
-        return r.returncode == 0
-
-    def __enter__(self):
-        for s in self.streams:
-            if self._set_mute(s["id"], True):
-                s["muted_for_measure"] = True
-            else:
-                print("WARNING: could not mute stream %s (%s)"
-                      % (s["id"], s["node_name"]), file=sys.stderr)
-        return self.streams
-
-    def __exit__(self, *exc):
-        for s in self.streams:
-            if s["muted_for_measure"] and not self._set_mute(
-                    s["id"], s["prior_mute"]):
-                print("WARNING: could not restore mute state of stream %s "
-                      "(%s)" % (s["id"], s["node_name"]), file=sys.stderr)
-        return False
 
 
 # --- volume ------------------------------------------------------------------
@@ -455,13 +352,6 @@ def sink_volume_state(dump, sink_id):
             return cubic, cv, bool(d.get("mute", False))
     return None, [], False
 
-
-def set_sink_volume(sink_id, cubic):
-    """wpctl writes through to the device Route where one exists; raw
-    Props writes on ALSA sinks do not stick."""
-    r = _run(["wpctl", "set-volume", str(sink_id), "%.4f" % cubic])
-    if r.returncode != 0:
-        raise MeasureError("wpctl set-volume failed: %s" % r.stderr.strip())
 
 
 def watch_volume_ends(sink_id, stop_evt, source_id=None):
@@ -1322,33 +1212,17 @@ class MeasureSession:
         self._v_cur = max(0.0, min(1.0, float(cubic)))
         self._leveled = True
 
-    def _mute_foreign(self, on):
-        """Mute (on) or restore (off) the foreign streams for ONE sweep, so
-        other audio is silenced only while the sweep plays and comes back
-        immediately after, not at window close. No-op unless mute_others."""
-        if not self.cfg.mute_others:
-            return
-        for s in self.foreign:
-            if on:
-                if MuteOthers._set_mute(s["id"], True):
-                    s["muted_for_measure"] = True
-            elif s["muted_for_measure"]:
-                MuteOthers._set_mute(s["id"], s["prior_mute"])
 
-    def _set_meas_volume(self, on):
-        """Set the measurement level for one sweep (on) or restore the
-        user's listening volume after (off) -- per sweep, like the mute and
-        EQ, so opening the wizard or measuring never leaves the device
-        parked at the measurement level. Returns whether the sink
-        volume was actually written (the caller settles a Bluetooth
-        sink before sweeping into a fresh change)."""
+
+    def _meas_volume_arg(self):
+        """The measurement volume for this sweep, or None when the
+        sink already stands there: a no-op toggle must write nothing
+        and must not trigger the settle or the Bluetooth warm-up."""
         if self._v_cur is None or self.volume_start is None:
-            return False
+            return None
         if abs(self._v_cur - self.volume_start) < 1e-4:
-            return False                    # nothing to change; leave it be
-        set_sink_volume(self.sink["id"],
-                        self._v_cur if on else self.volume_start)
-        return True
+            return None                     # nothing to change
+        return self._v_cur
 
     def _warm_sink(self):
         """Play BT_WARM_S of silence to the sink. A Bluetooth headset
@@ -1449,12 +1323,18 @@ class MeasureSession:
                                  "raw%02d.wav" % (self._take_seq + 1))
                     if cfg.raw_capture_dump else None)
         cmap = self._channel_map(channel)   # route the sweep to THIS speaker
-        self._mute_foreign(True)            # silence others for THIS sweep
+        vol_arg = self._meas_volume_arg()
+        auth = pw_backend.backend()
+        self.eq_state = auth.moratorium_begin(
+            self.sink_ident["name"], vol_arg,
+            mute_others=bool(cfg.mute_others))
+        muted = set(auth.moratorium_muted_ids())
+        for st in self.foreign:
+            if st["id"] in muted:
+                st["muted_for_measure"] = True
         try:
-            eq = ProfileBypass(self.sink_ident["name"])
-            self.eq_state = eq.__enter__()  # bypass the device EQ for it
-            try:
-                changed = self._set_meas_volume(True)  # meas. level
+            if True:
+                changed = vol_arg is not None
                 if changed:
                     # readback settle on EVERY transport; the
                     # warm-up stays as the Bluetooth link wake
@@ -1482,11 +1362,8 @@ class MeasureSession:
                     gains = self._applied_gains(channel)
                 finally:
                     vstop.set()
-                    self._set_meas_volume(False)  # restore listening volume
-            finally:
-                eq.__exit__(None, None, None)   # restore the EQ right after
         finally:
-            self._mute_foreign(False)       # unmute right after the sweep
+            auth.moratorium_end()   # volume, EQ, unmute -- right after
         if info is not None:
             self.path_clean = info
 

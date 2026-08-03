@@ -690,10 +690,9 @@ def test_meas_volume_reports_a_real_write(shim_state, tmp_path,
     with ses:
         ses.volume_start = 0.6
         ses._v_cur = 0.6
-        assert ses._set_meas_volume(True) is False
+        assert ses._meas_volume_arg() is None
         ses._v_cur = 0.4
-        assert ses._set_meas_volume(True) is True
-        ses._set_meas_volume(False)
+        assert ses._meas_volume_arg() == 0.4
         # the warm-up itself is best-effort and bluez-gated in take();
         # calling it directly must never raise even without pw-play
         monkeypatch.setenv("PATH", str(tmp_path))

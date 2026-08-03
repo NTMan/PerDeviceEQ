@@ -6,6 +6,7 @@ import types
 import pytest
 
 from perdeviceeq import pipewire
+from perdeviceeq import pw_backend as pwb
 from perdeviceeq.pw_backend import PipeWireBackend, StreamHandle
 
 
@@ -14,7 +15,9 @@ FAKE_DUMP = [
      "info": {"props": {"node.name": "test_sink",
                         "node.description": "Test Sink",
                         "media.class": "Audio/Sink",
-                        "device.api": "alsa"}}},
+                        "device.api": "alsa"},
+              "params": {"Props": [{
+                  "channelVolumes": [0.343, 0.343]}]}}},
     {"id": 11, "type": "PipeWire:Interface:Node",
      "info": {"props": {"node.name": "test_source",
                         "node.description": "Test Source",
@@ -86,6 +89,23 @@ def test_mutes_touch_only_unmuted_foreigners(rig):
     b._push_stream_mutes("test_sink", False, prior)
     assert ["pw-cli", "set-param", "20", "Props",
             "{ mute = false }"] in calls
+
+
+def test_read_graph_falls_back_to_wpstate(rig, monkeypatch):
+    b, _ = rig
+    monkeypatch.setattr(pwb, "metadata_get", lambda k: None)
+    monkeypatch.setattr(pwb, "wpstate_get",
+                        lambda k: "PERSISTED")
+    assert b._read_graph("test_sink") == ("PERSISTED", "wpstate")
+    monkeypatch.setattr(pwb, "metadata_get",
+                        lambda k: "LIVE")
+    assert b._read_graph("test_sink") == ("LIVE", "metadata")
+
+
+def test_read_volume_takes_the_cube_root(rig):
+    b, _ = rig
+    v = b._read_volume("test_sink")
+    assert abs(v - 0.343 ** (1.0 / 3.0)) < 1e-9
 
 
 def test_moratorium_full_cycle_over_the_fake_server(rig):

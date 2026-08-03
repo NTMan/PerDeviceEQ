@@ -223,22 +223,6 @@ def metadata_clear(node_name):
 
 _POS_FALLBACK = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"]
 
-def set_stream_mute(node_id, mute):
-    """Props mute on a stream node; True on success. The backend's
-    verb; the session's private twin retires when the weaving step
-    routes it here."""
-    r = _run(["pw-cli", "set-param", str(node_id), "Props",
-              "{ mute = %s }" % ("true" if mute else "false")])
-    return r.returncode == 0
-
-
-def set_sink_volume(sink_id, cubic):
-    """wpctl writes through to the device Route where one exists; raw
-    Props writes on ALSA sinks do not stick. Raises on failure."""
-    r = _run(["wpctl", "set-volume", str(sink_id), "%.4f" % cubic])
-    if r.returncode != 0:
-        raise RuntimeError("wpctl set-volume failed: %s"
-                           % r.stderr.strip())
 
 
 def _node_channels(name, dump=None):
