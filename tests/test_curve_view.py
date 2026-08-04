@@ -565,3 +565,40 @@ def test_a_label_hands_the_context_back_with_an_empty_path():
     p.set_cursor(300.0, 100.0)
     p.draw(None, cr, 700, 300)
     assert cr.point is None
+
+def test_a_pin_on_a_line_this_canvas_lacks_dims_nothing():
+    """A pin is a hand of a line, and a line that is not in the
+    picture has no hand in it. Pinning "partner" on the face used
+    to grey out whole take rows, which have no partner and no way
+    to say why they went quiet."""
+    st = cv.Highlight()
+    take = cv.Curve("take", np.full(6, -30.0), cv.C_RESPONSE,
+                    key="response")
+    thd = cv.Curve("THD", np.full(6, -80.0), cv.C_THD,
+                   harmonic=True)
+    row = cv.Plot(FREQS, [take, thd], -90.0, -24.0, state=st,
+                  legend=False)
+    assert st.hit("partner") is True
+    assert row._dress(take)[0] == 1.0
+    assert row._dress(thd)[0] == 1.0
+    assert st.pinned == {"partner"}            # memory survives
+    assert row._dress(take, under="response")[1] == 1.6
+    assert st.hit("THD", add=True) is True
+    assert row._dress(take)[0] == cv.DIM       # a real pin bites
+    assert row._dress(thd)[0] == 1.0
+    assert st.hit("THD", add=True) is True     # and lets go again
+    assert row._dress(take)[0] == 1.0
+
+
+def test_a_lonely_line_can_never_dim_itself():
+    """The dead end he found: pin any line but EQ, then hide the
+    legend with the eye. Whatever is pinned elsewhere, a picture
+    holding one line can only show it lit or plain."""
+    st = cv.Highlight()
+    eqc = cv.Curve("EQ", np.full(6, -12.0), cv.C_RESPONSE)
+    p = cv.Plot(FREQS, [eqc], -36.0, 0.0, state=st, legend=False)
+    st.pinned = {"measured", "predicted", "target"}
+    assert p._dress(eqc)[0] == 1.0
+    assert st.hit("EQ", add=True) is True
+    assert p._dress(eqc)[0] == 1.0
+    assert p._dress(eqc)[1] == 0.8             # pinned, so thicker

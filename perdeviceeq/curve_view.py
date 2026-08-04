@@ -404,6 +404,7 @@ class Plot:
                  dim_outside=None, say_evidence=True):
         self.freqs = np.asarray(freqs, float)
         self.curves = [c for c in curves if c is not None]
+        self._keys = {c.key for c in self.curves}
         self.lo, self.hi = float(lo), float(hi)
         self.band = band
         self.state = state if state is not None else Highlight()
@@ -471,11 +472,20 @@ class Plot:
         pointer: full colour and the thickest pen, in any state.
         Pinned: full colour, thicker. Neither, with something
         pinned: stepped back but still legible -- a comparison
-        needs its neighbours visible."""
+        needs its neighbours visible.
+
+        Only the pins THIS canvas can show count. A pin is a hand
+        of a line, and a line that is not in the picture has no
+        hand in it: pinning "partner" on the face used to grey out
+        whole take rows, which have no partner and no way to say
+        why they went quiet. The pin itself is kept -- it is
+        memory, and it starts biting again the moment its line
+        comes back."""
         if curve.key in (under, self.state.hover):
             return 1.0, 1.6
-        if self.state.pinned:
-            if curve.key in self.state.pinned:
+        pins = self.state.pinned & self._keys
+        if pins:
+            if curve.key in pins:
                 return 1.0, 0.8
             return DIM, 0.0
         return 1.0, 0.0

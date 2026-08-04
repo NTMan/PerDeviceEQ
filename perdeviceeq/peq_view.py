@@ -282,12 +282,44 @@ class PeqView(Gtk.Box):
         self._tgt = tgt
         self.graph.queue_draw()
 
+    def _names(self):
+        """The lines this picture WILL contain, decided before the
+        brush touches it.
+
+        Reading it back from what had been drawn made the answer one
+        frame old, and one frame is forever when the frame that
+        changed the picture is the last one: switching the eye off
+        left EQ dimmed by a line that was already gone, until the
+        pointer came back to the canvas and asked for another frame.
+        The target's threshold lives here and the drawing asks THIS
+        method, so the two can never drift apart."""
+        names = {"EQ"}
+        if self._curves is None:
+            return names
+        fo = self._curves[0]
+        names |= {"measured", "predicted"}
+        tgt = self._tgt
+        if tgt is not None and len(tgt) == len(fo):
+            if sum(1 for t in tgt if t is not None) > 8:
+                names.add("target")
+        return names
+
     def _lit(self):
-        """The pinned names. The pointer used to be folded in
-        here, which made hover invisible whenever everything was
-        pinned -- the state that already looks like nothing
-        pinned. It now has its own level in _dress instead."""
-        return set(self._pin)
+        """The pinned names THIS PICTURE ACTUALLY CONTAINS.
+
+        The pointer used to be folded in here, which made hover
+        invisible whenever everything was pinned -- the state that
+        already looks like nothing pinned. It has its own level in
+        _dress now.
+
+        And the set is intersected with the lines this picture
+        contains, because otherwise the eye button built a dead
+        end: pin any name but EQ while the legend is there, switch
+        the legend off, and EQ stood dimmed by an absent line with
+        no hand left to lift it. 0046 said a hidden legend has no
+        hands; a pin is a hand too. The pins stay in memory and
+        return with the eye."""
+        return set(self._pin) & self._names()
 
     def _dress(self, name, r, g, b, a, w):
         """Highlight dressing: lit curves brighten and thicken,
@@ -427,7 +459,12 @@ class PeqView(Gtk.Box):
         ml, mt, pw_, ph = self._plot
         if not (ml <= x <= ml + pw_ and mt <= y <= mt + ph):
             return None, None
-        return cv.nearest_trace(self._traces, x, y)
+        # a polyline from the last frame may name a line the eye
+        # has just switched off; the roster decides who exists
+        live = self._names()
+        return cv.nearest_trace(
+            {k: v for k, v in (self._traces or {}).items()
+             if k in live}, x, y)
 
     def _hit_band(self, x, y, r=11):
         if not self._plot:
@@ -544,29 +581,28 @@ class PeqView(Gtk.Box):
             resp = eq.response_db(self._preamp,
                                   self._bands + self._floor, fo)
             tgt = self._tgt
-            if tgt is not None and len(tgt) == len(fo):
+            if "target" in self._names():
                 sel = [i for i, t in enumerate(tgt)
                        if t is not None]
-                if len(sel) > 8:
-                    shift = (sum(meas[i] + resp[i] for i in sel)
-                             - sum(tgt[i] for i in sel)) / len(sel)
-                    tr, tg, tb, ta, tw = self._dress(
-                        "target", 0.95, 0.85, 0.40, 0.55, 1.0)
-                    cr.set_source_rgba(tr, tg, tb, ta)
-                    cr.set_line_width(tw)
-                    cr.set_dash([5, 3], 0)
-                    first = True
-                    tr_t = []
-                    for i in sel:
-                        x = x_of(fo[i])
-                        y = y_of(tgt[i] + shift)
-                        tr_t.append((x, y, tgt[i] + shift))
-                        cr.move_to(x, y) if first \
-                            else cr.line_to(x, y)
-                        first = False
-                    cr.stroke()
-                    cr.set_dash([], 0)
-                    traces["target"] = tr_t
+                shift = (sum(meas[i] + resp[i] for i in sel)
+                         - sum(tgt[i] for i in sel)) / len(sel)
+                tr, tg, tb, ta, tw = self._dress(
+                    "target", 0.95, 0.85, 0.40, 0.55, 1.0)
+                cr.set_source_rgba(tr, tg, tb, ta)
+                cr.set_line_width(tw)
+                cr.set_dash([5, 3], 0)
+                first = True
+                tr_t = []
+                for i in sel:
+                    x = x_of(fo[i])
+                    y = y_of(tgt[i] + shift)
+                    tr_t.append((x, y, tgt[i] + shift))
+                    cr.move_to(x, y) if first \
+                        else cr.line_to(x, y)
+                    first = False
+                cr.stroke()
+                cr.set_dash([], 0)
+                traces["target"] = tr_t
             pr, pg, pb, pa, pw2 = self._dress(
                 "predicted", 0.45, 0.95, 0.55, 0.90, 1.5)
             cr.set_source_rgba(pr, pg, pb, pa)
