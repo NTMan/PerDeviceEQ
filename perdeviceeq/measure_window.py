@@ -217,6 +217,7 @@ class MeasureWindow(Adw.Window):
         self._mic_gone = False      # selected rig left the graph
         self._sink_gone = False
         self.fit_lo, self.fit_hi = FIT_FLO, FMAX_PLOT
+        self._big = {}              # subject -> (window, area, hold)
         # each handle follows the statistics until dragged
         self._hi_auto = True
         self._lo_auto = True
@@ -531,7 +532,6 @@ class MeasureWindow(Adw.Window):
             ["Mean response of the channel with its distortion "
              "and the reading's own noise floor"])
         graph.set_content_height(FACE_H)
-        graph.set_visible(False)
         graph.set_hexpand(True)
         # The summary IS the accordion's face: the channel's
         # result with a chevron on the right -- the same expander
@@ -567,7 +567,15 @@ class MeasureWindow(Adw.Window):
         chev.set_visible(False)
         trow.append(chev)
         face.append(trow)
-        face.append(graph)
+        # the face follows the channel tabs, so its button asks
+        # which channel is on screen at the moment it is pressed
+        graph_box = self._zoomed(
+            graph, lambda: ("face", self._selected_ch),
+            "Open this graph in its own window")
+        # the gate lives on the WRAPPER now: hiding the canvas
+        # inside it left the overlay visible and the face blank
+        graph_box.set_visible(False)
+        face.append(graph_box)
         # the legend's hands: hover lights a name, a click pins
         # it. A hit CLAIMS the sequence so the face's own click
         # (which folds the takes) does not fire underneath.
@@ -601,7 +609,8 @@ class MeasureWindow(Adw.Window):
         self._face = None
         self._win = (-80.0, 0.0)
         self._page = {"title": title, "header": header,
-                      "graph": graph, "plot": None,
+                      "graph": graph, "graph_box": graph_box,
+                      "plot": None,
                       "canvases": [graph],
                       "takes_list": lb,
                       "takes_rev": rev, "card": card,
@@ -850,9 +859,11 @@ class MeasureWindow(Adw.Window):
                        lo, hi, state=self._hl, legend=False,
                        say_evidence=False)
         curve.set_draw_func(plot.draw)
-        self._wire_cursor(curve, plot)
+        self._wire_cursor(curve, {"plot": plot})
         self._page["canvases"].append(curve)
-        body.append(curve)
+        body.append(self._zoomed(
+            curve, ("take", ch, rec.id),
+            "Open this take in its own window"))
 
         # wrap in an explicit row: add_row auto-wraps a bare widget in a
         # GtkListBoxRow, and then remove() cannot drop it, so rows pile up
@@ -1331,26 +1342,15 @@ class MeasureWindow(Adw.Window):
         for row in self._page["take_rows"]:
             lb.remove(row)
         self._page["take_rows"].clear()
-        takes = self.session.takes_of(ch) if self.session else []
         self._page["canvases"] = [self._page["graph"]]
-        mean, shifts = None, {}
-        if self.session is not None and takes:
-            mean, _sp = self.session.average_and_spread(ch)
-            sh = self.session.comp_shift_db(ch)
-            if sh is not None:
-                shifts = {r.id: s for r, s in zip(takes, sh)}
         # ONE vertical window for the whole channel -- the face and
         # every row are painted on the same axis, harmonics and
         # noise floor included, so the grid aligns down the list
         # and neighbouring rows compare line to line
-        self._face = self._face_curves(ch, takes)
-        allc = list(self._face[1]) if self._face else []
-        band = self._face[2] if self._face else None
-        for rec in takes:
-            allc.extend(self._take_curves(
-                rec, mean, shifts.get(rec.id, 0.0)))
-        lo, hi = cv.window_db(allc, band)
-        self._win = (lo, hi)
+        takes, face, mean, shifts, self._win = \
+            self._channel_view(ch)
+        self._face = face
+        lo, hi = self._win
         rows = []
         for rec in takes:
             row = self._make_take_row(ch, rec, lo, hi,
@@ -1425,7 +1425,8 @@ class MeasureWindow(Adw.Window):
         area = self._page["graph"]
         if not takes or self._face is None:
             self._page["plot"] = None
-            area.set_visible(False)
+            self._page["graph_box"].set_visible(False)
+            self._refresh_big()
             return
         freqs, curves, band, title = self._face
         plot = cv.Plot(freqs, curves, self._win[0], self._win[1],
@@ -1434,8 +1435,9 @@ class MeasureWindow(Adw.Window):
                        dim_outside=(self.fit_lo, self.fit_hi))
         self._page["plot"] = plot
         area.set_draw_func(plot.draw)
-        area.set_visible(True)
+        self._page["graph_box"].set_visible(True)
         area.queue_draw()
+        self._refresh_big()
 
     def _thd_word(self, ch):
         """The datasheet's own figure, next to the clean count:
@@ -1467,19 +1469,194 @@ class MeasureWindow(Adw.Window):
         return " \u00b7 <small>THD@1k %s%.2f%%</small>" % (
             "\u2264" if clamped else "", pct)
 
-    def _wire_cursor(self, area, plot):
-        """A row answers the pointer on its own: the crosshair is
-        a property of the canvas under the hand, not of the page,
-        so only that one canvas repaints."""
+    def _zoomed(self, area, subject, tip):
+        """Every canvas wears a corner button that opens it large.
+        Not a gesture: the click on a take canvas already pins a
+        line and a press on the equalizer graph already builds a
+        band, so magnification gets a hand of its own -- and a
+        double click was declined as a source of mis-clicks. The
+        button hides until the pointer arrives, so the picture
+        stays clean."""
+        ov = Gtk.Overlay()
+        ov.set_child(area)
+        btn = Gtk.Button.new_from_icon_name(
+            "view-fullscreen-symbolic")
+        btn.set_tooltip_text(tip)
+        btn.add_css_class("osd")
+        btn.add_css_class("circular")
+        btn.set_halign(Gtk.Align.END)
+        btn.set_valign(Gtk.Align.START)
+        btn.set_margin_top(4)
+        btn.set_margin_end(4)
+        btn.set_can_focus(False)
+        btn.set_visible(False)
+        btn.connect("clicked", lambda _b: self._open_big(
+            subject() if callable(subject) else subject))
+        ov.add_overlay(btn)
+        mo = Gtk.EventControllerMotion()
+        mo.connect("enter", lambda *_a: btn.set_visible(True))
+        mo.connect("leave", lambda *_a: btn.set_visible(False))
+        ov.add_controller(mo)
+        return ov
+
+    def _channel_view(self, ch):
+        """Everything any canvas of this channel needs: its takes,
+        the face pieces, the mean, the per-take gain compensation
+        and the ONE vertical window they all share. In one place
+        because the large window may show a different channel than
+        the page does, and its grid must still match the small
+        canvas it was opened from."""
+        takes = self.session.takes_of(ch) if self.session else []
+        mean, shifts = None, {}
+        if self.session is not None and takes:
+            mean, _sp = self.session.average_and_spread(ch)
+            sh = self.session.comp_shift_db(ch)
+            if sh is not None:
+                shifts = {r.id: s for r, s in zip(takes, sh)}
+        face = self._face_curves(ch, takes)
+        allc = list(face[1]) if face else []
+        band = face[2] if face else None
+        for rec in takes:
+            allc.extend(self._take_curves(
+                rec, mean, shifts.get(rec.id, 0.0)))
+        return takes, face, mean, shifts, cv.window_db(allc, band)
+
+    def _big_plot(self, subject):
+        """A fresh painter for what the large window points AT --
+        never a picture copied at opening time, which would go
+        quietly stale the moment a take is added or re-measured.
+        None means the subject is gone and the window must go."""
+        if self.session is None:
+            return None
+        kind, ch = subject[0], subject[1]
+        if ch >= len(self.ch_keys):
+            return None
+        takes, face, mean, shifts, win = self._channel_view(ch)
+        if kind == "face":
+            if face is None:
+                return None
+            freqs, curves, band, title = face
+            return cv.Plot(freqs, curves, win[0], win[1],
+                           band=band, state=self._hl, legend=True,
+                           title=title,
+                           dim_outside=(self.fit_lo, self.fit_hi))
+        rec = next((r for r in takes if r.id == subject[2]), None)
+        if rec is None:
+            return None
+        return cv.Plot(rec.freq_hz,
+                       self._take_curves(rec, mean,
+                                         shifts.get(rec.id, 0.0)),
+                       win[0], win[1], state=self._hl, legend=True)
+
+    def _big_title(self, subject):
+        ch = self.ch_keys[subject[1]] if subject[1] < len(
+            self.ch_keys) else "?"
+        if subject[0] == "face":
+            return "%s \u00b7 mean" % ch
+        takes = (self.session.takes_of(subject[1])
+                 if self.session else [])
+        ids = [r.id for r in takes]
+        n = ids.index(subject[2]) + 1 if subject[2] in ids else 0
+        return "%s \u00b7 take %d of %d" % (ch, n, len(ids))
+
+    def _open_big(self, subject):
+        """One window per subject: a second click on the same
+        canvas raises the window that is already open instead of
+        breeding twins. Not modal, so two channels can sit side by
+        side and be compared -- which is the whole reason the large
+        view exists -- and NOT transient for this window either,
+        because the field showed what that costs: a maximised large
+        window sits above its parent forever, and then the only way
+        to reach the channel tabs and pick the other earpiece is to
+        dig the parent out from under it, which Alt+` cannot do
+        across a transient. So the window joins the application
+        instead -- it stacks and cycles like any other -- and the
+        rule that it must not outlive the measure window is carried
+        by the close handler alone, which never needed transient-for
+        to do its job."""
+        held = self._big.get(subject)
+        if held is not None:
+            held[0].present()
+            return
+        plot = self._big_plot(subject)
+        if plot is None:
+            return
+        area = Gtk.DrawingArea()
+        area.set_hexpand(True)
+        area.set_vexpand(True)
+        area.update_property(
+            [Gtk.AccessibleProperty.LABEL],
+            ["The same curves, large"])
+        hold = {"plot": plot}
+        area.set_draw_func(
+            lambda a, cr, w, h, *_: hold["plot"].draw(a, cr, w, h))
+        self._wire_cursor(area, hold)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        box.append(area)
+        view = Adw.ToolbarView()
+        view.add_top_bar(Adw.HeaderBar())
+        view.set_content(box)
+        win = Adw.Window()
+        win.set_title(self._big_title(subject))
+        win.set_default_size(1000, 680)
+        app = self.get_application()
+        if app is not None:
+            win.set_application(app)
+        win.set_content(view)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self._on_big_key, win)
+        win.add_controller(keys)
+        win.connect("close-request", self._on_big_close, subject)
+        self._big[subject] = (win, area, hold)
+        win.present()
+
+    def _on_big_key(self, _c, keyval, _code, _state, win):
+        if keyval == Gdk.KEY_Escape:
+            win.close()
+            return True
+        return False
+
+    def _on_big_close(self, _win, subject):
+        self._big.pop(subject, None)
+        return False
+
+    def _refresh_big(self):
+        """After every rebuild the large windows ask again. A
+        subject that has disappeared -- take deleted, channel gone
+        -- closes its window: there is nothing left to show."""
+        for subject, (win, area, hold) in list(self._big.items()):
+            plot = self._big_plot(subject)
+            if plot is None:
+                win.close()
+                continue
+            hold["plot"] = plot
+            win.set_title(self._big_title(subject))
+            area.queue_draw()
+
+    def _wire_cursor(self, area, hold):
+        """A canvas answers the pointer on its own: the crosshair
+        is a property of the canvas under the hand, not of the
+        page, so only that one canvas repaints. The painter is
+        reached through a holder because a large window keeps its
+        canvas while the page hands it a fresh painter."""
         def moved(_c, x, y):
-            if plot.set_cursor(x, y):
+            plot = hold["plot"]
+            if plot is not None and plot.set_cursor(x, y):
                 area.queue_draw()
 
         def gone(*_a):
-            if plot.set_cursor(None, None):
+            plot = hold["plot"]
+            if plot is not None and plot.set_cursor(None, None):
                 area.queue_draw()
 
         def pressed(gesture, _n, x, y):
+            plot = hold["plot"]
+            if plot is None:
+                return
             if plot.state.hit(plot.pick_at(x, y),
                               _ctrl_down(gesture)):
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
@@ -1497,6 +1674,8 @@ class MeasureWindow(Adw.Window):
     def _repaint_curves(self):
         for a in self._page.get("canvases", []):
             a.queue_draw()
+        for _w, area, _h in self._big.values():
+            area.queue_draw()
 
     def _on_legend_motion(self, _ctrl, x, y):
         plot = self._page.get("plot") if self._page else None
@@ -2723,6 +2902,8 @@ class MeasureWindow(Adw.Window):
     def _on_close(self, *_):
         if self._busy:
             return True                  # a sweep is in the air
+        for win, _a, _h in list(self._big.values()):
+            win.close()                  # no orphaned pictures
         pid = self._ensure_pid()         # New: even empty stays
         self._apply_name(pid)
         try:
