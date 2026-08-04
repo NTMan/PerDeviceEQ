@@ -172,6 +172,64 @@ def draw_crosshair(cr, rect, cursor, f_of, v_of,
     return True
 
 
+def nearest_trace(traces, x, y, max_px=NEAR_PX):
+    """The line a pointer is standing on, out of polylines already
+    drawn: traces maps a name to a list of (x, y, value). Returns
+    (name, value) or (None, None).
+
+    Pure on purpose. The equalizer graph builds its curves inside
+    its own draw -- the EQ line after its clamp, the target after
+    its shift -- so the honest way to name what the eye sees is to
+    read back the points that were actually put on the canvas. That
+    arithmetic belongs here, where a court can reach it, and not in
+    a module the sandbox cannot import."""
+    best, bv, bd = None, None, float(max_px)
+    for name, pts in (traces or {}).items():
+        cand, cd = None, None
+        for px, py, v in pts:
+            dx = abs(px - x)
+            if cd is None or dx < cd:
+                cand, cd = (py, v), dx
+        if cand is None or cd is None or cd > 3.0:
+            continue
+        d = abs(cand[0] - y)
+        if d < bd:
+            best, bv, bd = name, cand[1], d
+    return best, bv
+
+
+def name_the_line(cr, rect, cursor, name, value, rgba,
+                  bg_rgba=(1.0, 1.0, 1.0, 0.80)):
+    """The line under the pointer says its name and its value, in
+    its own colour, beside the crosshair."""
+    if cursor is None or name is None or value is None:
+        return False
+    ml, mt, pw, _ph = rect
+    x, y = cursor
+    cr.select_font_face("Sans", 0, 0)
+    cr.set_font_size(9)
+    lab = "%s %s" % (name, fmt_db(value))
+    ext = cr.text_extents(lab)
+    tx = x + 8
+    if tx + ext.width > ml + pw - 2:
+        tx = x - 8 - ext.width
+    ty = max(mt + 10, y - 6)
+    cr.set_source_rgba(*bg_rgba)
+    cr.rectangle(tx - 2, ty - 10, ext.width + 4, 12)
+    cr.fill()
+    cr.set_source_rgba(*rgba)
+    cr.move_to(tx, ty)
+    cr.show_text(lab)
+    # show_text leaves a live current point, and cairo's arc()
+    # JOINS the current point to the start of the arc with a
+    # straight line. The equalizer draws its band handles with
+    # arc(), so a label left dangling drew a dark hairline from
+    # itself to the first handle. A painter must hand the context
+    # back with an empty path.
+    cr.new_path()
+    return True
+
+
 def _readout(cr, text, x, y, anchor, text_rgba, bg_rgba):
     """One value on its axis, over a backdrop so it does not
     collide with the tick label it stands on."""
@@ -183,6 +241,7 @@ def _readout(cr, text, x, y, anchor, text_rgba, bg_rgba):
     cr.set_source_rgba(*text_rgba)
     cr.move_to(tx, y)
     cr.show_text(text)
+    cr.new_path()               # never hand back a live point
 
 
 def as_level(mag, ratio):
@@ -467,28 +526,14 @@ class Plot:
             ext = cr.text_extents(self.title)
             cr.move_to(ML + pw - ext.width - 4, MT + 12)
             cr.show_text(self.title)
+            cr.new_path()
 
     def _name_the_line(self, cr, pw, c, v):
-        """The line under the pointer says its name and its value,
-        in its own colour, beside the crosshair."""
         if c is None:
             return
-        x, y = self.cursor
-        cr.select_font_face("Sans", 0, 0)
-        cr.set_font_size(9)
-        lab = "%s %s" % (c.name, fmt_db(v))
-        ext = cr.text_extents(lab)
-        tx = x + 8
-        if tx + ext.width > ML + pw - 2:
-            tx = x - 8 - ext.width
-        ty = max(MT + 10, y - 6)
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.80)
-        cr.rectangle(tx - 2, ty - 10, ext.width + 4, 12)
-        cr.fill()
         r, g, b, _a = c.rgba
-        cr.set_source_rgba(r, g, b, 1.0)
-        cr.move_to(tx, ty)
-        cr.show_text(lab)
+        name_the_line(cr, (ML, MT, pw, 0), self.cursor,
+                      c.name, v, (r, g, b, 1.0))
 
     def _grid(self, cr, x_of, y_of, pw, ph):
         """The ruler, and it says what it is: decades named on the

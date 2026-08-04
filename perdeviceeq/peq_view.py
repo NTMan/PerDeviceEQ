@@ -30,6 +30,11 @@ from .eq import FMIN, FMAX
 
 DB_MAX = 24.0
 _TYPES = ["PK", "LSC", "HSC"]
+# the four house lines, for the label that names one of them
+_LINE_COL = {"measured": (0.85, 0.85, 0.90),
+             "predicted": (0.45, 0.95, 0.55),
+             "EQ": (0.30, 0.78, 1.0),
+             "target": (0.95, 0.85, 0.40)}
 
 
 def _log_freqs(n=240):
@@ -88,6 +93,9 @@ class PeqView(Gtk.Box):
         self._cursor = None       # pointer for the crosshair
         self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
+        self._traces = {}           # name -> [(x, y, value)] as drawn
+        self._under = None          # the line under the pointer
+        self._under_v = None
         self._plot = None
         self._drag_band = None
         self._loading = False
@@ -287,7 +295,7 @@ class PeqView(Gtk.Box):
         darkness -- divergence is a comparison and the
         neighbours must stay legible). Nothing lit = the house
         dress unchanged."""
-        if name == self._hover:
+        if name in (self._hover, self._under):
             return r, g, b, min(1.0, a + 0.25), w + 1.6
         lit = self._lit()
         if lit:
@@ -407,6 +415,20 @@ class PeqView(Gtk.Box):
         t = min(1.0, max(0.0, (y - mt) / ph))
         return hi - t * (hi - lo)
 
+    def _line_at(self, x, y):
+        """(name, dB) of the curve the pointer stands on. Reads the
+        polylines recorded during the last draw, so what gets named
+        is exactly what was painted; that makes it one frame old,
+        which no pointer can notice because every motion queues its
+        own redraw. Silent over a band handle: there the hand is
+        aiming to grab, not to read."""
+        if self._plot is None or self._hit_band(x, y) is not None:
+            return None, None
+        ml, mt, pw_, ph = self._plot
+        if not (ml <= x <= ml + pw_ and mt <= y <= mt + ph):
+            return None, None
+        return cv.nearest_trace(self._traces, x, y)
+
     def _hit_band(self, x, y, r=11):
         if not self._plot:
             return None
@@ -484,6 +506,11 @@ class PeqView(Gtk.Box):
             # plot that showed none of them.
             self._legend_hits = []
             self._hover = None
+        traces = {}
+        if self._cursor is not None:
+            self._under, self._under_v = self._line_at(*self._cursor)
+        else:
+            self._under, self._under_v = None, None
         if self._curves is not None:
             fo, meas, spread, band = self._curves[:4]
             cr.save()
@@ -507,10 +534,13 @@ class PeqView(Gtk.Box):
                 "measured", 0.85, 0.85, 0.90, 0.55, 1.2)
             cr.set_source_rgba(mr, mg, mb, ma)
             cr.set_line_width(mw)
+            tr_m = []
             for i, f in enumerate(fo):
                 x, y = x_of(f), y_of(meas[i])
+                tr_m.append((x, y, meas[i]))
                 cr.move_to(x, y) if i == 0 else cr.line_to(x, y)
             cr.stroke()
+            traces["measured"] = tr_m
             resp = eq.response_db(self._preamp,
                                   self._bands + self._floor, fo)
             tgt = self._tgt
@@ -526,22 +556,29 @@ class PeqView(Gtk.Box):
                     cr.set_line_width(tw)
                     cr.set_dash([5, 3], 0)
                     first = True
+                    tr_t = []
                     for i in sel:
                         x = x_of(fo[i])
                         y = y_of(tgt[i] + shift)
+                        tr_t.append((x, y, tgt[i] + shift))
                         cr.move_to(x, y) if first \
                             else cr.line_to(x, y)
                         first = False
                     cr.stroke()
                     cr.set_dash([], 0)
+                    traces["target"] = tr_t
             pr, pg, pb, pa, pw2 = self._dress(
                 "predicted", 0.45, 0.95, 0.55, 0.90, 1.5)
             cr.set_source_rgba(pr, pg, pb, pa)
             cr.set_line_width(pw2)
+            tr_p = []
             for i, f in enumerate(fo):
-                x, y = x_of(f), y_of(meas[i] + resp[i])
+                v = meas[i] + resp[i]
+                x, y = x_of(f), y_of(v)
+                tr_p.append((x, y, v))
                 cr.move_to(x, y) if i == 0 else cr.line_to(x, y)
             cr.stroke()
+            traces["predicted"] = tr_p
             cr.set_source_rgba(0, 0, 0, 0.30)
             if band is not None:
                 blo, bhi = max(band[0], FMIN), min(band[1], FMAX)
@@ -604,11 +641,21 @@ class PeqView(Gtk.Box):
                 "EQ", 0.6, 0.6, 0.6, 0.7, 2.0)
         cr.set_source_rgba(er, eg, eb, ea)
         cr.set_line_width(ew)
+        tr_e = []
         for i, f in enumerate(freqs):
             db = max(wlo, min(whi, curve[i]))
             px, py = x_of(f), y_of(db)
+            tr_e.append((px, py, db))
             cr.move_to(px, py) if i == 0 else cr.line_to(px, py)
         cr.stroke()
+        traces["EQ"] = tr_e
+        self._traces = traces
+        if self._under is not None:
+            r0, g0, b0 = _LINE_COL.get(self._under, (1.0, 1.0, 1.0))
+            cv.name_the_line(cr, (ml, mt, pw_, ph), self._cursor,
+                             self._under, self._under_v,
+                             (r0, g0, b0, 1.0),
+                             bg_rgba=(0.08, 0.08, 0.10, 0.90))
         if not self._active:
             cr.set_source_rgba(0.30, 0.78, 1.0, 0.5)
             cr.set_line_width(1.5); cr.set_dash([4, 4], 0)
@@ -632,15 +679,26 @@ class PeqView(Gtk.Box):
     # ---- graph interaction ---------------------------------------------
     def _on_drag_begin(self, gesture, sx, sy):
         self._drag_band = None
+        add = bool(gesture.get_current_event_state()
+                   & Gdk.ModifierType.CONTROL_MASK)
         lab = self._legend_at(sx, sy)
+        if lab is None and add:
+            # Ctrl is the selection modifier and never a sculptor:
+            # under it this graph pins the line it is standing on,
+            # exactly as a take canvas does, and no band is born.
+            # That leaves ONE deliberate difference between the two
+            # pictures -- a bare click here builds a biquad.
+            name, _v = self._line_at(sx, sy)
+            if name is not None:
+                self._pin.symmetric_difference_update({name})
+                self.graph.queue_draw()
+            return
         if lab is not None:
             # a click on the legend pins the highlight -- and
             # never gives birth to a band under the names. Plain
             # click replaces the set, Ctrl adds or removes, and a
             # plain click on the only pinned name lets it go: the
             # measure window's canvases speak the same grammar
-            add = bool(gesture.get_current_event_state()
-                       & Gdk.ModifierType.CONTROL_MASK)
             if add:
                 self._pin.symmetric_difference_update({lab})
             elif self._pin == {lab}:

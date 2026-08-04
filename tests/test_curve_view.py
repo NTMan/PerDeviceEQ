@@ -27,6 +27,7 @@ class FakeCr:
         self.colors = []
         self._pts = []
         self._col = (0, 0, 0, 1)
+        self.point = None       # cairo's live current point
 
     # colour and pen
     def set_source_rgba(self, r, g, b, a=1.0):
@@ -54,6 +55,11 @@ class FakeCr:
 
     def fill(self):
         self._pts = []
+        self.point = None
+
+    def new_path(self):
+        self._pts = []
+        self.point = None
 
     def close_path(self):
         pass
@@ -62,14 +68,17 @@ class FakeCr:
         if self._pts:
             self.segments.append((self._col, self._pts))
         self._pts = [(x, y)]
+        self.point = (x, y)
 
     def line_to(self, x, y):
         self._pts.append((x, y))
+        self.point = (x, y)
 
     def stroke(self):
         if self._pts:
             self.segments.append((self._col, self._pts))
         self._pts = []
+        self.point = None
 
     # text
     def select_font_face(self, *_a):
@@ -492,3 +501,67 @@ def test_a_dimmed_noise_line_dims_its_land():
     st.hit("THD")
     assert [c for c in paint(p).colors
             if abs(c[3] - 0.22 * cv.DIM) < 1e-9]
+
+def test_nearest_trace_names_the_painted_line():
+    """The equalizer builds its curves inside its own draw -- the
+    EQ line after its clamp, the target after its shift -- so the
+    honest way to name what the eye sees is to read back the points
+    that were actually painted."""
+    eqc = [(float(x), 100.0, -6.0) for x in range(0, 300, 3)]
+    pred = [(float(x), 140.0, -12.0) for x in range(0, 300, 3)]
+    traces = {"EQ": eqc, "predicted": pred}
+    assert cv.nearest_trace(traces, 150.0, 102.0) == ("EQ", -6.0)
+    assert cv.nearest_trace(traces, 150.0, 138.0) == ("predicted",
+                                                      -12.0)
+    assert cv.nearest_trace(traces, 150.0, 120.0) == (None, None)
+    assert cv.nearest_trace({}, 1.0, 1.0) == (None, None)
+    assert cv.nearest_trace(None, 1.0, 1.0) == (None, None)
+
+
+def test_nearest_trace_ignores_a_line_that_is_not_under_x():
+    """A trace that stops short must not be named from far away:
+    the target line only exists where the law speaks."""
+    short = [(float(x), 100.0, -3.0) for x in range(0, 60, 3)]
+    assert cv.nearest_trace({"target": short}, 250.0,
+                            100.0) == (None, None)
+    assert cv.nearest_trace({"target": short}, 30.0,
+                            100.0) == ("target", -3.0)
+
+
+def test_name_the_line_writes_the_word_and_flips_at_the_edge():
+    cr = FakeCr()
+    rect = (38.0, 10.0, 600.0, 280.0)
+    assert cv.name_the_line(cr, rect, (100.0, 120.0), "THD",
+                            -48.25, (0, 0, 0, 1)) is True
+    assert "THD -48.2" in cr.texts
+    assert cr.rects[-1][0] > 100.0       # to the right of the point
+    cr2 = FakeCr()
+    cv.name_the_line(cr2, rect, (630.0, 120.0), "THD", -48.25,
+                     (0, 0, 0, 1))
+    assert cr2.rects[-1][0] < 630.0      # flipped at the edge
+    assert cv.name_the_line(cr2, rect, None, "THD", -1.0,
+                            (0, 0, 0, 1)) is False
+    assert cv.name_the_line(cr2, rect, (100.0, 120.0), None, -1.0,
+                            (0, 0, 0, 1)) is False
+
+def test_a_label_hands_the_context_back_with_an_empty_path():
+    """cairo's arc() joins the live current point to the start of
+    the arc with a straight line, and the equalizer draws its band
+    handles with arc(). A label that left its point dangling drew a
+    dark hairline from itself to the first handle."""
+    cr = FakeCr()
+    rect = (38.0, 10.0, 600.0, 280.0)
+    cv.name_the_line(cr, rect, (100.0, 120.0), "EQ", -14.0,
+                     (0, 0, 0, 1))
+    assert cr.point is None
+    cr = FakeCr()
+    cv.draw_crosshair(cr, rect, (100.0, 120.0),
+                      lambda px: 1000.0, lambda py: -14.0)
+    assert cr.point is None
+    p = cv.Plot(FREQS, [cv.Curve("take", np.full(6, -30.0),
+                                 cv.C_RESPONSE)],
+                -60.0, -24.0, legend=True, title="FR")
+    cr = FakeCr()
+    p.set_cursor(300.0, 100.0)
+    p.draw(None, cr, 700, 300)
+    assert cr.point is None
