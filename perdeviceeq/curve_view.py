@@ -50,6 +50,22 @@ C_NOISE = (0.50, 0.50, 0.50, 0.85)
 DIM = 0.28                              # alpha factor of an unlit line
 
 
+TEXT_AS_PATH = False        # exporters flip this; see curve_export
+
+
+def show_text(cr, text):
+    """Every label goes through here so an exporter can ask for
+    OUTLINES instead of glyphs. cairo writes a <text> node into an
+    SVG by default, and that node renders in whatever font the
+    reader happens to have -- or fails to have. A picture meant for
+    a blog must not depend on that."""
+    if TEXT_AS_PATH:
+        cr.text_path(text)
+        cr.fill()
+    else:
+        cr.show_text(text)
+
+
 def stride_idx(n, cap=240):
     """Indices for drawing at most ~cap points of an n-point curve.
     Resize-time redraws are Python-loop-bound and every canvas in
@@ -219,7 +235,7 @@ def name_the_line(cr, rect, cursor, name, value, rgba,
     cr.fill()
     cr.set_source_rgba(*rgba)
     cr.move_to(tx, ty)
-    cr.show_text(lab)
+    show_text(cr, lab)
     # show_text leaves a live current point, and cairo's arc()
     # JOINS the current point to the start of the arc with a
     # straight line. The equalizer draws its band handles with
@@ -240,7 +256,7 @@ def _readout(cr, text, x, y, anchor, text_rgba, bg_rgba):
     cr.fill()
     cr.set_source_rgba(*text_rgba)
     cr.move_to(tx, y)
-    cr.show_text(text)
+    show_text(cr, text)
     cr.new_path()               # never hand back a live point
 
 
@@ -535,7 +551,7 @@ class Plot:
             cr.set_font_size(10)
             ext = cr.text_extents(self.title)
             cr.move_to(ML + pw - ext.width - 4, MT + 12)
-            cr.show_text(self.title)
+            show_text(cr, self.title)
             cr.new_path()
 
     def _name_the_line(self, cr, pw, c, v):
@@ -561,7 +577,7 @@ class Plot:
             lab = tick_label(f)
             ext = cr.text_extents(lab)
             cr.move_to(x - ext.width / 2.0, MT + ph + 13)
-            cr.show_text(lab)
+            show_text(cr, lab)
         pitch = grid_pitch(max(self.hi - self.lo, 1e-6))
         g = math.ceil(self.lo / pitch) * pitch
         while g <= self.hi + 1e-9:
@@ -572,12 +588,12 @@ class Plot:
             cr.stroke()
             cr.set_source_rgba(0.4, 0.4, 0.4, 0.85)
             cr.move_to(2, y + 3)
-            cr.show_text("%d" % int(round(g)))
+            show_text(cr, "%d" % int(round(g)))
             g += pitch
         cr.set_source_rgba(0.4, 0.4, 0.4, 0.85)
         cr.set_font_size(9)
         cr.move_to(2, MT + ph + 13)
-        cr.show_text("Hz")
+        show_text(cr, "Hz")
 
     def _dead_land(self, cr, x_of, pw, ph):
         """Above the last frequency any harmonic can be caught the
@@ -605,7 +621,7 @@ class Plot:
         else:
             tx = max(ML + 2, x - 4 - ext.width)
         cr.move_to(tx, MT + ph - 5)
-        cr.show_text(lab)
+        show_text(cr, lab)
 
     def _outside(self, cr, x_of, pw, ph):
         """Grey what the fit does not touch: outside the EQ range
@@ -722,7 +738,7 @@ class Plot:
             lab = ("\u2022 " + c.name
                    if c.key in self.state.pinned else c.name)
             cr.move_to(lx + 16, ly)
-            cr.show_text(lab)
+            show_text(cr, lab)
             tw = cr.text_extents(lab).width
             self.hits.append((lx - 4, ly - 12,
                               lx + 16 + tw + 4, ly + 6, c.key))

@@ -25,10 +25,12 @@ import numpy as np
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, GLib, Gdk, Adw, Pango  # noqa: E402
+from gi.repository import (Gtk, GLib, Gdk, GObject, Adw,
+                           Pango)                    # noqa: E402
 
 from . import config, measure_build       # noqa: E402
 from . import curve_view as cv                      # noqa: E402
+from . import curve_export                          # noqa: E402
 from . import pw_backend
 from . import focus                                  # noqa: E402
 from . import debug
@@ -1479,25 +1481,74 @@ class MeasureWindow(Adw.Window):
         stays clean."""
         ov = Gtk.Overlay()
         ov.set_child(area)
-        btn = Gtk.Button.new_from_icon_name(
+        bar = Gtk.Box(spacing=2)
+        bar.set_halign(Gtk.Align.END)
+        bar.set_valign(Gtk.Align.START)
+        bar.set_margin_top(4)
+        bar.set_margin_end(4)
+        bar.set_visible(False)
+
+        def now():
+            return subject() if callable(subject) else subject
+
+        copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        copy.set_tooltip_text("Copy this picture to the clipboard")
+        copy.connect("clicked",
+                     lambda b: self._copy_canvas(now(), b))
+        big = Gtk.Button.new_from_icon_name(
             "view-fullscreen-symbolic")
-        btn.set_tooltip_text(tip)
-        btn.add_css_class("osd")
-        btn.add_css_class("circular")
-        btn.set_halign(Gtk.Align.END)
-        btn.set_valign(Gtk.Align.START)
-        btn.set_margin_top(4)
-        btn.set_margin_end(4)
-        btn.set_can_focus(False)
-        btn.set_visible(False)
-        btn.connect("clicked", lambda _b: self._open_big(
-            subject() if callable(subject) else subject))
-        ov.add_overlay(btn)
+        big.set_tooltip_text(tip)
+        big.connect("clicked", lambda _b: self._open_big(now()))
+        for btn in (copy, big):
+            btn.add_css_class("osd")
+            btn.add_css_class("circular")
+            btn.set_can_focus(False)
+            bar.append(btn)
+        ov.add_overlay(bar)
         mo = Gtk.EventControllerMotion()
-        mo.connect("enter", lambda *_a: btn.set_visible(True))
-        mo.connect("leave", lambda *_a: btn.set_visible(False))
+        mo.connect("enter", lambda *_a: bar.set_visible(True))
+        mo.connect("leave", lambda *_a: bar.set_visible(False))
         ov.add_controller(mo)
         return ov
+
+    def _copy_canvas(self, subject, btn=None):
+        """The picture into the clipboard, in both languages at
+        once: the vector for an editor that speaks it and the
+        raster for everything else. Whoever pastes picks -- we do
+        not have to guess. Drawn again at export size by the same
+        painter, so nothing is a screenshot and nothing is
+        stretched."""
+        plot = self._big_plot(subject)
+        if plot is None:
+            return
+        try:
+            svg = curve_export.svg_bytes(plot)
+            png = curve_export.png_bytes(plot)
+        except Exception:
+            return
+        parts = [Gdk.ContentProvider.new_for_bytes(
+                     "image/svg+xml", GLib.Bytes.new(svg)),
+                 Gdk.ContentProvider.new_for_bytes(
+                     "image/png", GLib.Bytes.new(png))]
+        try:
+            # a GdkTexture as well: GTK takers ask for the object,
+            # not for bytes, and the bytes alone would leave them
+            # with an empty paste
+            val = GObject.Value(
+                Gdk.Texture,
+                Gdk.Texture.new_from_bytes(GLib.Bytes.new(png)))
+            parts.append(Gdk.ContentProvider.new_for_value(val))
+        except Exception:
+            pass
+        self.get_clipboard().set_content(
+            Gdk.ContentProvider.new_union(parts))
+        if btn is not None:
+            btn.set_icon_name("object-select-symbolic")
+            GLib.timeout_add(1500, self._copy_settled, btn)
+
+    def _copy_settled(self, btn):
+        btn.set_icon_name("edit-copy-symbolic")
+        return False
 
     def _channel_view(self, ch):
         """Everything any canvas of this channel needs: its takes,
@@ -1597,8 +1648,14 @@ class MeasureWindow(Adw.Window):
         box.set_margin_start(6)
         box.set_margin_end(6)
         box.append(area)
+        head = Adw.HeaderBar()
+        cbtn = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        cbtn.set_tooltip_text("Copy this picture to the clipboard")
+        cbtn.connect("clicked",
+                     lambda b: self._copy_canvas(subject, b))
+        head.pack_end(cbtn)
         view = Adw.ToolbarView()
-        view.add_top_bar(Adw.HeaderBar())
+        view.add_top_bar(head)
         view.set_content(box)
         win = Adw.Window()
         win.set_title(self._big_title(subject))
