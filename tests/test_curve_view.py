@@ -183,14 +183,65 @@ def test_pinning_a_name_dims_the_others_everywhere():
                    legend=True)
     row = cv.Plot(FREQS, [take, thd], -90.0, -24.0, state=st,
                   legend=False)
-    assert face._alpha(take) == 1.0 and row._alpha(thd) == 1.0
+    assert face._dress(take)[0] == 1.0
+    assert row._dress(thd)[0] == 1.0
     assert st.hit("THD") is True
-    assert row._alpha(take) == cv.DIM      # the row follows
-    assert row._alpha(thd) == 1.0
-    assert st.hit("THD") is True           # a second click frees
-    assert st.pinned is None
-    st.hover = "THD"
-    assert row._alpha(take) == cv.DIM
+    assert row._dress(take)[0] == cv.DIM      # the row follows
+    assert row._dress(thd)[0] == 1.0
+    assert st.hit("THD") is True              # a second click frees
+    assert st.pinned == set()
+
+
+def test_ctrl_adds_a_second_line_and_a_plain_click_replaces():
+    """The gap between two lines is the question pinning exists
+    for -- THD against the noise floor is the whole distortion
+    argument -- so more than one name has to be able to burn."""
+    st = cv.Highlight()
+    assert st.hit("THD") is True
+    assert st.hit("noise", add=True) is True
+    assert st.pinned == {"THD", "noise"}
+    assert st.hit("noise", add=True) is True      # Ctrl removes
+    assert st.pinned == {"THD"}
+    assert st.hit("H2") is True                   # plain replaces
+    assert st.pinned == {"H2"}
+    assert st.hit(None) is True                   # empty clears
+    assert st.pinned == set()
+    assert st.hit(None) is False                  # nothing to do
+    st.pinned = {"H2"}
+    assert st.hit(None, add=True) is False        # Ctrl on nothing
+
+
+def test_the_pointer_is_read_in_every_state():
+    """The state that broke the brain: with EVERY name pinned the
+    picture looks exactly like nothing pinned, and hover used to
+    vanish into the pinned set. It now has a level of its own."""
+    st = cv.Highlight()
+    take = cv.Curve("take", np.full(6, -30.0), cv.C_RESPONSE)
+    thd = cv.Curve("THD", np.full(6, -80.0), cv.C_THD,
+                   harmonic=True)
+    p = cv.Plot(FREQS, [take, thd], -90.0, -24.0, state=st,
+                legend=False)
+    st.pinned = {"take", "THD"}                   # all of them
+    assert p._dress(take) == p._dress(thd)        # indeed identical
+    assert p._dress(thd, under="THD")[1] > p._dress(take)[1]
+    st.pinned = set()
+    assert p._dress(thd, under="THD")[1] > p._dress(take)[1]
+    st.pinned = {"take"}
+    assert p._dress(thd, under="THD") == (1.0, 1.6)
+    assert p._dress(take)[1] == 0.8               # pinned, not hot
+
+
+def test_a_pinned_name_wears_a_dot():
+    st = cv.Highlight()
+    curves = [cv.Curve("take", np.full(6, -30.0), cv.C_RESPONSE),
+              cv.Curve("THD", np.full(6, -80.0), cv.C_THD,
+                       harmonic=True)]
+    p = cv.Plot(FREQS, curves, -90.0, -24.0, state=st, legend=True)
+    assert "THD" in paint(p).texts
+    st.hit("THD")
+    texts = paint(p).texts
+    assert "\u2022 THD" in texts and "take" in texts
+    assert [n for _a, _b, _c, _d, n in p.hits] == ["take", "THD"]
 
 
 def test_the_spread_band_paints_and_the_red_says_untrustworthy():
@@ -371,7 +422,7 @@ def test_a_click_pins_the_line_it_lands_on():
     assert p.pick_at(x, _y_of(-30.0)) == "take"
     assert p.pick_at(x, _y_of(-55.0)) is None
     assert p.state.hit(p.pick_at(x, _y_of(-80.0))) is True
-    assert p.state.pinned == "THD"
+    assert p.state.pinned == {"THD"}
 
 
 def test_the_legend_still_wins_over_the_curve_under_it():
@@ -382,3 +433,62 @@ def test_the_legend_still_wins_over_the_curve_under_it():
     paint(p)
     x0, y0, x1, y1, name = p.hits[1]
     assert p.pick_at((x0 + x1) / 2.0, (y0 + y1) / 2.0) == name
+
+def test_the_blue_line_is_one_line_across_canvases():
+    """The face draws the MEAN, a row draws ONE take: two words for
+    two truths. But the eye sees one blue line, and once H2 and THD
+    light together everywhere, a blue line that refuses reads as a
+    bug. They share the key, not the name."""
+    st = cv.Highlight()
+    mean = cv.Curve("mean", np.full(6, -30.0), cv.C_RESPONSE,
+                    key="response")
+    take = cv.Curve("take", np.full(6, -31.0), cv.C_RESPONSE,
+                    key="response")
+    red = cv.Curve("off mean", np.full(6, -31.0), cv.C_BAD,
+                   legend=False, key="response")
+    thd = cv.Curve("THD", np.full(6, -80.0), cv.C_THD,
+                   harmonic=True)
+    face = cv.Plot(FREQS, [mean, thd], -90.0, -24.0, state=st,
+                   legend=True)
+    row = cv.Plot(FREQS, [take, red, thd], -90.0, -24.0, state=st,
+                  legend=False)
+    paint(face)
+    key = face.hits[0][4]
+    assert key == "response"
+    assert st.hit(key) is True
+    assert row._dress(take)[0] == 1.0
+    assert row._dress(red)[0] == 1.0
+    assert row._dress(thd)[0] == cv.DIM
+    assert "\u2022 mean" in paint(face).texts
+
+
+def test_the_pointer_says_the_word_and_pins_the_key():
+    st = cv.Highlight()
+    take = cv.Curve("take", np.full(6, -30.0), cv.C_RESPONSE,
+                    key="response")
+    p = cv.Plot(FREQS, [take], -96.0, -24.0, state=st,
+                legend=False)
+    paint(p)
+    pw = 700 - cv.ML - cv.MR
+    ph = 300 - cv.MT - cv.MB
+    x = cv.log_x(1234.0, cv.ML, pw)
+    y = cv.MT + (-24.0 - (-30.0)) / 72.0 * ph
+    p.set_cursor(x, y)
+    c, _v = p.at_cursor()
+    assert c.name == "take"
+    assert p.pick_at(x, y) == "response"
+    assert "take -30.0" in paint(p).texts
+
+
+def test_a_dimmed_noise_line_dims_its_land():
+    st = cv.Highlight()
+    noise = cv.Curve("noise", np.full(6, -80.0), cv.C_NOISE,
+                     harmonic=True, land=True)
+    thd = cv.Curve("THD", np.full(6, -70.0), cv.C_THD,
+                   harmonic=True)
+    p = cv.Plot(FREQS, [noise, thd], -90.0, -24.0, state=st,
+                legend=False)
+    assert [c for c in paint(p).colors if abs(c[3] - 0.22) < 1e-9]
+    st.hit("THD")
+    assert [c for c in paint(p).colors
+            if abs(c[3] - 0.22 * cv.DIM) < 1e-9]

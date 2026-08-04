@@ -22,7 +22,7 @@ import time
 import gi
 from . import focus
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
 
 from . import curve_view as cv
 from . import eq
@@ -275,12 +275,11 @@ class PeqView(Gtk.Box):
         self.graph.queue_draw()
 
     def _lit(self):
-        """The set of highlighted curve names: click-pinned
-        names plus the one under the pointer."""
-        lit = set(self._pin)
-        if self._hover:
-            lit.add(self._hover)
-        return lit
+        """The pinned names. The pointer used to be folded in
+        here, which made hover invisible whenever everything was
+        pinned -- the state that already looks like nothing
+        pinned. It now has its own level in _dress instead."""
+        return set(self._pin)
 
     def _dress(self, name, r, g, b, a, w):
         """Highlight dressing: lit curves brighten and thicken,
@@ -288,10 +287,12 @@ class PeqView(Gtk.Box):
         darkness -- divergence is a comparison and the
         neighbours must stay legible). Nothing lit = the house
         dress unchanged."""
+        if name == self._hover:
+            return r, g, b, min(1.0, a + 0.25), w + 1.6
         lit = self._lit()
         if lit:
             if name in lit:
-                a, w = min(1.0, a + 0.25), w + 1.0
+                a, w = min(1.0, a + 0.25), w + 0.8
             else:
                 a, w = a * 0.35, max(0.8, w - 0.4)
         return r, g, b, a, w
@@ -491,7 +492,7 @@ class PeqView(Gtk.Box):
             if spread is not None:
                 lit = self._lit()
                 sa = (0.14 if not lit or "measured" in lit
-                      else 0.05)
+                      or self._hover == "measured" else 0.05)
                 cr.set_source_rgba(0.55, 0.65, 0.85, sa)
                 for i, f in enumerate(fo):
                     x = x_of(f)
@@ -567,16 +568,19 @@ class PeqView(Gtk.Box):
             lit = self._lit()
             for lab, rgba in labels:
                 r0, g0, b0, a0 = rgba
-                if lit and lab not in lit:
+                if lit and lab not in lit and lab != self._hover:
                     a0 *= 0.35
                 cr.set_source_rgba(r0, g0, b0, a0)
                 cr.set_line_width(2.0)
                 cr.move_to(lx, ly - 3)
                 cr.line_to(lx + 14, ly - 3)
                 cr.stroke()
+                # a pinned name wears a dot: brightness alone
+                # cannot tell "nothing pinned" from "all pinned"
+                shown = "\u2022 " + lab if lab in lit else lab
                 cr.move_to(lx + 18, ly)
-                cr.show_text(lab)
-                tw2 = cr.text_extents(lab).width
+                cr.show_text(shown)
+                tw2 = cr.text_extents(shown).width
                 self._legend_hits.append(
                     (lx - 4, ly - 14, lx + 18 + tw2 + 4,
                      ly + 8, lab))
@@ -631,11 +635,18 @@ class PeqView(Gtk.Box):
         lab = self._legend_at(sx, sy)
         if lab is not None:
             # a click on the legend pins the highlight -- and
-            # never gives birth to a band under the names
-            if lab in self._pin:
-                self._pin.discard(lab)
+            # never gives birth to a band under the names. Plain
+            # click replaces the set, Ctrl adds or removes, and a
+            # plain click on the only pinned name lets it go: the
+            # measure window's canvases speak the same grammar
+            add = bool(gesture.get_current_event_state()
+                       & Gdk.ModifierType.CONTROL_MASK)
+            if add:
+                self._pin.symmetric_difference_update({lab})
+            elif self._pin == {lab}:
+                self._pin = set()
             else:
-                self._pin.add(lab)
+                self._pin = {lab}
             self.graph.queue_draw()
             return
         if not self._plot:

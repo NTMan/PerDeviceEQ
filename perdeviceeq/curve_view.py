@@ -203,11 +203,23 @@ def as_level(mag, ratio):
 class Curve:
     """One named line. `harmonic` marks the lines that live or die
     with the sweep's harmonic evidence; `land` shades everything
-    under the line (the instrument's own noise floor)."""
+    under the line (the instrument's own noise floor).
+
+    `key` is what the highlight matches on, and it is not always
+    the name. The face's blue line is the MEAN over the takes and a
+    row's blue line is ONE take -- two different truths that must
+    keep their two different words -- but to the eye and to the
+    hand they are the same line, so H2 and THD lighting together
+    across canvases while the blue one refused was read as a bug.
+    Both carry key "response": the words stay honest, the light
+    behaves as the eye expects. Curves with legend=False borrow
+    their parent's key so an overlay follows the line it belongs
+    to."""
 
     def __init__(self, name, values, rgba, width=1.4, dash=None,
-                 harmonic=False, land=False, legend=True):
+                 harmonic=False, land=False, legend=True, key=None):
         self.name = name
+        self.key = key or name
         self.values = None if values is None else np.asarray(
             values, float)
         self.rgba = rgba
@@ -219,27 +231,42 @@ class Curve:
 
 
 class Highlight:
-    """Which legend name is lit. Hover lights, a click pins, a
-    click on the pinned name releases it -- peq_view's grammar,
-    shared by every canvas of one channel so pinning THD on the
-    summary dims the rest on every take row too."""
+    """Which names are lit, shared by every canvas of one channel
+    so a pin made on the third take row dims the rest everywhere.
+
+    THREE LEVELS, because two were not enough. Pinning answers
+    "how far apart are these two" -- the gap between THD and the
+    noise floor is the whole distortion question, and a gap cannot
+    be seen by lighting one line at a time. Hovering answers "which
+    line is this", which is a different question and must keep
+    working in EVERY state: with nothing pinned, with two pinned,
+    and with ALL pinned -- the state that used to look identical to
+    nothing pinned and made the pointer seem broken. So the pointer
+    no longer joins the pinned set; it gets a level of its own,
+    above it.
+
+    A plain click replaces the set, Ctrl adds or removes, a click
+    on nothing clears -- the file manager idiom, so there is
+    nothing to learn. A plain click on the only pinned name lets
+    it go."""
 
     def __init__(self):
         self.hover = None
-        self.pinned = None
+        self.pinned = set()
 
-    def lit(self):
-        return self.pinned or self.hover
-
-    def hit(self, name):
+    def hit(self, name, add=False):
         """A click: returns True when the state changed."""
+        before = set(self.pinned)
         if name is None:
-            if self.pinned is None:
-                return False
-            self.pinned = None
-            return True
-        self.pinned = None if self.pinned == name else name
-        return True
+            if not add:
+                self.pinned = set()
+        elif add:
+            self.pinned.symmetric_difference_update({name})
+        elif before == {name}:
+            self.pinned = set()
+        else:
+            self.pinned = {name}
+        return self.pinned != before
 
 
 def _finite(arr):
@@ -369,7 +396,7 @@ class Plot:
             return name
         self.set_cursor(x, y)
         c, _v = self.at_cursor()
-        return None if c is None else c.name
+        return None if c is None else c.key
 
     def set_cursor(self, x, y):
         """Pointer moved (or left, with x None). True when the
@@ -380,11 +407,19 @@ class Plot:
         self.cursor = c
         return True
 
-    def _alpha(self, curve):
-        lit = self.state.lit()
-        if lit is None or not curve.legend or curve.name == lit:
-            return 1.0
-        return DIM
+    def _dress(self, curve, under=None):
+        """(alpha factor, extra width) for one line. Under the
+        pointer: full colour and the thickest pen, in any state.
+        Pinned: full colour, thicker. Neither, with something
+        pinned: stepped back but still legible -- a comparison
+        needs its neighbours visible."""
+        if curve.key in (under, self.state.hover):
+            return 1.0, 1.6
+        if self.state.pinned:
+            if curve.key in self.state.pinned:
+                return 1.0, 0.8
+            return DIM, 0.0
+        return 1.0, 0.0
 
     def legend_at(self, x, y):
         """The legend name under the pointer, or None. A canvas
@@ -413,17 +448,19 @@ class Plot:
         self._grid(cr, x_of, y_of, pw, ph)
         self._dead_land(cr, x_of, pw, ph)
         self._spread(cr, x_of, y_of, pw)
+        uc, uv = self.at_cursor()
+        under = None if uc is None else uc.key
         for c in self.curves:
-            self._line(cr, c, x_of, y_of, ph)
+            self._line(cr, c, x_of, y_of, ph, under)
         self._outside(cr, x_of, pw, ph)
         if self.legend:
-            self._legend(cr)
+            self._legend(cr, under)
         else:
             self.hits = []
         if draw_crosshair(cr, (ML, MT, pw, ph), self.cursor,
                           lambda px: f_at_x(px, ML, pw),
                           lambda py: self.hi - (py - MT) / ph * span):
-            self._name_the_line(cr, pw, ph)
+            self._name_the_line(cr, pw, uc, uv)
         if self.title:
             cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
             cr.set_font_size(10)
@@ -431,10 +468,9 @@ class Plot:
             cr.move_to(ML + pw - ext.width - 4, MT + 12)
             cr.show_text(self.title)
 
-    def _name_the_line(self, cr, pw, ph):
+    def _name_the_line(self, cr, pw, c, v):
         """The line under the pointer says its name and its value,
         in its own colour, beside the crosshair."""
-        c, v = self.at_cursor()
         if c is None:
             return
         x, y = self.cursor
@@ -553,19 +589,19 @@ class Plot:
             cr.rectangle(x, yt, bw, max(1.0, yb - yt))
             cr.fill()
 
-    def _line(self, cr, c, x_of, y_of, ph):
+    def _line(self, cr, c, x_of, y_of, ph, under=None):
         if c.values is None:
             return
-        a = self._alpha(c)
+        a, dw = self._dress(c, under)
         r, g, b, al = c.rgba
         idx = stride_idx(len(self.freqs))
         if c.land:
-            self._shade_land(cr, c, x_of, y_of, idx, ph)
+            self._shade_land(cr, c, x_of, y_of, idx, ph, a)
         if c.dash:
             cr.save()
             cr.set_dash(list(c.dash))
         cr.set_source_rgba(r, g, b, al * a)
-        cr.set_line_width(c.width)
+        cr.set_line_width(c.width + dw)
         pen = False
         for j in idx:
             v = c.values[j] if j < len(c.values) else float("nan")
@@ -582,10 +618,12 @@ class Plot:
         if c.dash:
             cr.restore()
 
-    def _shade_land(self, cr, c, x_of, y_of, idx, ph):
+    def _shade_land(self, cr, c, x_of, y_of, idx, ph, a=1.0):
         """Everything under the noise line is the instrument's own
-        floor: a reading inside it is the rig speaking."""
-        cr.set_source_rgba(0.55, 0.55, 0.55, 0.22)
+        floor: a reading inside it is the rig speaking. The shade
+        steps back with its line, or a dimmed noise curve would
+        keep shouting through its own fill."""
+        cr.set_source_rgba(0.55, 0.55, 0.55, 0.22 * a)
         started = False
         x0 = xl = None
         for j in idx:
@@ -607,27 +645,30 @@ class Plot:
         cr.close_path()
         cr.fill()
 
-    def _legend(self, cr):
-        """Names in their own colours, each with a hit rectangle:
-        hover lights, click pins."""
+    def _legend(self, cr, under=None):
+        """Names in their own colours, each with a hit rectangle.
+        A pinned name wears a dot: brightness alone cannot say
+        whether nothing is pinned or everything is, and a state
+        the eye cannot read is a state the hand will fight."""
         self.hits = []
         cr.select_font_face("Sans", 0, 0)
         cr.set_font_size(9)
         lx, ly = ML + 8, MT + 12
-        lit = self.state.lit()
         for c in self.curves:
             if not c.legend:
                 continue
             r, g, b, al = c.rgba
-            a = al if (lit is None or c.name == lit) else al * DIM
-            cr.set_source_rgba(r, g, b, a)
+            a, _dw = self._dress(c, under)
+            cr.set_source_rgba(r, g, b, al * a)
             cr.set_line_width(2.0)
             cr.move_to(lx, ly - 3)
             cr.line_to(lx + 12, ly - 3)
             cr.stroke()
+            lab = ("\u2022 " + c.name
+                   if c.key in self.state.pinned else c.name)
             cr.move_to(lx + 16, ly)
-            cr.show_text(c.name)
-            tw = cr.text_extents(c.name).width
+            cr.show_text(lab)
+            tw = cr.text_extents(lab).width
             self.hits.append((lx - 4, ly - 12,
-                              lx + 16 + tw + 4, ly + 6, c.name))
+                              lx + 16 + tw + 4, ly + 6, c.key))
             lx += 16 + tw + 12

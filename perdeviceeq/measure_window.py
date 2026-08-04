@@ -60,6 +60,13 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 FACE_H, ROW_H = 300, 200
 
 
+def _ctrl_down(gesture):
+    """True when Ctrl rides this click: add-or-remove, the
+    modifier every file manager already taught the hand."""
+    return bool(gesture.get_current_event_state()
+                & Gdk.ModifierType.CONTROL_MASK)
+
+
 SPEAKER_NAMES = {
     "FL": "Front Left", "FR": "Front Right", "FC": "Front Center",
     "LFE": "Subwoofer", "RL": "Rear Left", "RR": "Rear Right",
@@ -640,13 +647,15 @@ class MeasureWindow(Adw.Window):
         collective scatter lights the same region on EVERY row --
         and its own confession."""
         mag = np.asarray(rec.mag_db, float)
-        out = [cv.Curve("take", mag, cv.C_RESPONSE, 1.4)]
+        out = [cv.Curve("take", mag, cv.C_RESPONSE, 1.4,
+                        key="response")]
         if mean is not None:
             m = np.asarray(mean, float)
             bad = np.abs(mag + shift - m) > ms.SPREAD_MAX_DB
             out.append(cv.Curve("off mean",
                                 np.where(bad, mag, np.nan),
-                                cv.C_BAD, 1.8, legend=False))
+                                cv.C_BAD, 1.8, legend=False,
+                                key="response"))
         out.extend(self._conf_curves(
             rec.freq_hz, mag,
             getattr(rec, "thd_db", None),
@@ -1395,7 +1404,8 @@ class MeasureWindow(Adw.Window):
         sp = np.asarray(
             spread if spread is not None else mean * 0.0, float)
         ghost, glabel = self._partner_ghost(ch, mean)
-        curves = [cv.Curve("mean", mean, cv.C_RESPONSE, 1.8)]
+        curves = [cv.Curve("mean", mean, cv.C_RESPONSE, 1.8,
+                           key="response")]
         if ghost is not None:
             curves.append(cv.Curve("partner", ghost, cv.C_GHOST,
                                    1.2, dash=(4.0, 3.0)))
@@ -1470,11 +1480,9 @@ class MeasureWindow(Adw.Window):
                 area.queue_draw()
 
         def pressed(gesture, _n, x, y):
-            name = plot.pick_at(x, y)
-            if name is None:
-                return
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-            if plot.state.hit(name):
+            if plot.state.hit(plot.pick_at(x, y),
+                              _ctrl_down(gesture)):
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
                 self._repaint_curves()
 
         mo = Gtk.EventControllerMotion()
@@ -1516,11 +1524,10 @@ class MeasureWindow(Adw.Window):
         plot = self._page.get("plot") if self._page else None
         if plot is None:
             return
-        name = plot.pick_at(x, y)
-        if name is None:
-            return
-        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-        if plot.state.hit(name):
+        # a press that changes nothing is not claimed, so the
+        # card's own fold click still works through the canvas
+        if plot.state.hit(plot.pick_at(x, y), _ctrl_down(gesture)):
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             self._repaint_curves()
 
     def _partner_ghost(self, ch, mean):
