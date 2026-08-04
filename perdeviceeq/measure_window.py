@@ -1487,11 +1487,11 @@ class MeasureWindow(Adw.Window):
         stays clean."""
         ov = Gtk.Overlay()
         ov.set_child(area)
-        bar = Gtk.Box(spacing=2)
+        bar = Gtk.Box(spacing=6)
         bar.set_halign(Gtk.Align.END)
         bar.set_valign(Gtk.Align.START)
-        bar.set_margin_top(4)
-        bar.set_margin_end(4)
+        bar.set_margin_top(6)
+        bar.set_margin_end(6)
         bar.set_visible(False)
 
         def now():

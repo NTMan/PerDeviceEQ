@@ -16,14 +16,17 @@ window's editor: the same margins, palette, dB window around the
 preamp, 11 px handle hit radius, create-on-empty-plot, the
 frequency guard for sub-plot trim bands, remove on right click.
 """
+import contextlib
 import math
+import os
 import time
 
 import gi
 from . import focus
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gdk, Gtk
+from gi.repository import Gdk, GLib, GObject, Gtk
 
+from . import curve_export
 from . import curve_view as cv
 from . import eq
 from .eq import FMIN, FMAX
@@ -74,10 +77,11 @@ class PeqView(Gtk.Box):
     """
 
     def __init__(self, on_changed, preamp=0.0, compact=False,
-                 on_import_file=None):
+                 on_import_file=None, export_label="eq"):
         super().__init__(orientation=Gtk.Orientation.VERTICAL,
                          spacing=6)
         self._on_changed = on_changed
+        self.export_label = export_label
         # an editor verb, not an "import": replaces THIS view's
         # bands from a parametric-EQ text file. Rendered only
         # where the owner wires it (the device channel card) --
@@ -121,7 +125,7 @@ class PeqView(Gtk.Box):
         rclick.set_button(3)
         rclick.connect("pressed", self._on_right_click)
         self.graph.add_controller(rclick)
-        self.append(self.graph)
+        self.append(self._with_tools(self.graph))
 
         # the architect's spec verbatim: the Measure window's
         # EQ-range handles repeated under the PEQ graph -- two
@@ -303,6 +307,121 @@ class PeqView(Gtk.Box):
             if sum(1 for t in tgt if t is not None) > 8:
                 names.add("target")
         return names
+
+    def draw(self, area, cr, w, h, *_a):
+        """The same brush the widget uses, for an exporter."""
+        self._draw(area, cr, w, h)
+
+    @contextlib.contextmanager
+    def quiet(self):
+        """Everything a render at another size would disturb: the
+        pointer, the highlight it implies, the plot rectangle and
+        the traces read back for hit-testing. Without this an
+        export left the widget hit-testing against a 1200x675
+        canvas it does not have."""
+        keep = (self._cursor, self._under, self._under_v,
+                self._hover, self._plot, self._traces,
+                self._legend_hits)
+        self._cursor = None
+        self._under = None
+        self._under_v = None
+        self._hover = None
+        try:
+            yield
+        finally:
+            (self._cursor, self._under, self._under_v,
+             self._hover, self._plot, self._traces,
+             self._legend_hits) = keep
+
+    def _with_tools(self, area):
+        """Copy and save, in the corner, revealed by the pointer --
+        the same two hands the measure window's canvases wear. No
+        gesture is spent: a press on this graph builds a band."""
+        ov = Gtk.Overlay()
+        ov.set_child(area)
+        bar = Gtk.Box(spacing=6)
+        bar.set_halign(Gtk.Align.END)
+        bar.set_valign(Gtk.Align.START)
+        bar.set_margin_top(6)
+        bar.set_margin_end(6)
+        bar.set_visible(False)
+        copy = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
+        copy.set_tooltip_text("Copy this picture to the clipboard")
+        copy.connect("clicked", self._on_copy)
+        save = Gtk.Button.new_from_icon_name(
+            "document-save-symbolic")
+        save.set_tooltip_text("Save this picture as a file")
+        save.connect("clicked", self._on_save)
+        for btn in (copy, save):
+            btn.add_css_class("osd")
+            btn.add_css_class("circular")
+            btn.set_can_focus(False)
+            bar.append(btn)
+        ov.add_overlay(bar)
+        mo = Gtk.EventControllerMotion()
+        mo.connect("enter", lambda *_a: bar.set_visible(True))
+        mo.connect("leave", lambda *_a: bar.set_visible(False))
+        ov.add_controller(mo)
+        return ov
+
+    def _settle(self, btn, icon):
+        btn.set_icon_name(icon)
+        return False
+
+    def _on_copy(self, btn):
+        try:
+            svg = curve_export.svg_bytes(self)
+            png = curve_export.png_bytes(self)
+        except Exception:
+            return
+        parts = [Gdk.ContentProvider.new_for_bytes(
+                     "image/svg+xml", GLib.Bytes.new(svg)),
+                 Gdk.ContentProvider.new_for_bytes(
+                     "image/png", GLib.Bytes.new(png))]
+        try:
+            val = GObject.Value(
+                Gdk.Texture,
+                Gdk.Texture.new_from_bytes(GLib.Bytes.new(png)))
+            parts.append(Gdk.ContentProvider.new_for_value(val))
+        except Exception:
+            pass
+        self.get_clipboard().set_content(
+            Gdk.ContentProvider.new_union(parts))
+        btn.set_icon_name("object-select-symbolic")
+        GLib.timeout_add(1500, self._settle, btn,
+                         "edit-copy-symbolic")
+
+    def _on_save(self, btn):
+        dlg = Gtk.FileDialog()
+        dlg.set_title("Save this picture")
+        dlg.set_initial_name(
+            curve_export.export_name("", self.export_label))
+
+        def done(dialog, res):
+            try:
+                gfile = dialog.save_finish(res)
+                path = gfile.get_path() if gfile else None
+                if not path:
+                    return
+                data = (curve_export.png_bytes(self)
+                        if path.lower().endswith(".png")
+                        else curve_export.svg_bytes(self))
+                with open(path, "wb") as fh:
+                    fh.write(data)
+            except Exception:
+                return
+            try:
+                self.get_clipboard().set_content(
+                    Gdk.ContentProvider.new_for_value(
+                        GObject.Value(str,
+                                      os.path.basename(path))))
+            except Exception:
+                pass
+            btn.set_icon_name("object-select-symbolic")
+            GLib.timeout_add(1500, self._settle, btn,
+                             "document-save-symbolic")
+
+        dlg.save(self.get_root(), None, done)
 
     def _lit(self):
         """The pinned names THIS PICTURE ACTUALLY CONTAINS.

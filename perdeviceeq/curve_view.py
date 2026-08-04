@@ -23,6 +23,7 @@ two there is no second harmonic to catch) the land is shaded and
 named, so a pen that stops reads as "no evidence" instead of "no
 distortion".
 """
+import contextlib
 import math
 
 import numpy as np
@@ -472,6 +473,18 @@ class Plot:
         self.set_cursor(x, y)
         c, _v = self.at_cursor()
         return None if c is None else c.key
+
+    @contextlib.contextmanager
+    def quiet(self):
+        """No pointer inside an exported picture: the crosshair and
+        the name under it answer a hand that will not be there.
+        Pins stay -- a pinned line is a statement its author made."""
+        cursor, hover = self.cursor, self.state.hover
+        self.cursor, self.state.hover = None, None
+        try:
+            yield
+        finally:
+            self.cursor, self.state.hover = cursor, hover
 
     def set_cursor(self, x, y):
         """Pointer moved (or left, with x None). True when the

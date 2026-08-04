@@ -99,3 +99,53 @@ def test_the_slug_is_narrow_on_purpose():
     assert ce.slug("--a--b--") == "a-b"
     assert ce.slug(None) == ""
     assert ce.slug("\u041c\u0438\u0448\u0430") == ""
+
+class _Painter:
+    """Anything that can draw itself is exportable -- the contract
+    is draw() plus an optional quiet() for state a render at another
+    size would disturb. The equalizer graph is the real user of it;
+    this stands in for it, since gi does not live here."""
+
+    def __init__(self):
+        self.geometry = "live"
+        self.drew = []
+
+    def draw(self, _area, cr, w, h, *_a):
+        self.geometry = "%dx%d" % (w, h)
+        self.drew.append((w, h))
+        cr.set_source_rgb(0.1, 0.1, 0.1)
+        cr.rectangle(0, 0, w, h)
+        cr.fill()
+
+    def quiet(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def keeper():
+            keep = self.geometry
+            try:
+                yield
+            finally:
+                self.geometry = keep
+        return keeper()
+
+
+def test_any_painter_can_be_exported_and_left_as_it_was():
+    p = _Painter()
+    data = ce.svg_bytes(p, w=200, h=100)
+    assert b"<svg" in data
+    assert p.drew == [(200, 100)]
+    assert p.geometry == "live"        # the render was undone
+    assert cv.TEXT_AS_PATH is False
+
+
+class _Bare(_Painter):
+    """No quiet() at all -- an exporter must not require one."""
+    quiet = None
+
+
+def test_a_painter_without_quiet_is_still_exportable():
+    p = _Bare()
+    png = ce.png_bytes(p, w=40, h=20, scale=1)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert p.drew == [(40, 20)]

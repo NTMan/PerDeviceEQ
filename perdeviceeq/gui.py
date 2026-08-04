@@ -266,7 +266,8 @@ class EqWindow(Adw.ApplicationWindow):
         for side in ("start", "end", "bottom"):
             getattr(tbody, "set_margin_" + side)(12)
         self.taste_view = PeqView(self._on_taste_view_changed,
-                                  compact=True)
+                                  compact=True,
+                                  export_label="taste")
         self.taste_hint = Gtk.Label(
             label="No taste layer active. Pick or create one to "
                   "dial your EQ over every device.")

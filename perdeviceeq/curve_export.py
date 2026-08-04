@@ -17,6 +17,7 @@ picture: the crosshair and the name under it are answers to a hand
 that will not be there. Pins DO stay -- a pinned line is a statement
 the author made on purpose.
 """
+import contextlib
 import datetime
 import io
 import re
@@ -51,30 +52,25 @@ def export_name(profile, subject, when=None, ext="svg"):
     return "%s.%s" % (stem, ext)
 
 
-class _Quiet:
-    """The pointer steps out of the picture for the duration of the
-    render, and steps back in afterwards -- the canvas on screen
-    must not notice that it was copied."""
-
-    def __init__(self, plot):
-        self.plot = plot
-        self.cursor = None
-        self.hover = None
-        self.paths = False
-
-    def __enter__(self):
-        self.cursor = self.plot.cursor
-        self.hover = self.plot.state.hover
-        self.paths = cv.TEXT_AS_PATH
-        self.plot.cursor = None
-        self.plot.state.hover = None
-        return self
-
-    def __exit__(self, *_exc):
-        self.plot.cursor = self.cursor
-        self.plot.state.hover = self.hover
-        cv.TEXT_AS_PATH = self.paths
-        return False
+@contextlib.contextmanager
+def _quiet(painter):
+    """Any object that can draw itself may be exported: it needs
+    draw(area, cr, w, h) and, if it has state a render would
+    disturb, a quiet() of its own. The equalizer graph has plenty --
+    the pointer, but also the plot geometry and the traces it reads
+    back for hit-testing -- and an export at 1200x675 would leave
+    those describing a canvas that does not exist. The flag for
+    outlined labels is restored here in either case."""
+    paths = cv.TEXT_AS_PATH
+    own = getattr(painter, "quiet", None)
+    try:
+        if own is None:
+            yield
+        else:
+            with own():
+                yield
+    finally:
+        cv.TEXT_AS_PATH = paths
 
 
 def _paint(cr, plot, w, h):
@@ -89,7 +85,7 @@ def svg_bytes(plot, w=EXPORT_W, h=EXPORT_H):
     buf = io.BytesIO()
     surf = cairo.SVGSurface(buf, w, h)
     cr = cairo.Context(surf)
-    with _Quiet(plot):
+    with _quiet(plot):
         cv.TEXT_AS_PATH = True
         _paint(cr, plot, w, h)
     surf.finish()
@@ -103,7 +99,7 @@ def png_bytes(plot, w=EXPORT_W, h=EXPORT_H, scale=RASTER_SCALE):
                               int(w * scale), int(h * scale))
     cr = cairo.Context(surf)
     cr.scale(scale, scale)
-    with _Quiet(plot):
+    with _quiet(plot):
         _paint(cr, plot, w, h)
     buf = io.BytesIO()
     surf.write_to_png(buf)
