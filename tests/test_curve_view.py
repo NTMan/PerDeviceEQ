@@ -327,3 +327,58 @@ def test_the_readouts_are_short_enough_for_a_gutter():
     assert cv.fmt_hz(1000.0) == "1k"
     assert cv.fmt_hz(12345.0) == "12.35k"
     assert cv.fmt_db(-38.44) == "-38.4"
+
+def _named_plot():
+    curves = [cv.Curve("take", np.full(6, -30.0), cv.C_RESPONSE),
+              cv.Curve("THD", np.full(6, -80.0), cv.C_THD,
+                       harmonic=True)]
+    return cv.Plot(FREQS, curves, -108.0, -24.0, legend=False)
+
+
+def _y_of(v, h=300):
+    ph = h - cv.MT - cv.MB
+    return cv.MT + (-24.0 - v) / 84.0 * ph
+
+
+def test_the_line_under_the_pointer_says_its_name():
+    """A take row scrolls far from the channel's only legend, so
+    the canvas has to explain itself: point at a line, it answers."""
+    p = _named_plot()
+    paint(p)                       # the rect is learned on draw
+    pw = 700 - cv.ML - cv.MR
+    x = cv.log_x(1234.0, cv.ML, pw)
+    p.set_cursor(x, _y_of(-80.0))
+    c, v = p.at_cursor()
+    assert c.name == "THD" and abs(v + 80.0) < 1e-6
+    assert "THD -80.0" in paint(p).texts
+
+
+def test_a_pointer_between_the_lines_names_nothing():
+    p = _named_plot()
+    paint(p)
+    pw = 700 - cv.ML - cv.MR
+    p.set_cursor(cv.log_x(1234.0, cv.ML, pw), _y_of(-55.0))
+    c, v = p.at_cursor()
+    assert c is None and v is None
+    assert not [t for t in paint(p).texts if t.startswith("THD")]
+
+
+def test_a_click_pins_the_line_it_lands_on():
+    p = _named_plot()
+    paint(p)
+    pw = 700 - cv.ML - cv.MR
+    x = cv.log_x(1234.0, cv.ML, pw)
+    assert p.pick_at(x, _y_of(-30.0)) == "take"
+    assert p.pick_at(x, _y_of(-55.0)) is None
+    assert p.state.hit(p.pick_at(x, _y_of(-80.0))) is True
+    assert p.state.pinned == "THD"
+
+
+def test_the_legend_still_wins_over_the_curve_under_it():
+    curves = [cv.Curve("take", np.full(6, -30.0), cv.C_RESPONSE),
+              cv.Curve("THD", np.full(6, -80.0), cv.C_THD,
+                       harmonic=True)]
+    p = cv.Plot(FREQS, curves, -108.0, -24.0, legend=True)
+    paint(p)
+    x0, y0, x1, y1, name = p.hits[1]
+    assert p.pick_at((x0 + x1) / 2.0, (y0 + y1) / 2.0) == name

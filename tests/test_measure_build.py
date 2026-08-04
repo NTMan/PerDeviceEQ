@@ -356,3 +356,28 @@ def test_stored_take_carries_the_confession():
     assert out["thd_db"][-1] is None
     assert out["h2_db"][5] == -50.0
     assert "h3_db" not in out          # absent confession stays absent
+
+def test_thd_at_gives_the_number_a_datasheet_prints():
+    """One frequency, one percent -- and an honest mark when the
+    reading is really the rig's own floor."""
+    f = np.geomspace(20.0, 20000.0, 400)
+    thd = np.full(400, -52.0)
+    pct, clamped = measure_build.thd_at(f, thd,
+                                        np.full(400, -80.0))
+    assert abs(pct - 0.251) < 0.005
+    assert clamped is False
+    assert measure_build.thd_at(f, thd, np.full(400, -53.0))[1]
+    assert measure_build.thd_at(f, thd)[1] is False
+    assert measure_build.thd_at(f, np.full(400, np.nan)) is None
+    assert measure_build.thd_at(f, None) is None
+    assert measure_build.thd_at(f, [-52.0]) is None
+
+
+def test_thd_at_reads_the_frequency_it_was_asked_for():
+    f = np.array([100.0, 1000.0, 10000.0])
+    thd = [-40.0, -60.0, -20.0]
+    assert abs(measure_build.thd_at(f, thd)[0] - 0.1) < 1e-6
+    assert abs(measure_build.thd_at(f, thd, f0=100.0)[0]
+               - 1.0) < 1e-6
+    thd = [-40.0, None, -20.0]
+    assert measure_build.thd_at(f, thd) is None

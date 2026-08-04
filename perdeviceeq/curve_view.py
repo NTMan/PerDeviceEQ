@@ -38,6 +38,7 @@ MAX_SPAN_DB = 80.0                      # response to the deepest floor
 FLOOR_Q = 2.0                           # percentile that sets the floor
 SMOOTH_OCT = 1.0 / 12.0                 # display smoothing of harmonics
 CROSS_DASH = (3.0, 3.0)                 # the crosshair is dashed
+NEAR_PX = 14.0                          # how close counts as ON a line
 
 C_RESPONSE = (0.22, 0.52, 0.90, 1.00)
 C_GHOST = (0.45, 0.45, 0.45, 0.90)
@@ -325,8 +326,50 @@ class Plot:
         self.dim_outside = dim_outside
         self.say_evidence = say_evidence
         self.cursor = None
+        self._rect = None
         self.hits = []
         self.ev_hi = evidence_hi(self.freqs, self.curves)
+
+    def at_cursor(self):
+        """(curve, value) of the line the pointer is standing on,
+        or (None, None). This is what lets a canvas explain itself
+        without a legend: the take rows scroll far away from the
+        one legend the channel has, and the architect asked what
+        happens then. Point at a line and it says its name."""
+        if self.cursor is None or self._rect is None:
+            return None, None
+        x, y = self.cursor
+        ml, mt, pw, ph = self._rect
+        if not (ml <= x <= ml + pw and mt <= y <= mt + ph):
+            return None, None
+        f = f_at_x(x, ml, pw)
+        j = int(np.argmin(np.abs(np.log10(
+            np.maximum(self.freqs, 1e-9)) - math.log10(f))))
+        span = max(1e-6, self.hi - self.lo)
+        best, bv, bd = None, None, NEAR_PX
+        for c in self.curves:
+            if c.values is None or not c.legend or j >= len(c.values):
+                continue
+            v = float(c.values[j])
+            if not np.isfinite(v):
+                continue
+            cy = mt + (self.hi - v) / span * ph
+            d = abs(cy - y)
+            if d < bd:
+                best, bv, bd = c, v, d
+        return best, bv
+
+    def pick_at(self, x, y):
+        """The name a click lands on: a legend name if the pointer
+        is in the legend, otherwise the line under the pointer.
+        The legend keeps its hands, and a row that never drew one
+        borrows the same grip from the curve itself."""
+        name = self.legend_at(x, y)
+        if name is not None:
+            return name
+        self.set_cursor(x, y)
+        c, _v = self.at_cursor()
+        return None if c is None else c.name
 
     def set_cursor(self, x, y):
         """Pointer moved (or left, with x None). True when the
@@ -354,6 +397,7 @@ class Plot:
     def draw(self, _area, cr, w, h, *_):
         pw = max(1, w - ML - MR)
         ph = max(1, h - MT - MB)
+        self._rect = (ML, MT, pw, ph)
         span = max(1e-6, self.hi - self.lo)
 
         def x_of(f):
@@ -376,15 +420,39 @@ class Plot:
             self._legend(cr)
         else:
             self.hits = []
-        draw_crosshair(cr, (ML, MT, pw, ph), self.cursor,
-                       lambda px: f_at_x(px, ML, pw),
-                       lambda py: self.hi - (py - MT) / ph * span)
+        if draw_crosshair(cr, (ML, MT, pw, ph), self.cursor,
+                          lambda px: f_at_x(px, ML, pw),
+                          lambda py: self.hi - (py - MT) / ph * span):
+            self._name_the_line(cr, pw, ph)
         if self.title:
             cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
             cr.set_font_size(10)
             ext = cr.text_extents(self.title)
             cr.move_to(ML + pw - ext.width - 4, MT + 12)
             cr.show_text(self.title)
+
+    def _name_the_line(self, cr, pw, ph):
+        """The line under the pointer says its name and its value,
+        in its own colour, beside the crosshair."""
+        c, v = self.at_cursor()
+        if c is None:
+            return
+        x, y = self.cursor
+        cr.select_font_face("Sans", 0, 0)
+        cr.set_font_size(9)
+        lab = "%s %s" % (c.name, fmt_db(v))
+        ext = cr.text_extents(lab)
+        tx = x + 8
+        if tx + ext.width > ML + pw - 2:
+            tx = x - 8 - ext.width
+        ty = max(MT + 10, y - 6)
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.80)
+        cr.rectangle(tx - 2, ty - 10, ext.width + 4, 12)
+        cr.fill()
+        r, g, b, _a = c.rgba
+        cr.set_source_rgba(r, g, b, 1.0)
+        cr.move_to(tx, ty)
+        cr.show_text(lab)
 
     def _grid(self, cr, x_of, y_of, pw, ph):
         """The ruler, and it says what it is: decades named on the

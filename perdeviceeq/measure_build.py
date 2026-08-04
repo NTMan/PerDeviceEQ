@@ -102,6 +102,40 @@ def take_dict(rec, session_id, key, freqs):
     return out
 
 
+def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0):
+    """The one number a datasheet prints: THD at a single
+    frequency, as a percent. Manufacturers quote it at 1 kHz --
+    Tanchjim says "<0.056% @1kHz 94dB" -- so a rig that measures a
+    whole sweep still owes the eye that one comparable figure.
+
+    Returns (percent, clamped) or None when the take abstains
+    there. `clamped` is True when the reading sits within
+    floor_gap of the measurement's OWN noise floor: then the
+    number is a CEILING, not a measurement, and the caller must
+    say so. It carries no SPL claim: the datasheet's 94 dB is a
+    calibrated level and a coupler cal is shape, not sensitivity.
+    """
+    if thd is None or freqs is None or not len(freqs):
+        return None
+    fa = np.asarray(freqs, float)
+    ta = np.array([np.nan if v is None else float(v)
+                   for v in thd], float)
+    if len(ta) != len(fa):
+        return None
+    j = int(np.argmin(np.abs(np.log(np.maximum(fa, 1e-9))
+                             - np.log(f0))))
+    v = ta[j]
+    if not np.isfinite(v):
+        return None
+    clamped = False
+    if noise is not None and len(noise) == len(fa):
+        n = noise[j]
+        n = np.nan if n is None else float(n)
+        if np.isfinite(n) and v - n < floor_gap:
+            clamped = True
+    return 100.0 * (10.0 ** (v / 20.0)), clamped
+
+
 def mean_confession(records):
     """Power-averaged distortion of a channel's takes for the
     takes-panel graph: (thd, h2, h3, noise) arrays in dB re the

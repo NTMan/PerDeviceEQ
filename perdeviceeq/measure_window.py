@@ -824,9 +824,10 @@ class MeasureWindow(Adw.Window):
         rm.connect("clicked", self._make_discard_cb(ch, rec.id))
         head.append(rm)
         if passport:
-            # the full passport rides the row, not the info
-            # label -- the spread-driver tooltip keeps the label
-            body.set_tooltip_text(passport)
+            # the passport rides the HEADER line only: on the whole
+            # row it covered the graph the moment the pointer came
+            # to read it, which is exactly when it is least welcome
+            head.set_tooltip_text(passport)
         body.append(head)
 
         curve = Gtk.DrawingArea()
@@ -1315,7 +1316,8 @@ class MeasureWindow(Adw.Window):
         self._page["title"].set_text(
             "Takes %s" % self.ch_keys[ch])
         self._page["header"].set_markup(
-            "%d/%d clean%s%s" % (n, CLEAN_TARGET, mark, warn))
+            "%d/%d clean%s%s%s"
+            % (n, CLEAN_TARGET, mark, warn, self._thd_word(ch)))
         lb = self._page["takes_list"]
         for row in self._page["take_rows"]:
             lb.remove(row)
@@ -1425,6 +1427,36 @@ class MeasureWindow(Adw.Window):
         area.set_visible(True)
         area.queue_draw()
 
+    def _thd_word(self, ch):
+        """The datasheet's own figure, next to the clean count:
+        THD at 1 kHz, where every manufacturer quotes it. A "<="
+        says the reading is sitting on our own noise floor, so the
+        number is this rig's ceiling and the device is somewhere
+        below it. No SPL claim rides along."""
+        self._page["header"].set_tooltip_text(
+            "Total harmonic distortion at 1 kHz, the frequency "
+            "datasheets quote. Measured at the drive of these "
+            "takes, NOT at a calibrated 94 dB SPL. \u2264 means "
+            "the reading sits on this rig's own noise floor: the "
+            "device is below the number, by how much the rig "
+            "cannot say.")
+        takes = self.session.takes_of(ch) if self.session else []
+        clean = [r for r in takes
+                 if ms.take_quality(r) == ms.TAKE_CLEAN]
+        base = clean if clean else takes
+        if not base:
+            return ""
+        conf = measure_build.mean_confession(base)
+        if conf is None:
+            return ""
+        thd, _h2, _h3, noise = conf
+        got = measure_build.thd_at(base[0].freq_hz, thd, noise)
+        if got is None:
+            return ""
+        pct, clamped = got
+        return " \u00b7 <small>THD@1k %s%.2f%%</small>" % (
+            "\u2264" if clamped else "", pct)
+
     def _wire_cursor(self, area, plot):
         """A row answers the pointer on its own: the crosshair is
         a property of the canvas under the hand, not of the page,
@@ -1437,10 +1469,22 @@ class MeasureWindow(Adw.Window):
             if plot.set_cursor(None, None):
                 area.queue_draw()
 
+        def pressed(gesture, _n, x, y):
+            name = plot.pick_at(x, y)
+            if name is None:
+                return
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            if plot.state.hit(name):
+                self._repaint_curves()
+
         mo = Gtk.EventControllerMotion()
         mo.connect("motion", moved)
         mo.connect("leave", gone)
         area.add_controller(mo)
+        cl = Gtk.GestureClick()
+        cl.set_button(1)
+        cl.connect("pressed", pressed)
+        area.add_controller(cl)
 
     def _repaint_curves(self):
         for a in self._page.get("canvases", []):
@@ -1472,7 +1516,7 @@ class MeasureWindow(Adw.Window):
         plot = self._page.get("plot") if self._page else None
         if plot is None:
             return
-        name = plot.legend_at(x, y)
+        name = plot.pick_at(x, y)
         if name is None:
             return
         gesture.set_state(Gtk.EventSequenceState.CLAIMED)
