@@ -75,3 +75,27 @@ def test_a_pin_is_a_statement_and_travels():
     bare = ce.svg_bytes(plot)
     st.hit("THD")
     assert ce.svg_bytes(plot) != bare
+
+def test_the_default_name_survives_git_and_a_url():
+    import datetime
+    day = datetime.date(2026, 8, 5)
+    assert ce.export_name("Tanchjim Origin", "FL \u00b7 mean",
+                          day) == \
+        "tanchjim-origin-fl-mean-2026-08-05.svg"
+    assert ce.export_name("IL-DSP Analog Stereo",
+                          "FR \u00b7 take 2 of 3", day, "png") == \
+        "il-dsp-analog-stereo-fr-take-2-of-3-2026-08-05.png"
+    # a name with nothing ASCII in it still yields a usable file
+    assert ce.export_name("\u041d\u0430\u0443\u0448", "",
+                          day) == "2026-08-05.svg"
+    assert ce.export_name("", "", None) != ".svg"
+    for bad in (" ", "/", "\\", "'", '"', "\u00b7"):
+        assert bad not in ce.export_name("a b/c \u00b7 d",
+                                         "e'f", day)
+
+
+def test_the_slug_is_narrow_on_purpose():
+    assert ce.slug("Hello, World!") == "hello-world"
+    assert ce.slug("--a--b--") == "a-b"
+    assert ce.slug(None) == ""
+    assert ce.slug("\u041c\u0438\u0448\u0430") == ""

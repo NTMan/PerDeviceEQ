@@ -17,7 +17,9 @@ picture: the crosshair and the name under it are answers to a hand
 that will not be there. Pins DO stay -- a pinned line is a statement
 the author made on purpose.
 """
+import datetime
 import io
+import re
 
 import cairo
 
@@ -26,6 +28,27 @@ from . import curve_view as cv
 EXPORT_W, EXPORT_H = 1200, 675
 RASTER_SCALE = 2            # 2400x1350 -- crisp on a dense screen
 PAPER = (1.0, 1.0, 1.0)
+
+
+def slug(text):
+    """ASCII, lower case, hyphens. Deliberately narrow: the file is
+    going into a git repository and then into a URL, and a name that
+    survives both is worth more than a name that keeps every
+    letter."""
+    out = re.sub(r"[^a-z0-9]+", "-", (text or "").lower())
+    return out.strip("-")
+
+
+def export_name(profile, subject, when=None, ext="svg"):
+    """A default file name for a picture: whose device, which
+    canvas, what day. The app cannot offer a markdown LINK -- the
+    link is relative to a document root per-device-eq knows nothing
+    about -- but it can offer a name worth pasting, and the name has
+    to be generated for that to be true."""
+    day = (when or datetime.date.today()).isoformat()
+    parts = [slug(profile), slug(subject), day]
+    stem = "-".join(p for p in parts if p) or "graph"
+    return "%s.%s" % (stem, ext)
 
 
 class _Quiet:

@@ -1501,11 +1501,16 @@ class MeasureWindow(Adw.Window):
         copy.set_tooltip_text("Copy this picture to the clipboard")
         copy.connect("clicked",
                      lambda b: self._copy_canvas(now(), b))
+        save = Gtk.Button.new_from_icon_name(
+            "document-save-symbolic")
+        save.set_tooltip_text("Save this picture as a file")
+        save.connect("clicked",
+                     lambda b: self._save_canvas(now(), b))
         big = Gtk.Button.new_from_icon_name(
             "view-fullscreen-symbolic")
         big.set_tooltip_text(tip)
         big.connect("clicked", lambda _b: self._open_big(now()))
-        for btn in (copy, big):
+        for btn in (copy, save, big):
             btn.add_css_class("osd")
             btn.add_css_class("circular")
             btn.set_can_focus(False)
@@ -1554,6 +1559,52 @@ class MeasureWindow(Adw.Window):
 
     def _copy_settled(self, btn):
         btn.set_icon_name("edit-copy-symbolic")
+        return False
+
+    def _save_canvas(self, subject, btn=None):
+        """The picture as a FILE, because a git-backed site wants
+        the image on disk beside the article and a plain relative
+        link in the markdown. The link itself is not ours to write:
+        it is relative to a document root this app knows nothing
+        about. The NAME is ours, so it is generated and, once the
+        file is written, placed in the clipboard ready to paste."""
+        plot = self._big_plot(subject)
+        if plot is None:
+            return
+        dlg = Gtk.FileDialog()
+        dlg.set_title("Save this picture")
+        dlg.set_initial_name(curve_export.export_name(
+            self.name_row.get_text(), self._big_title(subject)))
+
+        def done(dialog, res):
+            try:
+                gfile = dialog.save_finish(res)
+                path = gfile.get_path() if gfile else None
+                if not path:
+                    return
+                # the extension decides the language: .png for a
+                # raster, anything else takes the vector
+                data = (curve_export.png_bytes(plot)
+                        if path.lower().endswith(".png")
+                        else curve_export.svg_bytes(plot))
+                with open(path, "wb") as fh:
+                    fh.write(data)
+            except Exception:
+                return
+            try:
+                self.get_clipboard().set_content(
+                    Gdk.ContentProvider.new_for_value(
+                        GObject.Value(str, os.path.basename(path))))
+            except Exception:
+                pass
+            if btn is not None:
+                btn.set_icon_name("object-select-symbolic")
+                GLib.timeout_add(1500, self._save_settled, btn)
+
+        dlg.save(self, None, done)
+
+    def _save_settled(self, btn):
+        btn.set_icon_name("document-save-symbolic")
         return False
 
     def _channel_view(self, ch):
@@ -1659,6 +1710,12 @@ class MeasureWindow(Adw.Window):
         cbtn.connect("clicked",
                      lambda b: self._copy_canvas(subject, b))
         head.pack_end(cbtn)
+        sbtn = Gtk.Button.new_from_icon_name(
+            "document-save-symbolic")
+        sbtn.set_tooltip_text("Save this picture as a file")
+        sbtn.connect("clicked",
+                     lambda b: self._save_canvas(subject, b))
+        head.pack_end(sbtn)
         view = Adw.ToolbarView()
         view.add_top_bar(head)
         view.set_content(box)
