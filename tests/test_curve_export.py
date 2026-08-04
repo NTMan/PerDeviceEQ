@@ -25,7 +25,7 @@ def _plot(state=None):
          cv.Curve("THD", thd, cv.C_THD, harmonic=True),
          cv.Curve("noise", np.full(200, -99.0), cv.C_NOISE,
                   harmonic=True, land=True)],
-        -108.0, -24.0, state=state, legend=True, title="FR")
+        -108.0, -24.0, state=state, legend=True)
 
 
 def test_the_vector_carries_no_font_dependency():

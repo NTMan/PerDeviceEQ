@@ -1406,18 +1406,25 @@ class MeasureWindow(Adw.Window):
         sp = np.asarray(
             spread if spread is not None else mean * 0.0, float)
         ghost, glabel = self._partner_ghost(ch, mean)
-        curves = [cv.Curve("mean", mean, cv.C_RESPONSE, 1.8,
-                           key="response")]
+        # both means say WHOSE they are, in the legend. The
+        # partner's name used to sit alone in the top right corner
+        # of the canvas -- a decision from before there was any
+        # legend, and to a new pair of eyes those two letters are
+        # an artefact rather than a label. The keys stay put, so
+        # the highlight machinery does not notice the rename.
+        curves = [cv.Curve("%s mean" % self.ch_keys[ch], mean,
+                           cv.C_RESPONSE, 1.8, key="response")]
         if ghost is not None:
-            curves.append(cv.Curve("partner", ghost, cv.C_GHOST,
-                                   1.2, dash=(4.0, 3.0)))
+            curves.append(cv.Curve(glabel, ghost, cv.C_GHOST,
+                                   1.2, dash=(4.0, 3.0),
+                                   key="partner"))
         curves.extend(self._conf_curves(
             base[0].freq_hz, mean,
             *(measure_build.mean_confession(base)
               or (None, None, None, None))))
         band = (mean - sp / 2.0, mean + sp / 2.0,
                 sp >= ms.SPREAD_MAX_DB)
-        return base[0].freq_hz, curves, band, glabel
+        return base[0].freq_hz, curves, band
 
     def _refresh_summary(self, ch, takes):
         """The face canvas. One gate for the whole picture: no
@@ -1430,10 +1437,9 @@ class MeasureWindow(Adw.Window):
             self._page["graph_box"].set_visible(False)
             self._refresh_big()
             return
-        freqs, curves, band, title = self._face
+        freqs, curves, band = self._face
         plot = cv.Plot(freqs, curves, self._win[0], self._win[1],
                        band=band, state=self._hl, legend=True,
-                       title=title,
                        dim_outside=(self.fit_lo, self.fit_hi))
         self._page["plot"] = plot
         area.set_draw_func(plot.draw)
@@ -1586,10 +1592,9 @@ class MeasureWindow(Adw.Window):
         if kind == "face":
             if face is None:
                 return None
-            freqs, curves, band, title = face
+            freqs, curves, band = face
             return cv.Plot(freqs, curves, win[0], win[1],
                            band=band, state=self._hl, legend=True,
-                           title=title,
                            dim_outside=(self.fit_lo, self.fit_hi))
         rec = next((r for r in takes if r.id == subject[2]), None)
         if rec is None:
@@ -1794,14 +1799,14 @@ class MeasureWindow(Adw.Window):
             return None, None
         shift = self.session.drive_shift_db(p, ch)
         if shift is not None:
-            return pavg + shift, pk
+            return pavg + shift, "%s mean" % pk
         fa = np.asarray(self.session.freqs, float)
         ref = (fa >= 200.0) & (fa <= 2000.0)
         if not ref.any():
             return None, None
         aligned = pavg - float(np.asarray(pavg)[ref].mean()) \
             + float(np.asarray(mean)[ref].mean())
-        return aligned, "%s · shape only" % pk
+        return aligned, "%s mean, shape only" % pk
 
     # ---- callbacks (config) -----------------------------------------------
     def _on_pw_state(self, st):

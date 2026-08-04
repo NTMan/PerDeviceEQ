@@ -560,7 +560,7 @@ def test_a_label_hands_the_context_back_with_an_empty_path():
     assert cr.point is None
     p = cv.Plot(FREQS, [cv.Curve("take", np.full(6, -30.0),
                                  cv.C_RESPONSE)],
-                -60.0, -24.0, legend=True, title="FR")
+                -60.0, -24.0, legend=True)
     cr = FakeCr()
     p.set_cursor(300.0, 100.0)
     p.draw(None, cr, 700, 300)

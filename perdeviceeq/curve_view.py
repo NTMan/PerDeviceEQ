@@ -416,7 +416,7 @@ class Plot:
     pointer is."""
 
     def __init__(self, freqs, curves, lo, hi, band=None,
-                 state=None, legend=True, title=None,
+                 state=None, legend=True,
                  dim_outside=None, say_evidence=True):
         self.freqs = np.asarray(freqs, float)
         self.curves = [c for c in curves if c is not None]
@@ -425,7 +425,6 @@ class Plot:
         self.band = band
         self.state = state if state is not None else Highlight()
         self.legend = legend
-        self.title = title
         self.dim_outside = dim_outside
         self.say_evidence = say_evidence
         self.cursor = None
@@ -546,12 +545,6 @@ class Plot:
                           lambda px: f_at_x(px, ML, pw),
                           lambda py: self.hi - (py - MT) / ph * span):
             self._name_the_line(cr, pw, uc, uv)
-        if self.title:
-            cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
-            cr.set_font_size(10)
-            ext = cr.text_extents(self.title)
-            cr.move_to(ML + pw - ext.width - 4, MT + 12)
-            show_text(cr, self.title)
             cr.new_path()
 
     def _name_the_line(self, cr, pw, c, v):
