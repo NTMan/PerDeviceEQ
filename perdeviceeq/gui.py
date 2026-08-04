@@ -586,10 +586,8 @@ class EqWindow(Adw.ApplicationWindow):
                 fl2 = cache.get("flat_resid")
                 if fl2 is not None and fl2 > fr + 0.05:
                     txt += " · flat %.1f dB" % fl2
-            if not p.get("floor_off"):
-                fl = eq.floor_hz_effective(p)
-                if fl is not None:
-                    txt += " · floor %s Hz" % _fmt_hz(fl)
+            # the floor number moved onto its own handle: the
+            # caption never had room for the tail and cut it off
         else:
             txt = "Measurement attached"
         self.trust_label.set_text(txt)

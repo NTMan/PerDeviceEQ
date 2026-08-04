@@ -840,6 +840,7 @@ class MeasureWindow(Adw.Window):
                        lo, hi, state=self._hl, legend=False,
                        say_evidence=False)
         curve.set_draw_func(plot.draw)
+        self._wire_cursor(curve, plot)
         self._page["canvases"].append(curve)
         body.append(curve)
 
@@ -1424,6 +1425,23 @@ class MeasureWindow(Adw.Window):
         area.set_visible(True)
         area.queue_draw()
 
+    def _wire_cursor(self, area, plot):
+        """A row answers the pointer on its own: the crosshair is
+        a property of the canvas under the hand, not of the page,
+        so only that one canvas repaints."""
+        def moved(_c, x, y):
+            if plot.set_cursor(x, y):
+                area.queue_draw()
+
+        def gone(*_a):
+            if plot.set_cursor(None, None):
+                area.queue_draw()
+
+        mo = Gtk.EventControllerMotion()
+        mo.connect("motion", moved)
+        mo.connect("leave", gone)
+        area.add_controller(mo)
+
     def _repaint_curves(self):
         for a in self._page.get("canvases", []):
             a.queue_draw()
@@ -1436,12 +1454,19 @@ class MeasureWindow(Adw.Window):
         if name != plot.state.hover:
             plot.state.hover = name
             self._repaint_curves()
+        if plot.set_cursor(x, y):
+            self._page["graph"].queue_draw()
 
     def _on_legend_leave(self, _ctrl):
         plot = self._page.get("plot") if self._page else None
-        if plot is not None and plot.state.hover is not None:
+        if plot is None:
+            return
+        left = plot.set_cursor(None, None)
+        if plot.state.hover is not None:
             plot.state.hover = None
             self._repaint_curves()
+        elif left:
+            self._page["graph"].queue_draw()
 
     def _on_legend_press(self, gesture, _n, x, y):
         plot = self._page.get("plot") if self._page else None

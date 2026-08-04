@@ -24,6 +24,7 @@ from . import focus
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 
+from . import curve_view as cv
 from . import eq
 from .eq import FMIN, FMAX
 
@@ -84,6 +85,7 @@ class PeqView(Gtk.Box):
         self._tgt = None   # lawful target: the gain law's silhouette
         self._pin = set()         # click-pinned curve names
         self._hover = None        # legend name under pointer
+        self._cursor = None       # pointer for the crosshair
         self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
         self._plot = None
@@ -214,6 +216,18 @@ class PeqView(Gtk.Box):
         cr.move_to(xlo, 2)
         cr.line_to(xlo, h - 2)
         cr.stroke()
+        # the number rides the handle: the strip caption could not
+        # hold it (it was the tail that got cut off), and a floor
+        # is set by watching where you are as you drag
+        cr.select_font_face("Sans", 0, 0)
+        cr.set_font_size(9)
+        lab = cv.fmt_hz(lo) + " Hz"
+        ext = cr.text_extents(lab)
+        tx = xlo + 5
+        if tx + ext.width > xr:
+            tx = xlo - 5 - ext.width
+        cr.move_to(max(ml, tx), 11)
+        cr.show_text(lab)
 
     def _protect_drag_begin(self, _g, sx, _sy):
         self._protect_drag = bool(self._protect)
@@ -299,17 +313,22 @@ class PeqView(Gtk.Box):
         queued itself, and the field photo proved it -- the
         cursor flipped while the curves stood frozen."""
         hit = self._legend_at(x, y)
+        moved = self._cursor != (x, y)
+        self._cursor = (x, y)
         if hit != self._hover:
             self._hover = hit
             self.graph.set_cursor_from_name(
                 "pointer" if hit else None)
             self.graph.queue_draw()
+        elif moved:
+            self.graph.queue_draw()
 
     def _on_hover_leave(self, *_a):
+        self._cursor = None
         if self._hover:
             self._hover = None
             self.graph.set_cursor_from_name(None)
-            self.graph.queue_draw()
+        self.graph.queue_draw()
 
     def set_floor(self, band_dicts):
         """Sealed floor stages: the curve and the prediction
@@ -564,6 +583,12 @@ class PeqView(Gtk.Box):
                 lx += 18 + tw2 + 14
             cr.restore()
 
+        cv.draw_crosshair(
+            cr, (ml, mt, pw_, ph), self._cursor,
+            self._f_of, self._db_of,
+            rgba=(1.0, 1.0, 1.0, 0.35),
+            text_rgba=(1.0, 1.0, 1.0, 0.85),
+            bg_rgba=(0.08, 0.08, 0.10, 0.90))
         freqs = _log_freqs(int(max(60, pw_)))
         curve = eq.response_db(self._preamp,
                                 self._bands + self._floor, freqs)

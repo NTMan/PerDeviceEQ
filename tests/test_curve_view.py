@@ -272,3 +272,58 @@ def test_the_evidence_note_is_said_once():
     assert "no harmonic evidence" not in cr.texts
     x10k = cv.log_x(10000.0, cv.ML, 700 - cv.ML - cv.MR)
     assert any(abs(r[0] - x10k) < 1.0 for r in cr.rects)
+
+
+def _plot_for_cursor():
+    return cv.Plot(FREQS, [cv.Curve("take", np.full(6, -60.0),
+                                    cv.C_RESPONSE)],
+                   -108.0, -24.0, legend=False)
+
+
+def test_the_pointer_names_its_point():
+    p = _plot_for_cursor()
+    pw = 700 - cv.ML - cv.MR
+    ph = 300 - cv.MT - cv.MB
+    x = cv.log_x(1234.0, cv.ML, pw)
+    y = cv.MT + (-24.0 - (-66.0)) / 84.0 * ph
+    assert p.set_cursor(x, y) is True
+    assert p.set_cursor(x, y) is False        # the same point
+    cr = paint(p)
+    assert "1.23k" in cr.texts
+    assert "-66.0" in cr.texts
+
+
+def test_the_crosshair_leaves_with_the_pointer():
+    p = _plot_for_cursor()
+    pw = 700 - cv.ML - cv.MR
+    p.set_cursor(cv.log_x(1234.0, cv.ML, pw), 100.0)
+    assert "1.23k" in paint(p).texts
+    assert p.set_cursor(None, None) is True
+    assert "1.23k" not in paint(p).texts
+
+
+def test_a_pointer_in_the_gutter_draws_nothing():
+    """Below the plot and left of it the pointer is over the
+    labels, not over data: the picture must be identical to the
+    one with no pointer at all."""
+    bare = paint(_plot_for_cursor()).texts
+    pw = 700 - cv.ML - cv.MR
+    for pos in ((cv.log_x(1234.0, cv.ML, pw), 295.0),
+                (4.0, 100.0)):
+        p = _plot_for_cursor()
+        p.set_cursor(*pos)
+        assert paint(p).texts == bare
+
+
+def test_the_pixel_gives_the_frequency_back():
+    for f in (20.0, 137.0, 1000.0, 9500.0, 20000.0):
+        x = cv.log_x(f, cv.ML, 654.0)
+        assert abs(cv.f_at_x(x, cv.ML, 654.0) - f) < f * 0.001
+
+
+def test_the_readouts_are_short_enough_for_a_gutter():
+    assert cv.fmt_hz(48.2) == "48.2"
+    assert cv.fmt_hz(137.4) == "137"
+    assert cv.fmt_hz(1000.0) == "1k"
+    assert cv.fmt_hz(12345.0) == "12.35k"
+    assert cv.fmt_db(-38.44) == "-38.4"

@@ -37,6 +37,7 @@ PAD_DB = 3.0                            # air above and below data
 MAX_SPAN_DB = 80.0                      # response to the deepest floor
 FLOOR_Q = 2.0                           # percentile that sets the floor
 SMOOTH_OCT = 1.0 / 12.0                 # display smoothing of harmonics
+CROSS_DASH = (3.0, 3.0)                 # the crosshair is dashed
 
 C_RESPONSE = (0.22, 0.52, 0.90, 1.00)
 C_GHOST = (0.45, 0.45, 0.45, 0.90)
@@ -111,6 +112,76 @@ def smooth_oct(freqs, values, frac=SMOOTH_OCT):
 
 def tick_label(f):
     return ("%dk" % (f // 1000)) if f >= 1000 else str(int(f))
+
+
+def f_at_x(x, x0, w):
+    """The inverse of log_x: which frequency sits under a pixel."""
+    lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
+    t = min(1.0, max(0.0, (float(x) - x0) / max(1e-6, w)))
+    return 10.0 ** (lo + t * (hi - lo))
+
+
+def fmt_hz(f):
+    """The pointer's frequency, short enough for a gutter."""
+    if f >= 1000.0:
+        s = ("%.2f" % (f / 1000.0)).rstrip("0").rstrip(".")
+        return s + "k"
+    if f >= 100.0:
+        return "%d" % int(round(f))
+    return ("%.1f" % f).rstrip("0").rstrip(".")
+
+
+def fmt_db(v):
+    return "%.1f" % v
+
+
+def draw_crosshair(cr, rect, cursor, f_of, v_of,
+                   rgba=(0.5, 0.5, 0.5, 0.55),
+                   text_rgba=(0.25, 0.25, 0.25, 0.95),
+                   bg_rgba=(1.0, 1.0, 1.0, 0.80)):
+    """The pointer names its point: two dashed hairlines in the
+    grid's own colour running out to the fixed axes, and the value
+    written where each one lands -- frequency in the bottom gutter,
+    decibels in the left one. The words live in the gutters so the
+    curves stay clean, and the whole thing leaves with the pointer.
+    rect is (ml, mt, pw, ph); f_of and v_of turn a pixel into a
+    value. Returns False when the pointer is outside the plot."""
+    if cursor is None:
+        return False
+    x, y = cursor
+    ml, mt, pw, ph = rect
+    if not (ml <= x <= ml + pw and mt <= y <= mt + ph):
+        return False
+    cr.save()
+    cr.set_dash(list(CROSS_DASH))
+    cr.set_line_width(1.0)
+    cr.set_source_rgba(*rgba)
+    cr.move_to(x, mt)
+    cr.line_to(x, mt + ph)
+    cr.move_to(ml, y)
+    cr.line_to(ml + pw, y)
+    cr.stroke()
+    cr.restore()
+    cr.select_font_face("Sans", 0, 0)
+    cr.set_font_size(9)
+    _readout(cr, fmt_hz(f_of(x)), x, mt + ph + 13, 0.5,
+             text_rgba, bg_rgba)
+    _readout(cr, fmt_db(v_of(y)), ml - 2, y + 3, 1.0,
+             text_rgba, bg_rgba)
+    return True
+
+
+def _readout(cr, text, x, y, anchor, text_rgba, bg_rgba):
+    """One value on its axis, over a backdrop so it does not
+    collide with the tick label it stands on."""
+    ext = cr.text_extents(text)
+    tx = x - ext.width * anchor
+    cr.set_source_rgba(*bg_rgba)
+    cr.rectangle(tx - 2, y - 10, ext.width + 4, 12)
+    cr.fill()
+    cr.set_source_rgba(*text_rgba)
+    cr.move_to(tx, y)
+    cr.show_text(text)
 
 
 def as_level(mag, ratio):
@@ -253,8 +324,18 @@ class Plot:
         self.title = title
         self.dim_outside = dim_outside
         self.say_evidence = say_evidence
+        self.cursor = None
         self.hits = []
         self.ev_hi = evidence_hi(self.freqs, self.curves)
+
+    def set_cursor(self, x, y):
+        """Pointer moved (or left, with x None). True when the
+        canvas needs a repaint."""
+        c = None if x is None else (float(x), float(y))
+        if c == self.cursor:
+            return False
+        self.cursor = c
+        return True
 
     def _alpha(self, curve):
         lit = self.state.lit()
@@ -295,6 +376,9 @@ class Plot:
             self._legend(cr)
         else:
             self.hits = []
+        draw_crosshair(cr, (ML, MT, pw, ph), self.cursor,
+                       lambda px: f_at_x(px, ML, pw),
+                       lambda py: self.hi - (py - MT) / ph * span)
         if self.title:
             cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
             cr.set_font_size(10)
