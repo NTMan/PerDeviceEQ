@@ -77,11 +77,12 @@ class PeqView(Gtk.Box):
     """
 
     def __init__(self, on_changed, preamp=0.0, compact=False,
-                 on_import_file=None, export_label="eq"):
+                 on_import_file=None, export_prefix="pdeq"):
         super().__init__(orientation=Gtk.Orientation.VERTICAL,
                          spacing=6)
         self._on_changed = on_changed
-        self.export_label = export_label
+        self.export_prefix = export_prefix
+        self.export_parts = ()      # set by the owner, who knows
         # an editor verb, not an "import": replaces THIS view's
         # bands from a parametric-EQ text file. Rendered only
         # where the owner wires it (the device channel card) --
@@ -394,8 +395,8 @@ class PeqView(Gtk.Box):
     def _on_save(self, btn):
         dlg = Gtk.FileDialog()
         dlg.set_title("Save this picture")
-        dlg.set_initial_name(
-            curve_export.export_name("", self.export_label))
+        dlg.set_initial_name(curve_export.export_name(
+            self.export_prefix, self.export_parts))
 
         def done(dialog, res):
             try:

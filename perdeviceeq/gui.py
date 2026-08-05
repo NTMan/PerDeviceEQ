@@ -267,7 +267,7 @@ class EqWindow(Adw.ApplicationWindow):
             getattr(tbody, "set_margin_" + side)(12)
         self.taste_view = PeqView(self._on_taste_view_changed,
                                   compact=True,
-                                  export_label="taste")
+                                  export_prefix="taste")
         self.taste_hint = Gtk.Label(
             label="No taste layer active. Pick or create one to "
                   "dial your EQ over every device.")
@@ -1434,6 +1434,8 @@ class EqWindow(Adw.ApplicationWindow):
             slot = self._slot(ch)
             self.bands = slot["bands"]               # alias: edits mutate the slot
             self.preamp_spin.set_value(self.preamp)
+            prof = self.store.get(self.current_pid) or {}
+            self.view.export_parts = (prof.get("name") or "", ch)
             self.view.set_bands([b.to_dict() for b in self.bands])
             self.view.set_floor(eq.floor_bands(
                 self.store.get(self.current_pid)))
@@ -2820,6 +2822,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.taste_hint.set_visible(not has)
         self.taste_view.set_visible(has)
         if has:
+            self.taste_view.export_parts = (act.get("name") or "",)
             self.taste_view.set_bands(act.get("bands") or [])
 
     def _make_taste_rename_cb(self, lid, editable):

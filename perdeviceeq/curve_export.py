@@ -31,24 +31,33 @@ RASTER_SCALE = 2            # 2400x1350 -- crisp on a dense screen
 PAPER = (1.0, 1.0, 1.0)
 
 
-def slug(text):
-    """ASCII, lower case, hyphens. Deliberately narrow: the file is
-    going into a git repository and then into a URL, and a name that
-    survives both is worth more than a name that keeps every
-    letter."""
-    out = re.sub(r"[^a-z0-9]+", "-", (text or "").lower())
-    return out.strip("-")
+def url_part(text):
+    """One part of a file name, by the architect's rule: keep the
+    letters as they are and replace whatever a URL would rather not
+    carry -- spaces included -- with an underscore. CASE IS KEPT: a
+    file name is also a label, and "Tanchjim_Origin" reads while
+    "tanchjim-origin" only sorts.
+
+    The hyphen goes to an underscore too, because the hyphen is what
+    joins the parts: without that rule "IL-DSP Analog Stereo" would
+    make a name nobody could take apart again. The apostrophe stays
+    -- a URL carries it without escaping, and only a shell minds."""
+    out = re.sub(r"[^A-Za-z0-9._']+", "_", (text or "").strip())
+    return re.sub(r"_+", "_", out).strip("_")
 
 
-def export_name(profile, subject, when=None, ext="svg"):
-    """A default file name for a picture: whose device, which
-    canvas, what day. The app cannot offer a markdown LINK -- the
-    link is relative to a document root per-device-eq knows nothing
-    about -- but it can offer a name worth pasting, and the name has
-    to be generated for that to be true."""
+def export_name(prefix, parts, when=None, ext="svg"):
+    """prefix-part-part-date.ext, e.g.
+    pdeq-Tanchjim_Origin-FL-mean-2026-08-05.svg. The app cannot
+    offer a markdown LINK -- that is relative to a document root
+    per-device-eq knows nothing about -- but it can offer a name
+    worth pasting, and the name has to be generated for that to be
+    true."""
     day = (when or datetime.date.today()).isoformat()
-    parts = [slug(profile), slug(subject), day]
-    stem = "-".join(p for p in parts if p) or "graph"
+    bits = [url_part(prefix)]
+    bits += [url_part(p) for p in (parts or ())]
+    bits.append(day)
+    stem = "-".join(b for b in bits if b) or "graph"
     return "%s.%s" % (stem, ext)
 
 

@@ -1574,7 +1574,7 @@ class MeasureWindow(Adw.Window):
         dlg = Gtk.FileDialog()
         dlg.set_title("Save this picture")
         dlg.set_initial_name(curve_export.export_name(
-            self.name_row.get_text(), self._big_title(subject)))
+            "pdeq", self._export_parts(subject)))
 
         def done(dialog, res):
             try:
@@ -1602,6 +1602,23 @@ class MeasureWindow(Adw.Window):
                 GLib.timeout_add(1500, self._save_settled, btn)
 
         dlg.save(self, None, done)
+
+    def _export_parts(self, subject):
+        """Whose device, which channel, which canvas -- the
+        architect's naming scheme, with the canvas kept because a
+        channel's mean and its second take would otherwise want the
+        same file name."""
+        ch = (self.ch_keys[subject[1]]
+              if subject[1] < len(self.ch_keys) else "")
+        if subject[0] == "face":
+            what = "mean"
+        else:
+            takes = (self.session.takes_of(subject[1])
+                     if self.session else [])
+            ids = [r.id for r in takes]
+            n = ids.index(subject[2]) + 1 if subject[2] in ids else 0
+            what = "take%d" % n
+        return (self.name_row.get_text(), ch, what)
 
     def _save_settled(self, btn):
         btn.set_icon_name("document-save-symbolic")
