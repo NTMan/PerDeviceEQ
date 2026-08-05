@@ -38,6 +38,21 @@ def _atomic_write(path, obj):
 
 
 
+def worth_saving(cal, existing, by_hand=False):
+    """Is there anything about this rig worth writing down?
+
+    A remembered rig, or a calibration, obviously. And a HAND:
+    choosing the capsule count is a statement about the rig even
+    when nothing else has been said about it yet, and refusing to
+    save it was a real bug -- Mono was picked on a jack that had no
+    profile, nothing was written, and the next opening read the
+    channel count off the graph and answered Stereo.
+
+    Everything else is a handler firing during load, which must not
+    mint a profile for every rig that is merely selected."""
+    return bool(cal) or existing is not None or bool(by_hand)
+
+
 def cal_to_store(chosen, remembered, by_hand=False):
     """What a rig's remembered calibration becomes after a change.
 

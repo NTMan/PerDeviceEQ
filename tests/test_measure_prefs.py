@@ -253,3 +253,17 @@ def test_a_rig_named_before_jacks_answers_for_its_card(paths):
     assert s.match("alsa_input.x#2")["id"] == jack
     assert s.match("alsa_input.x")["id"] == old
     assert s.match("alsa_input.x#1")["id"] == old
+
+
+def test_a_hand_alone_is_worth_a_rig_profile():
+    """Choosing the capsule count says something about the rig even
+    when nothing else is on file yet. Refusing to save it was a real
+    bug: Mono was picked on a jack with no profile, nothing was
+    written, and the next opening read the channel count off the
+    graph and answered Stereo."""
+    assert mp.worth_saving({}, None, by_hand=True) is True
+    assert mp.worth_saving({"0": "/c/a.txt"}, None) is True
+    assert mp.worth_saving({}, {"id": "p1"}) is True
+    # a handler firing during load must not mint a profile
+    assert mp.worth_saving({}, None) is False
+    assert mp.worth_saving({}, None, by_hand=False) is False

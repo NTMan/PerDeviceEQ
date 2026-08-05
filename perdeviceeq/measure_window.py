@@ -2000,8 +2000,7 @@ class MeasureWindow(Adw.Window):
         prev = [s["name"] for s in self.sources]
         self.sources = pw_backend.list_capture_entries_from(sources)
         self.mic_picker.refresh(self.sources)
-        self.source_dd.set_sensitive(
-            bool(self.sources or self.mic_picker.core.node))
+        self._lock_baked_rows()
         if [s["name"] for s in self.sources] != prev:
             self._refresh_all()
 
@@ -2188,7 +2187,9 @@ class MeasureWindow(Adw.Window):
         self._rebuild_cal_row()
         self._rebuild_map_slots()
         self._sync_cal_labels()
-        self._persist_mic()
+        # a hand said how many capsules this rig has: that is worth
+        # remembering even when the rig has nothing else on file
+        self._persist_mic(by_hand=True)
         self._reset_unarmed_session()
         # the pair's remembered level lands the moment both
         # ends are known: the restore branch in
@@ -2639,6 +2640,27 @@ class MeasureWindow(Adw.Window):
         if self.session is not None and self._busy:
             self.session.cancel()            # aborts the sweep in flight
 
+    def _lock_baked_rows(self):
+        """The rig and its capsule count are baked into the
+        session's config when it is built, and an ARMED session
+        cannot be rebuilt -- _reset_unarmed_session says so and
+        returns. The window went on offering both anyway: choose
+        Stereo after the first sweep and it believed two capsules
+        while the session captured one, which surfaced much later,
+        and cryptically, as "capture column 1 out of range for a
+        1-channel capture" the moment the second speaker was
+        clicked. A control that cannot be honoured must not be
+        offered."""
+        armed = self.session is not None and self._entered
+        have = bool(self.sources or self.mic_picker.core.node)
+        note = ("Locked for this sitting: the session was built "
+                "around this rig and capsule count when the first "
+                "sweep ran. Reopen the window to change them.")
+        self.source_dd.set_sensitive(have and not armed)
+        self.chan_dd.set_sensitive(not armed)
+        for row in (self.source_dd, self.chan_dd):
+            row.set_tooltip_text(note if armed else None)
+
     def _update_pult(self):
         """The pult is the shared gone lock (field verdict): a
         sweep needs a speaker AND a mic, so both sweep triggers
@@ -2649,6 +2671,7 @@ class MeasureWindow(Adw.Window):
         names a foreign rig as a fact. The speakers stay free:
         takes are per channel, and browsing the neighbor's pile
         must survive a gone device."""
+        self._lock_baked_rows()
         live = (self._sink_present() and not self._sink_gone
                 and self._source_present() and not self._mic_gone)
         debug.mic_trace("pult live=%s sinkP=%s sinkG=%s srcP=%s "
@@ -3067,7 +3090,7 @@ class MeasureWindow(Adw.Window):
         # and only a hand may empty the block
         cal = measure_prefs.cal_to_store(
             self.cal, (existing or {}).get("cal"), by_hand)
-        if not cal and existing is None:
+        if not measure_prefs.worth_saving(cal, existing, by_hand):
             return
         body = {"name": src["desc"], "node_match": src["name"],
                 "serial": ((existing or {}).get("serial", "")
