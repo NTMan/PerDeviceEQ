@@ -937,6 +937,22 @@ TAKE_FLAGGED = "flagged"    # usable but not ideal; does NOT count
 TAKE_CLIPPED = "clipped"    # unusable
 
 
+def testified(rec):
+    """Did this take hear anything at all?
+
+    A capture with no onset -- nothing plugged in, the wrong port,
+    a sweep that never left the sink -- still becomes a TakeRecord:
+    the deconvolution runs on noise, the delay detector locks onto
+    whatever peak the noise offered, and out comes a magnitude two
+    hundred decibels down with a confession made of nothing. Such a
+    take is not a bad measurement, it is an absence of one, and it
+    must not be averaged into a channel's mean or asked about
+    harmonics. An infinite or missing SNR is the mark: the onset
+    search found no signal to measure noise against."""
+    snr = getattr(rec, "snr_db", None)
+    return snr is not None and math.isfinite(snr)
+
+
 def take_quality(rec):
     """Classify an accepted take. Single source of truth for the wizard's
     ring/row status and the 'three clean takes' rule -- CLI, GUI and tests

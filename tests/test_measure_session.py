@@ -895,3 +895,22 @@ def test_start_volume_outranks_sink_read(tmp_path, monkeypatch):
                             samples=131072)
     ses2 = ms.MeasureSession(bare)
     assert ses2._v_cur == ses2.volume_start
+
+def test_a_take_that_heard_nothing_never_testifies():
+    """Nothing plugged in, the wrong port, a sweep that never left
+    the sink: the capture still becomes a record, the delay
+    detector locks onto noise and the magnitude comes out two
+    hundred decibels down. That is not a bad measurement, it is the
+    absence of one."""
+    class R(object):
+        def __init__(self, snr):
+            self.snr_db = snr
+
+    assert ms.testified(R(62.1)) is True
+    assert ms.testified(R(0.0)) is True
+    assert ms.testified(R(-12.0)) is True       # bad, but heard
+    assert ms.testified(R(float("-inf"))) is False
+    assert ms.testified(R(float("inf"))) is False
+    assert ms.testified(R(float("nan"))) is False
+    assert ms.testified(R(None)) is False
+    assert ms.testified(object()) is False

@@ -667,6 +667,8 @@ class MeasureWindow(Adw.Window):
                                 np.where(bad, mag, np.nan),
                                 cv.C_BAD, 1.8, legend=False,
                                 key="response"))
+        if not ms.testified(rec):
+            return out          # noise cannot confess to harmonics
         out.extend(self._conf_curves(
             rec.freq_hz, mag,
             getattr(rec, "thd_db", None),
@@ -1403,9 +1405,15 @@ class MeasureWindow(Adw.Window):
         if shifts is not None:
             by_id = {r.id: s for r, s
                      in zip(self.session.takes_of(ch), shifts)}
-        clean = [r for r in takes
+        # a take that heard nothing is not a worse measurement,
+        # it is an absence of one: it never joins a mean, not even
+        # when nothing better exists
+        heard = [r for r in takes if ms.testified(r)]
+        clean = [r for r in heard
                  if ms.take_quality(r) == ms.TAKE_CLEAN]
-        base = clean if clean else takes
+        base = clean or heard
+        if not base:
+            return None
         mean = sum(r.mag_db + by_id.get(r.id, 0.0)
                    for r in base) / len(base)
         spread = self.session.spread_db(ch)
@@ -1467,9 +1475,10 @@ class MeasureWindow(Adw.Window):
             "device is below the number, by how much the rig "
             "cannot say.")
         takes = self.session.takes_of(ch) if self.session else []
-        clean = [r for r in takes
+        heard = [r for r in takes if ms.testified(r)]
+        clean = [r for r in heard
                  if ms.take_quality(r) == ms.TAKE_CLEAN]
-        base = clean if clean else takes
+        base = clean or heard
         if not base:
             return ""
         conf = measure_build.mean_confession(base)
