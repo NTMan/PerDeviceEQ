@@ -439,3 +439,33 @@ def test_the_headline_reads_what_the_pen_draws():
                                 np.full(958, -82.0))[1] is True
     assert measure_build.thd_at(f, quiet,
                                 np.full(958, -95.0))[1] is False
+
+
+def test_the_takes_say_which_column_saw_them():
+    """A dropdown touched today must not change how measurements
+    made yesterday are read."""
+    class R(object):
+        def __init__(self, c):
+            self.capture_channel = c
+
+    assert measure_build.capsule_of([R(0), R(0)]) == 0
+    assert measure_build.capsule_of([R(1)]) == 1
+    assert measure_build.capsule_of([R(0), R(1)]) is None
+    assert measure_build.capsule_of([R(None), R(None)], 1) == 1
+    assert measure_build.capsule_of([R(None), R(0)], 0) == 0
+    assert measure_build.capsule_of([R(None), R(1)], 0) is None
+    assert measure_build.capsule_of([], 0) is None
+    assert measure_build.capsule_of(None, 0) is None
+
+
+def test_the_partner_claim_never_decides_whether_to_draw():
+    """It says what may be claimed, not whether the comparison is
+    allowed: a column is a wire, not a microphone, and nothing in
+    the graph can tell a two-capsule fixture from one coupler
+    replugged."""
+    claim = measure_build.partner_claim
+    assert claim(True, True) == "level"
+    assert claim(True, False) == "shape"
+    assert claim(False, True) == "shape"
+    assert claim(False, False) == "shape"
+    assert claim(None, True) == "shape"

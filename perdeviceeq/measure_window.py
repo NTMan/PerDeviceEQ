@@ -1889,10 +1889,16 @@ class MeasureWindow(Adw.Window):
         ghost falls back to shape-only: aligned by the 200-2000 Hz
         band means, the level claim explicitly dropped and the label
         saying so -- a stable seal leak is a SHAPE difference, and
-        silently hiding the ghost once hid exactly that. Nothing is
-        drawn when the channel has no L<->R partner, the partner has
-        no takes, or the capsules differ (two couplers share no
-        reference of any kind)."""
+        silently hiding the ghost once hid exactly that.
+
+        The ghost is drawn whenever there is something to draw. It
+        used to be suppressed when the two channels sat on different
+        capture columns, on the theory that different columns mean
+        different capsules -- which hid the comparison from everyone
+        whose fixture has two working capsules, and hid it on the
+        strength of an equation that is false anyway: a column is a
+        wire, not a microphone. Nothing is drawn only when the
+        channel has no L<->R partner or the partner has no takes."""
         if self.session is None:
             return None, None
         pk = ms.mirror_key(self.ch_keys[ch])
@@ -1901,13 +1907,19 @@ class MeasureWindow(Adw.Window):
         p = self.ch_keys.index(pk)
         if not self.session.takes_of(p):
             return None, None
-        if self.mic_of.get(p, p) != self.mic_of.get(ch, ch):
-            return None, None
+        # the TAKES say which column saw them: a dropdown touched
+        # today must not change how yesterday's takes are read
+        cap_p = measure_build.capsule_of(self.session.takes_of(p),
+                                         self.mic_of.get(p, p))
+        cap_c = measure_build.capsule_of(self.session.takes_of(ch),
+                                         self.mic_of.get(ch, ch))
         pavg, _sp = self.session.average_and_spread(p)
         if pavg is None:
             return None, None
         shift = self.session.drive_shift_db(p, ch)
-        if shift is not None:
+        claim = measure_build.partner_claim(
+            cap_p is not None and cap_p == cap_c, shift is not None)
+        if claim == "level":
             return pavg + shift, "%s mean" % pk
         fa = np.asarray(self.session.freqs, float)
         ref = (fa >= 200.0) & (fa <= 2000.0)

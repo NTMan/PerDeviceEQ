@@ -102,6 +102,49 @@ def take_dict(rec, session_id, key, freqs):
     return out
 
 
+def capsule_of(records, fallback=None):
+    """Which capture column a channel's takes were actually
+    measured on, or None when they disagree.
+
+    The takes know. Asking the window's CURRENT capsule mapping
+    instead means a dropdown touched today decides how two
+    measurements made yesterday are read. Takes too old to say fall
+    back to what the caller offers."""
+    cols = set()
+    for r in records or []:
+        c = getattr(r, "capture_channel", None)
+        cols.add(fallback if c is None else c)
+    if len(cols) != 1:
+        return None
+    return cols.pop()
+
+
+def partner_claim(same_column, drive_known):
+    """What may honestly be CLAIMED by drawing the other channel's
+    mean over this one -- never whether to draw it at all.
+
+    "level": both channels came in on the same capture column and
+    the drive difference is known, so the curves may be read as
+    they stand.
+
+    "shape": anything else. The level claim is dropped and the
+    label says so.
+
+    The rule that used to live here decided COMPARABILITY -- two
+    different columns meant two different capsules, so nothing was
+    drawn. That equation is false: a column is a wire, not a
+    microphone. One coupler moved from the mic jack to the line
+    jack changes column without changing capsule; a two-capsule
+    fixture is bought precisely to compare its two columns; and two
+    channels of one line input are not capsules at all. Nothing in
+    the graph can tell these apart, so the app stops judging and
+    states what it did instead, exactly as it stopped choosing the
+    level for the operator and started suggesting one. The takes'
+    own passports say which input each channel came through, and
+    the rig headers in the take list already print it."""
+    return "level" if (same_column and drive_known) else "shape"
+
+
 def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0,
            frac=1.0 / 12.0):
     """The one number a datasheet prints: THD at a single
