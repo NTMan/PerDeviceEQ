@@ -1439,7 +1439,7 @@ class MeasureWindow(Adw.Window):
         spread = self.session.spread_db(ch)
         sp = np.asarray(
             spread if spread is not None else mean * 0.0, float)
-        ghost, glabel = self._partner_ghost(ch, mean)
+        ghost, glabel = self._partner_ghost(ch)
         # both means say WHOSE they are, in the legend. The
         # partner's name used to sit alone in the top right corner
         # of the canvas -- a decision from before there was any
@@ -1880,16 +1880,21 @@ class MeasureWindow(Adw.Window):
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             self._repaint_curves()
 
-    def _partner_ghost(self, ch, mean):
+    def _partner_ghost(self, ch):
         """(curve, label) of the mirror partner's compensated mean --
         a dashed reference for the PAIR's symmetry -- or (None, None).
-        Level-true (shifted onto this channel's drive, the trim's
-        accounting) when the drive difference is knowable; when it is
-        NOT (a hardware-volume device releveled between channels), the
-        ghost falls back to shape-only: aligned by the 200-2000 Hz
-        band means, the level claim explicitly dropped and the label
-        saying so -- a stable seal leak is a SHAPE difference, and
-        silently hiding the ghost once hid exactly that.
+        The ghost is drawn WHERE IT LANDED. The drive difference
+        is subtracted when it is knowable, because that is
+        accounting for what we did to the machine and not a claim
+        about the measurement; nothing else is corrected. It used to
+        be slid onto this channel by the 200-2000 Hz band means
+        whenever the level claim could not be made, which lined the
+        curves up beautifully and deleted the very thing the
+        operator was looking at: a level gap between two channels is
+        a FACT, and it is the first sign of a different coupler, a
+        moved gain knob or a seal that leaks on one side. Bitter
+        truth over sweet lie -- the gap stays on the graph and the
+        label says only that the level is not ours to vouch for.
 
         The ghost is drawn whenever there is something to draw. It
         used to be suppressed when the two channels sat on different
@@ -1919,15 +1924,10 @@ class MeasureWindow(Adw.Window):
         shift = self.session.drive_shift_db(p, ch)
         claim = measure_build.partner_claim(
             cap_p is not None and cap_p == cap_c, shift is not None)
+        where = pavg + shift if shift is not None else pavg
         if claim == "level":
-            return pavg + shift, "%s mean" % pk
-        fa = np.asarray(self.session.freqs, float)
-        ref = (fa >= 200.0) & (fa <= 2000.0)
-        if not ref.any():
-            return None, None
-        aligned = pavg - float(np.asarray(pavg)[ref].mean()) \
-            + float(np.asarray(mean)[ref].mean())
-        return aligned, "%s mean, shape only" % pk
+            return where, "%s mean" % pk
+        return where, "%s mean, level unverified" % pk
 
     # ---- callbacks (config) -----------------------------------------------
     def _on_pw_state(self, st):
