@@ -1927,7 +1927,7 @@ class MeasureWindow(Adw.Window):
         where = pavg + shift if shift is not None else pavg
         if claim == "level":
             return where, "%s mean" % pk
-        return where, "%s mean, level unverified" % pk
+        return where, "%s mean, no level claim" % pk
 
     # ---- callbacks (config) -----------------------------------------------
     def _on_pw_state(self, st):
