@@ -206,3 +206,25 @@ def test_only_a_hand_can_take_the_calibration_off():
     out = mp.cal_to_store({}, keep)
     out["0"] = "/cal/other.txt"
     assert keep == {"0": "/cal/mic.txt"}
+
+
+def test_a_rig_is_named_by_its_jack_too(paths):
+    """The port is part of WHICH RIG this is: the microphone jack
+    and the line jack of one card are different preamps, different
+    gain and different noise, so they carry their own calibration
+    rather than sharing one. The store needs no new field for that
+    -- the identity already says it."""
+    s = mp.MicProfileStore()
+    mic = s.save({"name": "CM106 (Microphone)",
+                  "node_match": "alsa_input.usb-0d8c-00#1",
+                  "serial": "", "cal": {"0": "/c/mic.txt"},
+                  "channels": 1})
+    line = s.save({"name": "CM106 (Line In)",
+                   "node_match": "alsa_input.usb-0d8c-00#2",
+                   "serial": "", "cal": {"0": "/c/line.txt"},
+                   "channels": 1})
+    again = mp.MicProfileStore()
+    assert again.match("alsa_input.usb-0d8c-00#1")["id"] == mic
+    assert again.match("alsa_input.usb-0d8c-00#2")["id"] == line
+    assert again.get(mic)["cal"]["0"] == "/c/mic.txt"
+    assert again.get(line)["cal"]["0"] == "/c/line.txt"

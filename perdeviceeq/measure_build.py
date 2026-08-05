@@ -265,6 +265,7 @@ def commit_take(store, pid, session, ch_index, key, take_id,
                     or ident.get("name")),
            "serial": new_serial,
            "node_match": ident.get("name"),
+           "route": ident.get("route"),
            "channels": session.cfg.channels}
     m = prof.get("measurement")
     g = (m.get("grid") if m else None) or {}

@@ -1125,6 +1125,10 @@ class MeasureSession:
                 % src_p.get("device.api"))
         self.sink_ident = node_ident(self.sink)
         self.source_ident = node_ident(self.source)
+        # which JACK the card is listening on: one node, several
+        # ports, and a passport must not be ambiguous about it
+        self.source_ident["route"] = pw_backend.active_input_route(
+            self.source_ident["name"], dump)
         self.sink_layout = sink_channels(self.sink_ident["name"],
                                          dump)
 
@@ -1302,6 +1306,10 @@ class MeasureSession:
                 "the graph" % cfg.source)
         self.sink_ident = node_ident(self.sink)
         self.source_ident = node_ident(self.source)
+        # which JACK the card is listening on: one node, several
+        # ports, and a passport must not be ambiguous about it
+        self.source_ident["route"] = pw_backend.active_input_route(
+            self.source_ident["name"], dump)
         self.sink_layout = sink_channels(self.sink_ident["name"],
                                          dump)
         self._pending = None                # a new sweep supersedes it

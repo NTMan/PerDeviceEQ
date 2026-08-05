@@ -114,9 +114,158 @@ def list_sources(dump=None):
                 continue
             sources.append({"id": o["id"], "name": name,
                             "desc": p.get("node.description") or name,
-                            "prio": p.get("priority.session") or 0})
+                            "prio": p.get("priority.session") or 0,
+                            "routes": input_routes(name, dump)})
     sources.sort(key=lambda s: -(s["prio"] or 0))
     return sources
+
+def input_routes(node_name, dump=None):
+    """The card ports a capture node can be switched between.
+
+    GNOME lists a card's Microphone, Line In and S/PDIF as separate
+    entries in its input list. PipeWire has ONE node for the card's
+    analog input and calls the choice a ROUTE on the device behind
+    it. Our picker lists nodes, so that choice was invisible: the
+    app could be listening to the microphone jack while the cable
+    sat in line in, and nothing in the window could say so or move
+    it.
+
+    Returns one entry per input route of THIS node's card device --
+    {index, device_id, card_device, name, description, available,
+    active} -- or an empty list when there is no card behind the
+    node, which is the honest answer for a virtual source: it has
+    no ports to choose from."""
+    dump = dump if dump is not None else pw_dump()
+    props = None
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("node.name") == node_name:
+            props = p
+            break
+    if props is None:
+        return []
+    dev_id = props.get("device.id")
+    card_dev = props.get("card.profile.device")
+    if dev_id is None or card_dev is None:
+        return []
+    device = None
+    for o in dump:
+        if (o.get("type") == "PipeWire:Interface:Device"
+                and o.get("id") == dev_id):
+            device = o
+            break
+    if device is None:
+        return []
+    params = (device.get("info") or {}).get("params") or {}
+    active = [r for r in (params.get("Route") or [])
+              if r.get("device") == card_dev]
+    out = []
+    for r in params.get("EnumRoute") or []:
+        if r.get("direction") != "Input":
+            continue
+        if card_dev not in (r.get("devices") or []):
+            continue
+        idx = r.get("index")
+        out.append({
+            "index": idx,
+            "device_id": dev_id,
+            "card_device": card_dev,
+            "name": r.get("name"),
+            "description": r.get("description") or r.get("name"),
+            "available": r.get("available") != "no",
+            "active": any(a.get("index") == idx for a in active)})
+    return out
+
+
+ENTRY_SEP = "#"
+
+
+def entry_key(node, route=None):
+    """The identity of a capture ENTRY: a node, or a node on one of
+    its card ports. GNOME lists ports as separate inputs and so do
+    we now, which means the port stops being a hidden setting and
+    becomes part of WHICH RIG this is -- and that is the truth:
+    the microphone jack and the line jack of one card are different
+    preamps, different gain and different noise, so they deserve
+    their own calibration rather than sharing one."""
+    if not route:
+        return node
+    return "%s%s%d" % (node, ENTRY_SEP, int(route["index"]))
+
+
+def split_entry(key):
+    """(node, route index or None) from an entry key. The graph gets
+    the NODE; everything else keeps the identity."""
+    if not key:
+        return key, None
+    node, sep, idx = str(key).rpartition(ENTRY_SEP)
+    if not sep or not idx.isdigit():
+        return key, None
+    return node, int(idx)
+
+
+def entry_node(key):
+    return split_entry(key)[0]
+
+
+def list_capture_entries_from(sources):
+    """The same expansion over a source list already pulled by the
+    heartbeat -- the window never runs a dump of its own."""
+    out = []
+    for s in sources or []:
+        routes = s.get("routes") or []
+        if len(routes) < 2:
+            e = dict(s)
+            e["node"] = s["name"]
+            e["route"] = routes[0] if routes else None
+            out.append(e)
+            continue
+        for r in routes:
+            e = dict(s)
+            e["name"] = entry_key(s["name"], r)
+            e["node"] = s["name"]
+            e["route"] = r
+            e["desc"] = "%s - %s" % (r["description"], s["desc"])
+            out.append(e)
+    return out
+
+
+def list_capture_entries(dump=None):
+    """The input list the way every desktop shows it: one row per
+    jack. A card with several input ports contributes one entry per
+    port, described the way GNOME describes them ("Line In - CM106
+    Like Sound Device"); a node with one port or none contributes
+    itself. Each entry carries the node it speaks for and the route
+    it means, so nothing downstream has to parse a label."""
+    return list_capture_entries_from(list_sources(dump))
+
+
+def active_input_route(node_name, dump=None):
+    """The port a capture node is listening on right now, by
+    description, or None when the node has no card ports. Goes into
+    the take's passport: "captured with CM106" does not say whether
+    the sweep came in through the microphone jack or the line one,
+    and those are different measurements."""
+    for r in input_routes(node_name, dump):
+        if r["active"]:
+            return r["description"]
+    return None
+
+
+def set_input_route(route):
+    """Switch the card to that port, and keep it (save: true) the way
+    GNOME's own switch does -- the route belongs to the device, so
+    every application sees the change, which is exactly why the app
+    may set it rather than work around it."""
+    r = _run(["pw-cli", "set-param", str(route["device_id"]), "Route",
+              "{ index: %d, device: %d, save: true }"
+              % (int(route["index"]), int(route["card_device"]))])
+    if r.returncode != 0:
+        raise RuntimeError("pw-cli set-param Route failed: %s"
+                           % ((r.stderr or r.stdout) or "").strip())
+
 
 def node_params(name, dump=None):
     dump = dump if dump is not None else pw_dump()

@@ -205,3 +205,130 @@ def test_play_speaks_the_measure_dialect(rig, monkeypatch):
     assert "node.target = 10" in props
     assert cmd[cmd.index("--channel-map") + 1] == "FL,FR"
     assert cmd[-1] == "/tmp/x.wav"
+
+def _card_dump():
+    """One USB card: an analog input node on card device 0, with a
+    microphone route and a line-in route, and an unrelated S/PDIF
+    node on card device 1. Shapes mirror pw-dump."""
+    return [
+        {"id": 40, "type": "PipeWire:Interface:Node",
+         "info": {"props": {
+             "node.name": "alsa_input.usb-0d8c-00.analog-stereo",
+             "media.class": "Audio/Source",
+             "device.id": 50, "card.profile.device": 0}}},
+        {"id": 41, "type": "PipeWire:Interface:Node",
+         "info": {"props": {
+             "node.name": "alsa_input.usb-0d8c-00.iec958-stereo",
+             "media.class": "Audio/Source",
+             "device.id": 50, "card.profile.device": 1}}},
+        {"id": 42, "type": "PipeWire:Interface:Node",
+         "info": {"props": {"node.name": "virtual-thing",
+                            "media.class": "Audio/Source"}}},
+        {"id": 50, "type": "PipeWire:Interface:Device",
+         "info": {"params": {
+             "EnumRoute": [
+                 {"index": 1, "direction": "Input", "name": "mic",
+                  "description": "Microphone", "devices": [0],
+                  "available": "unknown"},
+                 {"index": 2, "direction": "Input", "name": "linein",
+                  "description": "Line In", "devices": [0],
+                  "available": "yes"},
+                 {"index": 3, "direction": "Input", "name": "spdif",
+                  "description": "Digital Input", "devices": [1],
+                  "available": "no"},
+                 {"index": 9, "direction": "Output", "name": "out",
+                  "description": "Speakers", "devices": [0],
+                  "available": "yes"}],
+             "Route": [
+                 {"index": 2, "device": 0, "direction": "Input",
+                  "name": "linein"},
+                 {"index": 9, "device": 0, "direction": "Output",
+                  "name": "out"}]}}},
+    ]
+
+
+def test_the_card_ports_behind_one_capture_node():
+    """GNOME lists Microphone and Line In as separate entries;
+    PipeWire has one node and calls the choice a route on the device
+    behind it. Our picker lists nodes, so the choice was invisible."""
+    d = _card_dump()
+    got = pwb.input_routes(
+        "alsa_input.usb-0d8c-00.analog-stereo", d)
+    assert [r["description"] for r in got] == ["Microphone", "Line In"]
+    assert [r["index"] for r in got] == [1, 2]
+    assert [r["active"] for r in got] == [False, True]
+    assert all(r["device_id"] == 50 for r in got)
+    assert all(r["card_device"] == 0 for r in got)
+    # the S/PDIF node is a different card device: its own port only
+    other = pwb.input_routes(
+        "alsa_input.usb-0d8c-00.iec958-stereo", d)
+    assert [r["description"] for r in other] == ["Digital Input"]
+    assert other[0]["available"] is False
+    assert other[0]["active"] is False
+
+
+def test_a_node_without_a_card_has_no_ports():
+    d = _card_dump()
+    assert pwb.input_routes("virtual-thing", d) == []
+    assert pwb.input_routes("no-such-node", d) == []
+    assert pwb.active_input_route("virtual-thing", d) is None
+
+
+def test_the_active_port_is_what_the_passport_records():
+    """"Captured with CM106" does not say whether the sweep came in
+    through the microphone jack or the line one, and those are
+    different measurements."""
+    d = _card_dump()
+    node = "alsa_input.usb-0d8c-00.analog-stereo"
+    assert pwb.active_input_route(node, d) == "Line In"
+    dev = [o for o in d if o["id"] == 50][0]
+    dev["info"]["params"]["Route"] = [
+        {"index": 1, "device": 0, "direction": "Input"}]
+    assert pwb.active_input_route(node, d) == "Microphone"
+    dev["info"]["params"]["Route"] = []
+    assert pwb.active_input_route(node, d) is None
+
+
+def test_the_ports_ride_the_same_dump_as_the_sources():
+    """The window must never run a subprocess to learn the ports:
+    switching a route makes the graph churn exactly when a poll is
+    slowest, and reading it on the main loop froze the app for
+    seconds -- long enough for the shell to offer Force Quit."""
+    d = _card_dump()
+    src = {s["name"]: s for s in pwb.list_sources(d)}
+    analog = src["alsa_input.usb-0d8c-00.analog-stereo"]
+    assert [r["description"] for r in analog["routes"]] == [
+        "Microphone", "Line In"]
+    assert src["virtual-thing"]["routes"] == []
+
+
+def test_the_input_list_shows_one_row_per_jack():
+    """Every desktop lists ports as separate inputs; so do we. A
+    card with two input ports contributes two rows, described the
+    way GNOME describes them, and each row carries the node it
+    speaks for and the route it means."""
+    rows = pwb.list_capture_entries(_card_dump())
+    assert [r["name"] for r in rows][:2] == [
+        "alsa_input.usb-0d8c-00.analog-stereo#1",
+        "alsa_input.usb-0d8c-00.analog-stereo#2"]
+    assert all(r["node"] == "alsa_input.usb-0d8c-00.analog-stereo"
+               for r in rows[:2])
+    assert rows[0]["desc"].startswith("Microphone - ")
+    assert rows[1]["desc"].startswith("Line In - ")
+    assert rows[1]["route"]["active"] is True
+    # one port or none: the node speaks for itself, key unchanged
+    solo = [r for r in rows if r["name"] == "virtual-thing"][0]
+    assert solo["node"] == "virtual-thing" and solo["route"] is None
+
+
+def test_the_graph_gets_the_node_and_the_rest_keeps_the_key():
+    node = "alsa_input.usb-0d8c-00.analog-stereo"
+    assert pwb.entry_key(node) == node
+    assert pwb.entry_key(node, {"index": 2}) == node + "#2"
+    assert pwb.split_entry(node + "#2") == (node, 2)
+    assert pwb.split_entry(node) == (node, None)
+    assert pwb.entry_node(node + "#2") == node
+    assert pwb.entry_node(node) == node
+    assert pwb.split_entry(None) == (None, None)
+    # a name that merely contains a hash is not an entry key
+    assert pwb.split_entry("weird#name") == ("weird#name", None)

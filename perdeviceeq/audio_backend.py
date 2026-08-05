@@ -221,8 +221,16 @@ class AudioBackend(ABC):
         self.sinks = snap.get("sinks", [])
         self.sources = snap.get("sources", [])
         self.default_sink = snap.get("default_sink")
+        # the active input PORT belongs in the signature: a card
+        # route can move under us -- from GNOME, from another app --
+        # without a single node name changing, and a list that does
+        # not hear about it goes on showing the wrong jack
         sig = (tuple(s.get("name") for s in self.sinks),
-               tuple(s.get("name") for s in self.sources),
+               tuple((s.get("name"),
+                      next((r.get("index") for r in (s.get("routes")
+                                                     or [])
+                            if r.get("active")), None))
+                     for s in self.sources),
                self.default_sink)
         changed = sig != getattr(self, "_sig", None)
         self._sig = sig

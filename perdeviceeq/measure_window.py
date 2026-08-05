@@ -206,7 +206,8 @@ class MeasureWindow(Adw.Window):
         self.n_ch = len(self.ch_keys)
 
         self._pw.update()
-        self.sources = self._pw.sources
+        self.sources = pw_backend.list_capture_entries_from(
+            self._pw.sources)
         self.cal = {}               # mic capture-channel idx -> cal
         self.mic_ch = 2             # rig capture channels (1 or 2)
         self.mic_of = {}            # sink channel -> analyzed mic ch
@@ -1079,11 +1080,11 @@ class MeasureWindow(Adw.Window):
                     pass
         if prof and prof.get("node_match"):
             debug.mic_trace("prefill select nm")
+            e = self._entry_for(prof["node_match"])
             self.mic_picker.select(
-                prof["node_match"],
-                next((s["desc"] for s in self.sources
-                      if s["name"] == prof["node_match"]),
-                     prof.get("name") or prof["node_match"]))
+                (e or {}).get("name") or prof["node_match"],
+                (e or {}).get("desc")
+                or prof.get("name") or prof["node_match"])
             self._adopt_selected_source()
         debug.mic_trace("prefill done core=%r"
                      % self.mic_picker.core.node)
@@ -1102,10 +1103,10 @@ class MeasureWindow(Adw.Window):
         node = stored.get("node_match")
         if not node:
             return
+        e = self._entry_for(node)
         self.mic_picker.select(
-            node, next((s["desc"] for s in self.sources
-                        if s["name"] == node),
-                       stored.get("name") or node))
+            (e or {}).get("name") or node,
+            (e or {}).get("desc") or stored.get("name") or node)
         self._adopt_selected_source()
 
     def _sync_cal_labels(self):
@@ -1168,6 +1169,25 @@ class MeasureWindow(Adw.Window):
             return None
         return next((s for s in self.sources
                      if s["name"] == name), None)
+
+    def _entry_for(self, key):
+        """The entry a stored identity means today. An exact key
+        wins; a bare node name -- what older profiles carry, and
+        what a rig is called before anyone thought about jacks --
+        resolves to that card's LIVE jack, because that is the rig
+        the graph is actually offering right now."""
+        if not key:
+            return None
+        exact = next((s for s in self.sources
+                      if s["name"] == key), None)
+        if exact is not None:
+            return exact
+        node = pw_backend.entry_node(key)
+        mine = [s for s in self.sources
+                if (s.get("node") or s["name"]) == node]
+        live = next((s for s in mine
+                     if (s.get("route") or {}).get("active")), None)
+        return live or (mine[0] if mine else None)
 
     def _source_name(self):
         s = self._selected_source()
@@ -1978,7 +1998,7 @@ class MeasureWindow(Adw.Window):
         auto-falling to row 0 is how a foreign mic used to hide
         the measured takes."""
         prev = [s["name"] for s in self.sources]
-        self.sources = list(sources)
+        self.sources = pw_backend.list_capture_entries_from(sources)
         self.mic_picker.refresh(self.sources)
         self.source_dd.set_sensitive(
             bool(self.sources or self.mic_picker.core.node))
@@ -1989,9 +2009,9 @@ class MeasureWindow(Adw.Window):
         return any(s["name"] == self.sink_node for s in self._pw.sinks)
 
     def _source_present(self):
-        name = self.mic_picker.core.node
-        return bool(name) and any(
-            s["name"] == name for s in self._pw.sources)
+        node = pw_backend.entry_node(self.mic_picker.core.node)
+        return bool(node) and any(
+            s["name"] == node for s in self._pw.sources)
 
     def _reconcile_source(self, st):
         """The rig is never substituted: a vanished mic keeps
@@ -1999,15 +2019,15 @@ class MeasureWindow(Adw.Window):
         locks, measuring waits. On the rig's return the mic
         state re-derives and an unarmed session rebuilds
         against it."""
-        name = self.mic_picker.core.node
-        gone = bool(name) and not any(
-            s["name"] == name for s in st.sources)
+        node = pw_backend.entry_node(self.mic_picker.core.node)
+        gone = bool(node) and not any(
+            s["name"] == node for s in st.sources)
         if gone == self._mic_gone:
             return
         self._mic_gone = gone
         self.mic_banner.set_revealed(gone)
         self._update_pult()
-        if not gone and name:
+        if not gone and node:
             self._adopt_selected_source()
 
 
@@ -2032,7 +2052,28 @@ class MeasureWindow(Adw.Window):
             self._mic_gone = False
             self.mic_banner.set_revealed(False)
             self._update_pult()
+        self._apply_entry_route()
         self._adopt_selected_source()
+
+    def _apply_entry_route(self):
+        """A row names a jack, so choosing it moves the card there
+        -- the route belongs to the device, which is why GNOME
+        follows us and why we must follow it. Off the main loop:
+        pw-cli is a subprocess and a route change makes the graph
+        churn. Nothing is read back here; the next heartbeat brings
+        the new state."""
+        src = self._selected_source() or {}
+        route = src.get("route")
+        if not route or route.get("active"):
+            return
+
+        def work():
+            try:
+                pw_backend.set_input_route(route)
+            except Exception as e:
+                debug.log("input route: %s" % e)
+
+        pw_backend.in_thread(work)
 
     def _adopt_selected_source(self):
         src = self._selected_source()
@@ -2110,6 +2151,24 @@ class MeasureWindow(Adw.Window):
         self._ensure_session(arm=False, quiet=True)
         self._refresh_all()
 
+    def _assert_entry_route(self):
+        """Put the card on the jack this rig IS, right before the
+        sweep. The identity carries the jack now, so there is
+        nothing separate to remember -- but the route belongs to the
+        device and anyone may move it, and a sweep aimed at the
+        wrong jack records silence. Synchronous on purpose: this
+        runs on the worker thread, before the sound."""
+        route = (self._selected_source() or {}).get("route")
+        if not route or route.get("active"):
+            return
+        try:
+            pw_backend.set_input_route(route)
+        except Exception as e:
+            debug.log("assert input port: %s" % e)
+            return
+        debug.mic_trace("input port asserted: %s"
+                        % route.get("description"))
+
     def _recompute_mic(self):
         self.mic_ch = self._mic_channels()
         self.mic_of = self._default_mic_of()
@@ -2170,7 +2229,8 @@ class MeasureWindow(Adw.Window):
         if prof and prof.get("channels") in (1, 2):
             return prof["channels"]     # the user pinned it for this rig
         try:
-            n = len(pw_backend.backend().input_channels(src["name"]))
+            n = len(pw_backend.backend().input_channels(
+                src.get("node") or src["name"]))
         except Exception:
             n = 2
         return max(1, min(2, n))        # a measurement rig is 1- or 2-ch
@@ -2662,7 +2722,8 @@ class MeasureWindow(Adw.Window):
             # and its whole job is to move the fader.
             hunt = bool(getattr(self, "_level_only", False))
             cfg = ms.SessionConfig(
-                sink=self.sink_node, source=mic,
+                sink=self.sink_node,
+                source=pw_backend.entry_node(mic),
                 channels=self.mic_ch, auto_level=hunt,
                 mute_others=True, device=self.sink_desc,
                 start_volume=(None if hunt else
@@ -2737,6 +2798,7 @@ class MeasureWindow(Adw.Window):
         quality is flagged for the user). Result marshalled to the UI."""
         result = {"error": None, "outcome": None}
         try:
+            self._assert_entry_route()
             if getattr(self, "_take_level", None) is not None:
                 self.session.set_level(self._take_level)
             guard = 0
