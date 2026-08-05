@@ -914,3 +914,29 @@ def test_a_take_that_heard_nothing_never_testifies():
     assert ms.testified(R(float("nan"))) is False
     assert ms.testified(R(None)) is False
     assert ms.testified(object()) is False
+
+def test_a_deaf_take_widens_nothing(monkeypatch):
+    """The pink field: a capture with no onset used to enter the
+    mean AND the spread, so the corridor opened to the width of the
+    canvas and every real take counted as straying from it."""
+    class Rec(object):
+        def __init__(self, tid, mag, snr):
+            self.id = tid
+            self.mag_db = np.asarray(mag, float)
+            self.snr_db = snr
+            self.soft_vol = 1.0
+            self.chan_vol = 1.0
+
+    good1 = Rec("a", [0.0, 0.0, 0.0], 60.0)
+    good2 = Rec("b", [1.0, 1.0, 1.0], 55.0)
+    deaf = Rec("c", [-200.0, -200.0, -200.0], float("-inf"))
+    ses = ms.MeasureSession.__new__(ms.MeasureSession)
+    ses._takes = {0: [(good1, None), (good2, None), (deaf, None)]}
+    ses._comp_factors = lambda entries: None
+    mean, spread = ses.average_and_spread(0)
+    # the mean is a POWER average of 0 and 1 dB, not 0.5
+    assert 0.4 < float(np.mean(mean)) < 0.7
+    assert float(np.max(spread)) < 1.0
+    # and with nothing but the deaf take there is no mean at all
+    ses._takes = {0: [(deaf, None)]}
+    assert ses.average_and_spread(0) == (None, None)

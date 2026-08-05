@@ -1557,9 +1557,19 @@ class MeasureSession:
         Unknown gains fall back to the raw curves. The exact alignment
         finalize applies to the samples, so the live fan shows what the
         result will average. (None, None) without takes; spread is None
-        until there are two."""
+        until there are two.
+
+        A take that heard NOTHING is not in this arithmetic at all.
+        It still exists, it is still shown and can still be deleted
+        by hand, but a capture with no onset is the absence of a
+        measurement, and averaging it drags the mean two hundred
+        decibels away from every real take while the spread -- the
+        same call, one line down -- opens to the width of the
+        canvas and paints the whole picture in untrustworthy red.
+        The field saw exactly that and asked what the pink was."""
         entries = [e for e in self._takes.get(channel, [])
-                   if exclude_id is None or e[0].id != exclude_id]
+                   if (exclude_id is None or e[0].id != exclude_id)
+                   and testified(e[0])]
         if not entries:
             return None, None
         mags = [rec.mag_db for rec, _ in entries]
