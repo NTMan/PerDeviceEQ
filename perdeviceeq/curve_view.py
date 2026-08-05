@@ -377,16 +377,27 @@ def window_db(curves, band=None, max_span=MAX_SPAN_DB):
     if not resp and not harm:
         return -80.0, 0.0
     allv = np.concatenate(resp + harm)
-    hi = float(allv.max()) + PAD_DB
     if harm:
         hv = np.concatenate(harm)
         floor = float(np.percentile(hv, FLOOR_Q)) - PAD_DB
     else:
-        floor = float(allv.min()) - PAD_DB
+        floor = float(np.percentile(allv, FLOOR_Q)) - PAD_DB
     if resp:
         rv = np.concatenate(resp)
+        # the response's peak is the signal and must be on screen
+        hi = float(rv.max()) + PAD_DB
+        # its body may want more room than the harmonics do, but a
+        # single dive must not buy it -- the percentile decides here
+        # too, and then the cap has the LAST word. A response that
+        # touches minus two hundred and eighty somewhere (a silent
+        # input, a deconvolution that came out empty) used to
+        # reopen the window to nearly four hundred decibels and
+        # flatten every real line into the ceiling.
+        floor = min(floor,
+                    float(np.percentile(rv, FLOOR_Q)) - PAD_DB)
         floor = max(floor, float(rv.max()) - max_span)
-        floor = min(floor, float(rv.min()) - PAD_DB)
+    else:
+        hi = float(np.percentile(allv, 100.0 - FLOOR_Q)) + PAD_DB
     pitch = grid_pitch(max(hi - floor, 1e-6))
     lo = math.floor(floor / pitch) * pitch
     hi = math.ceil(hi / pitch) * pitch

@@ -602,3 +602,33 @@ def test_a_lonely_line_can_never_dim_itself():
     assert st.hit("EQ", add=True) is True
     assert p._dress(eqc)[0] == 1.0
     assert p._dress(eqc)[1] == 0.8             # pinned, so thicker
+
+def test_one_dive_cannot_reopen_the_window():
+    """A silent input, or a deconvolution that came out empty,
+    sends the response to minus two hundred and eighty somewhere.
+    That used to buy a four-hundred-decibel canvas in which every
+    real line was flattened into the ceiling."""
+    mag = np.full(200, -36.0)
+    mag[0] = -285.0
+    mag[199] = -270.0
+    curves = [cv.Curve("take", mag, cv.C_RESPONSE, key="response"),
+              cv.Curve("THD", np.full(200, -90.0), cv.C_THD,
+                       harmonic=True)]
+    lo, hi = cv.window_db(curves)
+    assert hi - lo <= cv.MAX_SPAN_DB + 2 * cv.GRID_STEPS[-1]
+    assert lo >= -36.0 - cv.MAX_SPAN_DB - cv.GRID_STEPS[-1]
+    assert hi >= -36.0                      # the signal is on screen
+    assert cv.grid_pitch(hi - lo) <= cv.GRID_STEPS[-1]
+
+
+def test_a_harmonic_above_the_response_still_fits():
+    """The broken-loopback shape: the second harmonic reads level
+    with the fundamental. Nonsense as physics, but the window must
+    still be a window."""
+    curves = [cv.Curve("take", np.full(50, -1.0), cv.C_RESPONSE,
+                       key="response"),
+              cv.Curve("H2", np.full(50, -1.0), cv.C_H2,
+                       harmonic=True)]
+    lo, hi = cv.window_db(curves)
+    assert hi - lo <= cv.MAX_SPAN_DB + 2 * cv.GRID_STEPS[-1]
+    assert lo < -1.0 < hi
