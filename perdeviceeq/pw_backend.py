@@ -159,8 +159,14 @@ def input_routes(node_name, dump=None):
     if device is None:
         return []
     params = (device.get("info") or {}).get("params") or {}
+    # the card's ACTIVE routes include the output one, and route
+    # indices are not guaranteed to be unique across directions:
+    # matching on the index alone let an active OUTPUT route crown
+    # an input port that merely shared its number, and the app then
+    # believed the sweep came in through a jack with nothing in it
     active = [r for r in (params.get("Route") or [])
-              if r.get("device") == card_dev]
+              if r.get("device") == card_dev
+              and r.get("direction") == "Input"]
     out = []
     for r in params.get("EnumRoute") or []:
         if r.get("direction") != "Input":

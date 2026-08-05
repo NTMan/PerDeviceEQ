@@ -242,7 +242,9 @@ def _card_dump():
              "Route": [
                  {"index": 2, "device": 0, "direction": "Input",
                   "name": "linein"},
-                 {"index": 9, "device": 0, "direction": "Output",
+                 # the active OUTPUT route shares its number with
+                 # an input port: the field's own card does this
+                 {"index": 1, "device": 0, "direction": "Output",
                   "name": "out"}]}}},
     ]
 
@@ -332,3 +334,18 @@ def test_the_graph_gets_the_node_and_the_rest_keeps_the_key():
     assert pwb.split_entry(None) == (None, None)
     # a name that merely contains a hash is not an entry key
     assert pwb.split_entry("weird#name") == ("weird#name", None)
+
+
+def test_an_output_route_cannot_crown_an_input_port():
+    """Route indices are not unique across directions. Matching on
+    the index alone let the card's ACTIVE OUTPUT route mark an input
+    port that merely shared its number -- so the app announced that
+    the sweep came in through the microphone jack while the cable
+    sat in line in and nothing was plugged into the mic at all."""
+    d = _card_dump()
+    got = {r["description"]: r["active"]
+           for r in pwb.input_routes(
+               "alsa_input.usb-0d8c-00.analog-stereo", d)}
+    assert got == {"Microphone": False, "Line In": True}
+    assert pwb.active_input_route(
+        "alsa_input.usb-0d8c-00.analog-stereo", d) == "Line In"
