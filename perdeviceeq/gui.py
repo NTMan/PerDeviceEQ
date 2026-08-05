@@ -2445,11 +2445,22 @@ class EqWindow(Adw.ApplicationWindow):
         if self._measure_win is not None:
             self._measure_win.present()
             return
+        # where it was LAST MEASURED wins over where it is bound:
+        # a chain profile is measured out of one card and bound to
+        # another, and reopening it on the binding threw away the
+        # retarget every time. Falling back: the binding, then the
+        # current device.
+        m = (p.get("measurement") or {})
+        takes = m.get("takes") or []
+        sid = takes[-1].get("session") if takes else None
+        last = (((m.get("sessions") or {}).get(sid) or {})
+                .get("sink") or {}).get("node_name")
         homes = [n for n, x in self.store.bindings.items()
                  if x == p["id"]]
         here = {s["name"] for s in self.sinks}
-        node = next((n for n in homes if n in here),
-                    homes[0] if homes else None)
+        node = (last if last in here else
+                next((n for n in homes if n in here),
+                     last or (homes[0] if homes else None)))
         self._open_measure_for(node or self.node, p["id"])
 
     def _open_measure_for(self, node, pid):

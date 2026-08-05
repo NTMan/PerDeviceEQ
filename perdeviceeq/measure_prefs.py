@@ -148,12 +148,32 @@ class MicProfileStore:
                       {pid: self._body(p)
                        for pid, p in self.profiles.items()})
 
-    def match(self, node_name):
-        """The profile whose node_match equals this live source node.name,
-        or None. Exact match for v1 (a USB source's node.name is stable
-        per device); the user re-picks if a port change renames it."""
+    def match(self, key):
+        """The profile for this capture identity, or None.
+
+        An identity is a node, or a node and one of its card ports
+        ("node#2"). Exact wins. Failing that, a profile that names
+        the bare NODE answers for any of that card's jacks: it was
+        written before jacks were part of a rig's name, and it means
+        "this card" -- refusing it would silently drop a rig's
+        calibration and its capsule count the first time the list
+        learned about ports. The next save writes the identity in
+        full, so each jack ends up with its own rig, which is what
+        they physically are.
+
+        A profile that names a JACK never answers for a different
+        one, and never for the bare node either: that would be
+        guessing."""
+        if not key:
+            return None
         for p in self.profiles.values():
-            if p["node_match"] and p["node_match"] == node_name:
+            if p["node_match"] and p["node_match"] == key:
+                return p
+        node = str(key).rpartition("#")[0] or None
+        if not node:
+            return None
+        for p in self.profiles.values():
+            if p["node_match"] and p["node_match"] == node:
                 return p
         return None
 

@@ -228,3 +228,28 @@ def test_a_rig_is_named_by_its_jack_too(paths):
     assert again.match("alsa_input.usb-0d8c-00#2")["id"] == line
     assert again.get(mic)["cal"]["0"] == "/c/mic.txt"
     assert again.get(line)["cal"]["0"] == "/c/line.txt"
+
+
+def test_a_rig_named_before_jacks_answers_for_its_card(paths):
+    """The list learned about ports and every identity gained a
+    jack. A profile written before that names the bare NODE and
+    means "this card": refusing it would silently drop the rig's
+    calibration and its capsule count the first time the app was
+    updated. A profile that names a jack answers for that jack
+    only."""
+    s = mp.MicProfileStore()
+    old = s.save({"name": "CM106", "node_match": "alsa_input.x",
+                  "serial": "", "cal": {"0": "/c/old.txt"},
+                  "channels": 1})
+    assert s.match("alsa_input.x")["id"] == old
+    assert s.match("alsa_input.x#1")["id"] == old   # any jack
+    assert s.match("alsa_input.x#2")["id"] == old
+    assert s.match("alsa_input.other") is None
+    assert s.match("") is None and s.match(None) is None
+    # once a jack is named, it answers for itself and nothing else
+    jack = s.save({"name": "CM106 line", "node_match":
+                   "alsa_input.x#2", "serial": "",
+                   "cal": {"0": "/c/line.txt"}, "channels": 1})
+    assert s.match("alsa_input.x#2")["id"] == jack
+    assert s.match("alsa_input.x")["id"] == old
+    assert s.match("alsa_input.x#1")["id"] == old
