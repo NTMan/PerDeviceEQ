@@ -1121,6 +1121,9 @@ class MeasureWindow(Adw.Window):
                 badge = self.cal_badges.get(i)
                 if badge is not None:
                     badge.set_visible(False)
+                clear = getattr(self, "cal_clears", {}).get(i)
+                if clear is not None:
+                    clear.set_visible(False)
                 row.set_subtitle("not set -- the capture "
                                  "channel runs raw")
                 row.set_tooltip_text(
@@ -1129,6 +1132,9 @@ class MeasureWindow(Adw.Window):
                     "the compensation" % labels[i])
                 btn.set_label("Choose\u2026")
                 continue
+            clear = getattr(self, "cal_clears", {}).get(i)
+            if clear is not None:
+                clear.set_visible(True)
             row.set_subtitle("\u2713 " + os.path.basename(path))
             cnt, sev, brk = self._cal_testimony(path)
             badge = self.cal_badges.get(i)
@@ -2257,6 +2263,7 @@ class MeasureWindow(Adw.Window):
         self.cal_rows = []
         self.cal_btns = {}
         self.cal_badges = {}
+        self.cal_clears = {}
         labels = self._mic_labels()
         for i in range(self.mic_ch):
             row = Adw.ActionRow()
@@ -2267,6 +2274,17 @@ class MeasureWindow(Adw.Window):
             badge.set_visible(False)
             row.add_suffix(badge)
             self.cal_badges[i] = badge
+            rm = Gtk.Button(label="Remove")
+            rm.set_valign(Gtk.Align.CENTER)
+            rm.add_css_class("flat")
+            rm.set_visible(False)
+            rm.set_tooltip_text(
+                "Measure with no calibration on this capture "
+                "channel. Takes already recorded keep the "
+                "calibration they were made with.")
+            rm.connect("clicked", self._make_cal_clear_cb(i))
+            row.add_suffix(rm)
+            self.cal_clears[i] = rm
             btn = Gtk.Button(label="Choose\u2026")
             btn.set_valign(Gtk.Align.CENTER)
             btn.add_css_class("flat")
@@ -2396,6 +2414,20 @@ class MeasureWindow(Adw.Window):
                         "%s (%d)" % (r, g["rig_counts"][r])
                         for r in g["rigs"])
                 row.set_subtitle(sub)
+                if g["sha"]:
+                    rm = Gtk.Button(label="Remove")
+                    rm.set_valign(Gtk.Align.CENTER)
+                    rm.add_css_class("flat")
+                    rm.set_tooltip_text(
+                        "Read these takes raw. The stored "
+                        "magnitude is uncalibrated either way -- "
+                        "the calibration is applied at reading "
+                        "time, so taking it off corrects a "
+                        "reading rather than the recording.")
+                    rm.connect("clicked", self._make_reassign_cb(
+                        g["sha"], g["file"], g["count"], refill,
+                        to_raw=True))
+                    row.add_suffix(rm)
                 b = Gtk.Button(label=("Reassign\u2026" if g["sha"]
                                       else "Assign\u2026"))
                 b.set_valign(Gtk.Align.CENTER)
@@ -2409,12 +2441,43 @@ class MeasureWindow(Adw.Window):
         dlg.present(self)
         return dlg
 
-    def _make_reassign_cb(self, sha, fname, count, refill):
+    def _make_reassign_cb(self, sha, fname, count, refill,
+                          to_raw=False):
         """Chooser, then a plain-words confirmation, then the
         bulk move; the fit stales honestly through its
         fingerprint and the Re-fit machinery offers the
-        recompute."""
+        recompute. With to_raw the chooser is skipped: there is
+        no file to pick, the takes simply go back to being read
+        without a calibration."""
+        def ask_and_move(path):
+            ask = Adw.AlertDialog(
+                heading="Move %d take%s?"
+                        % (count, "" if count == 1 else "s"),
+                body="%s \u2192 %s\nThe old calibration "
+                     "stays in the library; the fit will be "
+                     "marked stale."
+                     % (fname or "raw capture",
+                        os.path.basename(path) if path
+                        else "raw capture"))
+            ask.add_response("cancel", "Cancel")
+            ask.add_response("move", "Move")
+            ask.set_default_response("move")
+            ask.set_close_response("cancel")
+
+            def done2(_d, resp):
+                if resp != "move":
+                    return
+                measure_build.reassign_cal(
+                    self.parent.store, self.edit_pid, sha, path)
+                refill()
+                self._refresh_all()
+            ask.connect("response", done2)
+            ask.present(self)
+
         def cb(_btn):
+            if to_raw:
+                ask_and_move(None)
+                return
             dialog = Gtk.FileDialog()
             dialog.set_title("Choose the calibration to move "
                              "%d take%s onto"
@@ -2428,29 +2491,7 @@ class MeasureWindow(Adw.Window):
                 path = gfile.get_path() if gfile else None
                 if not path:
                     return
-                ask = Adw.AlertDialog(
-                    heading="Move %d take%s?"
-                            % (count, "" if count == 1 else "s"),
-                    body="%s \u2192 %s\nThe old calibration "
-                         "stays in the library; the fit will be "
-                         "marked stale."
-                         % (fname or "raw capture",
-                            os.path.basename(path)))
-                ask.add_response("cancel", "Cancel")
-                ask.add_response("move", "Move")
-                ask.set_default_response("move")
-                ask.set_close_response("cancel")
-
-                def done2(_d, resp):
-                    if resp != "move":
-                        return
-                    measure_build.reassign_cal(
-                        self.parent.store, self.edit_pid,
-                        sha, path)
-                    refill()
-                    self._refresh_all()
-                ask.connect("response", done2)
-                ask.present(self)
+                ask_and_move(path)
             dialog.open(self, None, done)
         return cb
 
@@ -2471,6 +2512,19 @@ class MeasureWindow(Adw.Window):
                     self._sync_cal_labels()
                     self._persist_mic()
             dialog.open(self, None, done)
+        return cb
+
+    def _make_cal_clear_cb(self, ch):
+        """Take the calibration off this capture channel. The
+        library keeps the file and every take keeps the sha it was
+        measured with -- provenance is not undone by a later
+        choice. Only what the NEXT take will carry changes."""
+        def cb(_btn):
+            if not self.cal.get(ch):
+                return
+            self.cal.pop(ch, None)
+            self._sync_cal_labels()
+            self._persist_mic(by_hand=True)
         return cb
 
     def _make_discard_cb(self, ch, take_id):
@@ -2906,7 +2960,7 @@ class MeasureWindow(Adw.Window):
             pass
         return False
 
-    def _persist_mic(self):
+    def _persist_mic(self, by_hand=False):
         """Save the chosen mic + its per-capture-channel cal (bound to the
         source node) and remember the mic for this sink as soon as either
         changes -- not only at create."""
@@ -2916,14 +2970,13 @@ class MeasureWindow(Adw.Window):
                          % self.mic_picker.core.node)
             return
         existing = self.mic_store.match(src["name"])
-        cal = {str(i): p for i, p in self.cal.items() if p}
+        # an empty set means "still loading" from a handler and
+        # "take it off" from a hand -- measure_prefs decides which,
+        # and only a hand may empty the block
+        cal = measure_prefs.cal_to_store(
+            self.cal, (existing or {}).get("cal"), by_hand)
         if not cal and existing is None:
             return
-        if not cal and existing:
-            # never downgrade a remembered rig to
-            # calibration-less because a change handler fired
-            # before the cals were in RAM
-            cal = dict(existing.get("cal") or {})
         body = {"name": src["desc"], "node_match": src["name"],
                 "serial": ((existing or {}).get("serial", "")
                            or measure_prefs.serial_from_cal(cal.values())),

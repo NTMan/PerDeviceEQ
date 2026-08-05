@@ -396,26 +396,43 @@ def reassign_cal(store, pid, old_sha, new_path):
     library is append-only history); takes with another sha or
     with none are untouched. The fit is not touched: a moved
     canvas stales it honestly through the fingerprint. Returns
-    the number of takes moved."""
+    the number of takes moved.
+
+    `new_path` of None takes the calibration OFF instead: the
+    takes go back to raw. That is not a forgery. A take stores
+    its magnitude UNCALIBRATED and names the cal it was read
+    with; the cal is an interpretation applied at reading time,
+    not something baked into the recording. So a coupler cal that
+    ended up on a loopback of bare wire is a wrong reading, and
+    correcting it is the same act as moving takes onto a
+    different cal -- which is why removal lives here rather than
+    in a separate operation."""
     prof = store.get(pid)
     if prof is None:
         raise KeyError("no profile %s" % pid)
     m = prof.get("measurement")
     if not m:
         return 0
-    entry = cal_entry(new_path)
+    entry = cal_entry(new_path) if new_path else None
+    new_sha = entry["sha256"] if entry else None
+    if (old_sha or None) == new_sha:
+        return 0
     takes = [dict(t) for t in (m.get("takes") or [])]
     moved = 0
     for t in takes:
         if t.get("cal_sha") == old_sha:
-            t["cal_sha"] = entry["sha256"]
+            if new_sha is None:
+                t.pop("cal_sha", None)
+            else:
+                t["cal_sha"] = new_sha
             moved += 1
     if not moved:
         return 0
     m = dict(m)
     lib = dict(m.get("cal_library") or {})
-    lib.setdefault(entry["sha256"], {"file": entry["file"],
-                                     "points": entry["points"]})
+    if entry is not None:
+        lib.setdefault(entry["sha256"], {"file": entry["file"],
+                                         "points": entry["points"]})
     m["cal_library"] = lib
     m["takes"] = takes
     prof = dict(prof)

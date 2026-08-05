@@ -38,6 +38,30 @@ def _atomic_write(path, obj):
 
 
 
+def cal_to_store(chosen, remembered, by_hand=False):
+    """What a rig's remembered calibration becomes after a change.
+
+    `chosen` is what the window holds right now, keyed by capture
+    channel; `remembered` is what the store already has.
+
+    An EMPTY chosen set is ambiguous, and that ambiguity is the
+    whole bug: it is what the window holds for a heartbeat while a
+    profile is still loading, and it is also exactly what the
+    operator means after pressing Remove. Guessing one way wipes a
+    remembered rig on a stray handler; guessing the other way makes
+    a calibration impossible to take OFF -- which is what the field
+    found: the button was missing, and even with a button the store
+    would have put the old file straight back.
+
+    So the hand decides. by_hand is an operator's act and empties
+    the block; without it an empty set defers to what was
+    remembered."""
+    cal = {str(k): v for k, v in (chosen or {}).items() if v}
+    if cal or by_hand:
+        return cal
+    return dict(remembered or {})
+
+
 def serial_from_cal(paths):
     """The rig serial, read from the cal filenames. miniDSP ships
     per-unit cal as {L,R}_{RAW,HEQ,IDF,HPN}_<serial>.txt and UMIKs

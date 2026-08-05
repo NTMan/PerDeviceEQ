@@ -381,3 +381,32 @@ def test_thd_at_reads_the_frequency_it_was_asked_for():
                - 1.0) < 1e-6
     thd = [-40.0, None, -20.0]
     assert measure_build.thd_at(f, thd) is None
+
+def test_a_calibration_can_be_taken_off_recorded_takes(
+        shim_state, store, tmp_path):
+    """A coupler cal that ended up on a loopback of bare wire is a
+    wrong READING, not a wrong recording: the take stores its
+    magnitude uncalibrated and names the cal it was read with. So
+    taking it off is the same act as moving it, and it is bulk."""
+    pid = _bare(store, "off", "TakeItOff")
+    ses = _session(tmp_path, [(0, 0), (0, 0)])
+    cal_a = _cal_file(tmp_path, "coupler.txt", 1.0)
+    ids = measure_build.commit_take(store, pid, ses, 0, "FL",
+                                    ses.takes_of(0)[0].id,
+                                    cal=cal_a)
+    measure_build.commit_take(store, pid, ses, 0, "FL",
+                              ses.takes_of(0)[1].id, cal=cal_a,
+                              canvas_session=ids["session"])
+    ses2 = _session(tmp_path, [(0, 0)])
+    measure_build.commit_take(store, pid, ses2, 0, "FL",
+                              ses2.takes_of(0)[-1].id)  # raw
+    m0 = store.get(pid)["measurement"]
+    sha = m0["takes"][0]["cal_sha"]
+    moved = measure_build.reassign_cal(store, pid, sha, None)
+    assert moved == 2
+    m = store.get(pid)["measurement"]
+    assert [t.get("cal_sha") for t in m["takes"]] == [None] * 3
+    assert sha in m["cal_library"]        # history is kept
+    # nothing left to take off is not an operation
+    assert measure_build.reassign_cal(store, pid, sha, None) == 0
+    assert measure_build.reassign_cal(store, pid, None, None) == 0

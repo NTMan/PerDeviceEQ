@@ -183,3 +183,26 @@ def test_the_level_caption_and_the_hand_that_wins(tmp_path):
         assert mem.volume_for("sinkA", "other") is None
     finally:
         monkeypatch.undo()
+
+def test_only_a_hand_can_take_the_calibration_off():
+    """An empty chosen set means two different things: a profile
+    still loading, and an operator who pressed Remove. Guessing
+    one way wipes a remembered rig; guessing the other makes the
+    calibration impossible to take off."""
+    keep = {"0": "/cal/mic.txt"}
+    assert mp.cal_to_store({0: "/cal/new.txt"},
+                                      keep) == {"0": "/cal/new.txt"}
+    # a stray handler with nothing in RAM yet must not wipe it
+    assert mp.cal_to_store({}, keep) == keep
+    assert mp.cal_to_store(None, keep) == keep
+    # a hand empties it, remembered or not
+    assert mp.cal_to_store({}, keep, by_hand=True) == {}
+    assert mp.cal_to_store({}, None, by_hand=True) == {}
+    # empty paths are not calibrations
+    assert mp.cal_to_store({0: "", 1: None}, keep) == keep
+    assert mp.cal_to_store({0: "", 1: "/c/b.txt"},
+                                      keep) == {"1": "/c/b.txt"}
+    # the caller's dict is never handed back by reference
+    out = mp.cal_to_store({}, keep)
+    out["0"] = "/cal/other.txt"
+    assert keep == {"0": "/cal/mic.txt"}
