@@ -102,11 +102,23 @@ def take_dict(rec, session_id, key, freqs):
     return out
 
 
-def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0):
+def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0,
+           frac=1.0 / 12.0):
     """The one number a datasheet prints: THD at a single
     frequency, as a percent. Manufacturers quote it at 1 kHz --
     Tanchjim says "<0.056% @1kHz 94dB" -- so a rig that measures a
     whole sweep still owes the eye that one comparable figure.
+
+    Read as the MEDIAN of a twelfth-octave band around f0, not as
+    the single nearest bin. The drawn line is smoothed a twelfth
+    of an octave, so a single-bin headline could disagree with the
+    picture underneath it by tens of decibels: one narrow
+    interference tone that happens to land on 1 kHz became "the
+    device's THD" while the pen, averaging it away, showed
+    something else entirely. The field caught exactly that. The
+    band and the pen now read the same thing, and a median rather
+    than a mean so that a spike inside the band still cannot buy
+    the number.
 
     Returns (percent, clamped) or None when the take abstains
     there. `clamped` is True when the reading sits within
@@ -122,16 +134,23 @@ def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0):
                    for v in thd], float)
     if len(ta) != len(fa):
         return None
-    j = int(np.argmin(np.abs(np.log(np.maximum(fa, 1e-9))
-                             - np.log(f0))))
-    v = ta[j]
-    if not np.isfinite(v):
+    lo = f0 * (2.0 ** (-frac / 2.0))
+    hi = f0 * (2.0 ** (frac / 2.0))
+    band = (fa >= lo) & (fa <= hi)
+    if not band.any():
+        band = np.zeros(len(fa), bool)
+        band[int(np.argmin(np.abs(np.log(np.maximum(fa, 1e-9))
+                                  - np.log(f0))))] = True
+    ok = band & np.isfinite(ta)
+    if not ok.any():
         return None
+    v = float(np.median(ta[ok]))
     clamped = False
     if noise is not None and len(noise) == len(fa):
-        n = noise[j]
-        n = np.nan if n is None else float(n)
-        if np.isfinite(n) and v - n < floor_gap:
+        na = np.array([np.nan if x is None else float(x)
+                       for x in noise], float)
+        nok = band & np.isfinite(na)
+        if nok.any() and v - float(np.median(na[nok])) < floor_gap:
             clamped = True
     return 100.0 * (10.0 ** (v / 20.0)), clamped
 

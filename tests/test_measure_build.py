@@ -410,3 +410,32 @@ def test_a_calibration_can_be_taken_off_recorded_takes(
     # nothing left to take off is not an operation
     assert measure_build.reassign_cal(store, pid, sha, None) == 0
     assert measure_build.reassign_cal(store, pid, None, None) == 0
+
+def test_the_headline_reads_what_the_pen_draws():
+    """A single narrow tone landing on 1 kHz used to become "the
+    device's THD" while the drawn line, smoothed a twelfth of an
+    octave, showed something else entirely -- the header and the
+    picture under it disagreed by tens of decibels."""
+    f = np.geomspace(20.0, 20000.0, 958)
+    quiet = np.full(958, -80.0)
+    i = int(np.argmin(np.abs(f - 1000.0)))
+    spiked = quiet.copy()
+    spiked[i] = -40.0                      # one interference tone
+    pct_q = measure_build.thd_at(f, quiet)[0]
+    pct_s = measure_build.thd_at(f, spiked)[0]
+    assert abs(pct_q - 0.01) < 0.001
+    assert abs(pct_s - pct_q) < 0.001      # the spike buys nothing
+    # a band that is genuinely raised IS reported
+    raised = quiet.copy()
+    band = (f >= 1000 * 2 ** (-1 / 24.)) & (f <= 1000 * 2 ** (1 / 24.))
+    raised[band] = -40.0
+    assert abs(measure_build.thd_at(f, raised)[0] - 1.0) < 0.01
+    # abstention across the whole band is still an abstention
+    gone = quiet.copy()
+    gone[band] = np.nan
+    assert measure_build.thd_at(f, gone) is None
+    # the floor mark reads the same band
+    assert measure_build.thd_at(f, quiet,
+                                np.full(958, -82.0))[1] is True
+    assert measure_build.thd_at(f, quiet,
+                                np.full(958, -95.0))[1] is False
