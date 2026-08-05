@@ -2882,8 +2882,15 @@ class MeasureWindow(Adw.Window):
     def _ensure_pid(self):
         """The profile this window edits. A fresh window creates it
         on first need -- the first committed take, or the plain close
-        that still leaves an empty profile behind (New's contract) --
-        and binds it to the sink."""
+        that still leaves an empty profile behind (New's contract).
+
+        It is bound to the sink ONLY when that sink is the one the
+        parent is currently playing. Measuring a device you are not
+        listening to must not reach across and change what you ARE
+        listening to: the new profile is simply born, and binding it
+        stays a choice made where choices are made. When the sink IS
+        the active one, binding it is what New means -- measure this
+        device, hear the result."""
         if self.edit_pid:
             return self.edit_pid
         store = self.parent.store
@@ -2891,7 +2898,9 @@ class MeasureWindow(Adw.Window):
             "name": self._profile_name(),
             "apply_all": True, "preamp": 0.0, "ch_keys": [],
             "all": {"bands": []}, "channels": {}})
-        store.set_binding(self.sink_node, pid)
+        if self.sink_node and self.sink_node == getattr(
+                self.parent, "node", None):
+            store.set_binding(self.sink_node, pid)
         self.edit_pid = pid
         return pid
 
@@ -3015,13 +3024,25 @@ class MeasureWindow(Adw.Window):
                 or bool(ids - set(fit.get("takes") or [])))
 
     def _parent_reload(self, pid):
-        """Freshen the parent after a session. Only steal its
-        selection when we measured ITS current device; a foreign
-        profile's session refreshes the picker and leaves the
-        playing profile alone -- the computer may be playing one
-        device while another was being measured."""
+        """Freshen the parent after a session WITHOUT changing what
+        the device plays.
+
+        Editing a profile is not choosing it. This used to load the
+        edited profile into the parent whenever it belonged to the
+        parent's current device, so opening any inactive profile
+        just to look at it switched the machine over on close: the
+        field put the original back more than twenty times in one
+        day. The fit runner already had the right rule and this
+        borrows it -- reload only what is ALREADY playing, otherwise
+        refresh the list and leave the sound alone.
+
+        A newly created profile still lands active, and by the
+        honest route rather than a special case: creating it bound
+        it to the sink, and the parent reloads that binding when the
+        window closes."""
         try:
-            if self.parent.node == self.sink_node:
+            if (self.parent.node == self.sink_node
+                    and self.parent.current_pid == pid):
                 self.parent._select_device(self.sink_node,
                                            load=False)
                 self.parent._load_profile(pid)
