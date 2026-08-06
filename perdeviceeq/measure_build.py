@@ -26,6 +26,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+import math
 import numpy as np
 
 from . import measure_core as mc
@@ -102,6 +103,28 @@ def take_dict(rec, session_id, key, freqs):
         out[key] = [None if not np.isfinite(v) else _num(v, 2)
                     for v in a]
     return out
+
+
+def pct_word(pct, digits=2):
+    """A distortion percentage written to a fixed number of
+    SIGNIFICANT digits rather than a fixed number of decimals.
+
+    Two decimals turned a real measurement into a rounding artifact:
+    the field's loopback reads seven thousandths of a percent and
+    the header said "0.01%", which is the same thing it says for a
+    reading forty per cent larger, and the same thing it says when
+    the number is merely sitting on the noise floor. The scale here
+    spans five orders of magnitude -- a good converter at seven
+    thousandths, an earphone at a few tenths, a clipped chain at
+    thirty-five per cent -- and no fixed decimal count serves all
+    of it."""
+    if pct is None or not np.isfinite(pct):
+        return None
+    if pct <= 0:
+        return "0"
+    place = int(math.floor(math.log10(abs(pct))))
+    dec = max(0, digits - 1 - place)
+    return "%.*f" % (min(dec, 6), pct)
 
 
 def capsule_of(records, fallback=None):

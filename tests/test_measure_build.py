@@ -469,3 +469,21 @@ def test_the_partner_claim_never_decides_whether_to_draw():
     assert claim(False, True) == "shape"
     assert claim(False, False) == "shape"
     assert claim(None, True) == "shape"
+
+
+def test_a_distortion_figure_keeps_its_significant_digits():
+    """Two decimals turned a real measurement into a rounding
+    artifact: seven thousandths of a percent printed as "0.01%",
+    which is what a reading forty per cent larger prints too. The
+    scale spans five orders of magnitude and no fixed decimal count
+    serves all of it."""
+    w = measure_build.pct_word
+    assert w(0.0080) == "0.0080"
+    assert w(0.0065) == "0.0065"
+    assert w(0.26) == "0.26"
+    assert w(1.4) == "1.4"
+    assert w(35.2) == "35"
+    assert w(0.0) == "0"
+    assert w(None) is None
+    assert w(float("nan")) is None
+    assert w(0.0080, digits=3) == "0.00800"

@@ -1534,8 +1534,11 @@ class MeasureWindow(Adw.Window):
         if got is None:
             return ""
         pct, clamped = got
-        return " \u00b7 <small>THD@1k %s%.2f%%</small>" % (
-            "\u2264" if clamped else "", pct)
+        word = measure_build.pct_word(pct)
+        if word is None:
+            return ""
+        return " \u00b7 <small>THD@1k %s%s%%</small>" % (
+            "\u2264" if clamped else "", word)
 
     def _zoomed(self, area, subject, tip):
         """Every canvas wears a corner button that opens it large.
