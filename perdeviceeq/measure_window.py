@@ -3038,13 +3038,14 @@ class MeasureWindow(Adw.Window):
         on first need -- the first committed take, or the plain close
         that still leaves an empty profile behind (New's contract).
 
-        It is bound to the sink ONLY when that sink is the one the
-        parent is currently playing. Measuring a device you are not
-        listening to must not reach across and change what you ARE
-        listening to: the new profile is simply born, and binding it
-        stays a choice made where choices are made. When the sink IS
-        the active one, binding it is what New means -- measure this
-        device, hear the result."""
+        Where it BELONGS is decided at closing time, not here.
+        Creation happens at whichever moment first needs a profile
+        to exist -- a committed take, a retarget, the plain close --
+        and the retarget is the trap: it mints the profile while the
+        window still points at the sink it is LEAVING, so binding
+        here handed a new profile to the output the operator had
+        just walked away from, and the main window dutifully
+        switched to it."""
         if self.edit_pid:
             return self.edit_pid
         store = self.parent.store
@@ -3052,11 +3053,26 @@ class MeasureWindow(Adw.Window):
             "name": self._profile_name(),
             "apply_all": True, "preamp": 0.0, "ch_keys": [],
             "all": {"bands": []}, "channels": {}})
-        if self.sink_node and self.sink_node == getattr(
-                self.parent, "node", None):
-            store.set_binding(self.sink_node, pid)
         self.edit_pid = pid
+        self._minted = pid
         return pid
+
+    def _settle_home(self, pid):
+        """Give a profile this window MINTED a home, if it earned
+        one: the sink it ended up measuring, and only when that sink
+        is the one the parent is playing. Measuring a device you are
+        not listening to must not reach across and change what you
+        ARE listening to. An edited profile is never rehomed -- its
+        home is not this window's business."""
+        if getattr(self, "_minted", None) != pid or not pid:
+            return
+        if not self.sink_node or self.sink_node != getattr(
+                self.parent, "node", None):
+            return
+        try:
+            self.parent.store.set_binding(self.sink_node, pid)
+        except Exception as e:
+            debug.log("settle home: %s" % e)
 
     def _apply_name(self, pid):
         name = self._profile_name()
@@ -3341,6 +3357,7 @@ class MeasureWindow(Adw.Window):
             win.close()                  # no orphaned pictures
         pid = self._ensure_pid()         # New: even empty stays
         self._apply_name(pid)
+        self._settle_home(pid)           # where it ENDED up, if minted
         try:
             self._persist_mic()
         except Exception:
