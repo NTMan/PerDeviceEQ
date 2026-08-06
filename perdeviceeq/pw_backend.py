@@ -115,7 +115,8 @@ def list_sources(dump=None):
             sources.append({"id": o["id"], "name": name,
                             "desc": p.get("node.description") or name,
                             "prio": p.get("priority.session") or 0,
-                            "routes": input_routes(name, dump)})
+                            "routes": input_routes(name, dump),
+                            "gain": gain_of_node(o)})
     sources.sort(key=lambda s: -(s["prio"] or 0))
     return sources
 
@@ -431,6 +432,66 @@ def set_stream_mute(node_id, mute):
     r = _run(["pw-cli", "set-param", str(node_id), "Props",
               "{ mute = %s }" % ("true" if mute else "false")])
     return r.returncode == 0
+
+
+def gain_state(node_name, dump=None):
+    """(cubic gain, "hardware"/"software"/None) for a capture node.
+
+    PipeWire stores channelVolumes linear; every user-facing number
+    -- wpctl, GNOME, ours -- is its cube root. softVolumes is the
+    part PipeWire multiplies into the SAMPLES: when the card has a
+    real gain control the route takes the volume and softVolumes
+    stays at unity, and when it does not, the same slider is only
+    arithmetic after the converter. The two are worth telling apart
+    on a measurement rig -- software gain buys no headroom against
+    an analog overload and improves no noise, it just scales what
+    was already digitised."""
+    dump = dump if dump is not None else pw_dump()
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("node.name") == node_name:
+            return gain_of_node(o)
+    return None, None
+
+
+def gain_of_node(o):
+    """The same reading straight off a node object, so the list of
+    sources can carry it from the graph dump the window already
+    receives -- nothing in this window may shell out on the main
+    loop."""
+    d = {}
+    for blk in ((o.get("info") or {}).get("params")
+                or {}).get("Props") or []:
+        if isinstance(blk, dict):
+            d.update(blk)
+    cv = [float(v) for v in d.get("channelVolumes") or []]
+    if not cv:
+        return None, None
+    cubic = (sum(cv) / len(cv)) ** (1.0 / 3.0)
+    sv = [float(v) for v in d.get("softVolumes") or []]
+    if not sv or cubic > 0.999:
+        # at unity there is nothing to tell apart: both kinds
+        # multiply by one, and guessing would be invention
+        kind = None
+    elif all(abs(v - 1.0) < 1e-6 for v in sv):
+        kind = "hardware"
+    elif all(abs(a - b) < 1e-6 for a, b in zip(sv, cv)):
+        kind = "software"
+    else:
+        kind = None
+    return cubic, kind
+
+
+def set_gain(node_id, cubic):
+    """wpctl writes through to the device Route where one exists,
+    which is what makes a card's real input gain move; raw Props
+    writes on ALSA nodes do not stick. Raises on failure."""
+    r = _run(["wpctl", "set-volume", str(node_id), "%.4f" % cubic])
+    if r.returncode != 0:
+        raise RuntimeError("wpctl set-volume failed: %s"
+                           % (r.stderr or "").strip())
 
 
 def set_sink_volume(sink_id, cubic):

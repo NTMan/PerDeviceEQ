@@ -349,3 +349,48 @@ def test_an_output_route_cannot_crown_an_input_port():
     assert got == {"Microphone": False, "Line In": True}
     assert pwb.active_input_route(
         "alsa_input.usb-0d8c-00.analog-stereo", d) == "Line In"
+
+
+def _gain_dump(cv, sv=None):
+    props = {"channelVolumes": cv}
+    if sv is not None:
+        props["softVolumes"] = sv
+    return [{"id": 40, "type": "PipeWire:Interface:Node",
+             "info": {"props": {"node.name": "src",
+                                "media.class": "Audio/Source"},
+                      "params": {"Props": [props]}}}]
+
+
+def test_hardware_gain_reads_apart_from_a_software_multiplier():
+    """Software gain buys no headroom against an analog overload
+    and improves no noise -- it scales what was already digitised.
+    On a measurement rig the two are worth telling apart."""
+    half = 0.125                      # cubic 0.5
+    g, kind = pwb.gain_state("src", _gain_dump([half, half],
+                                               [1.0, 1.0]))
+    assert abs(g - 0.5) < 1e-9 and kind == "hardware"
+    g, kind = pwb.gain_state("src", _gain_dump([half, half],
+                                               [half, half]))
+    assert abs(g - 0.5) < 1e-9 and kind == "software"
+    # unity everywhere says nothing about which one it would be
+    g, kind = pwb.gain_state("src", _gain_dump([1.0, 1.0],
+                                               [1.0, 1.0]))
+    assert abs(g - 1.0) < 1e-9 and kind is None
+    # no Props at all, or no such node: an abstention, not a zero
+    assert pwb.gain_state("src", _gain_dump([])) == (None, None)
+    assert pwb.gain_state("nope", _gain_dump([0.5])) == (None, None)
+
+
+def test_the_gain_rides_the_same_dump_as_the_sources():
+    """Nothing in the measure window may shell out on the main
+    loop: the capture gain travels with the source list, out of the
+    graph snapshot the window already receives."""
+    d = _card_dump()
+    node = [o for o in d if o["id"] == 40][0]
+    node["info"]["params"] = {"Props": [{
+        "channelVolumes": [0.125, 0.125],
+        "softVolumes": [1.0, 1.0]}]}
+    src = {s["name"]: s for s in pwb.list_sources(d)}
+    g, kind = src["alsa_input.usb-0d8c-00.analog-stereo"]["gain"]
+    assert abs(g - 0.5) < 1e-9 and kind == "hardware"
+    assert src["virtual-thing"]["gain"] == (None, None)

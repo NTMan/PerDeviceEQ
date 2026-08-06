@@ -79,6 +79,8 @@ def take_dict(rec, session_id, key, freqs):
         mag = np.interp(np.log(freqs), np.log(rec.freq_hz), mag)
     out = {"id": _new_id(), "session": session_id, "channel": key,
             "capture_channel": rec.capture_channel,
+            "capture_gain": list(rec.capture_gain)
+            if rec.capture_gain else None,
             "created_utc": rec.created_utc,
             "mag_db_uncal": [_num(v, 2) for v in mag],
             "delay_ms": _num(rec.delay_ms, 2),

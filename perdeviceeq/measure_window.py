@@ -324,6 +324,12 @@ class MeasureWindow(Adw.Window):
         self.vol_spin.set_valign(Gtk.Align.START)
         ring_host.append(self.vol_spin)  # pinned to the left edge
         ring_host.append(ring_col)
+        # the sweep leaves on the left and comes back on the right:
+        # the input gain sits where the signal returns, not beside
+        # the output fader, where two identical sliders would read
+        # as a louder/quieter pair -- which they are not
+        self.gain_spin.set_valign(Gtk.Align.START)
+        ring_host.append(self.gain_spin)
         lead = b.get_object("status_lead")
         # the size group matches the bin's WIDTH to the fader,
         # but a Box hands a child only its natural width -- and
@@ -510,6 +516,20 @@ class MeasureWindow(Adw.Window):
             "override if it misses.")
         self.vol_spin.connect("value-changed", self._on_vol_edited)
         self._tame_scroll(self.vol_spin)
+        gadj = Gtk.Adjustment(lower=0, upper=100, step_increment=1,
+                              page_increment=5)
+        self.gain_spin = Gtk.Scale(
+            orientation=Gtk.Orientation.VERTICAL, adjustment=gadj)
+        self.gain_spin.set_inverted(True)     # up is more gain
+        self.gain_spin.set_draw_value(True)
+        self.gain_spin.set_value_pos(Gtk.PositionType.BOTTOM)
+        self.gain_spin.set_digits(0)
+        self.gain_spin.set_size_request(-1, RING)
+        self.gain_spin.connect("value-changed", self._on_gain_edited)
+        self._tame_scroll(self.gain_spin)
+        self._gain_guard = False
+        self._gain_seeded = None
+        self._take_gain = None
         self.relevel_btn = self._pult_btn(
             "pde-level-symbolic",
             "Measure the playback level now (probe sweeps only)",
@@ -732,6 +752,11 @@ class MeasureWindow(Adw.Window):
             if s:
                 head += " S/N %s" % s
             parts.append(head)
+        g = take.get("capture_gain") or None
+        if g and g[0] is not None:
+            parts.append("input gain %d%%%s"
+                         % (round(float(g[0]) * 100.0),
+                            " (%s)" % g[1] if g[1] else ""))
         sha = take.get("cal_sha")
         if sha:
             e = (m.get("cal_library") or {}).get(sha) or {}
@@ -2652,6 +2677,89 @@ class MeasureWindow(Adw.Window):
         if self.session is not None and self._busy:
             self.session.cancel()            # aborts the sweep in flight
 
+    def _refresh_gain(self):
+        """The capture gain, read from the same graph dump the
+        window already has. It is a property of the RIG, not of a
+        take: two takes of one canvas measured at different input
+        gains cannot be compared, and their spread stops meaning
+        anything -- which is exactly how five and a half decibels
+        once looked like a crooked sound card."""
+        row = getattr(self, "gain_spin", None)
+        if row is None:
+            return
+        src = self._selected_source() or {}
+        cubic, kind = src.get("gain") or (None, None)
+        self._gain_kind = kind
+        self._gain_ok = cubic is not None
+        row.set_sensitive(cubic is not None)
+        if cubic is None:
+            self._gain_seeded = None
+            row.set_tooltip_text(
+                "This input has no gain control of its own.")
+            return
+        # seeded from the card ONCE per rig, and after that the hand
+        # owns it. Re-reading it on every heartbeat meant a lagging
+        # graph dump could yank the slider out from under the
+        # operator, which is exactly what the field saw mid-sweep.
+        seed = src.get("node") or src.get("name")
+        if self._gain_seeded != seed:
+            self._gain_seeded = seed
+            self._gain_guard = True
+            row.set_value(round(cubic * 100.0))
+            self._gain_guard = False
+        note = {"hardware": "The card's own gain: it moves the "
+                            "signal BEFORE the converter, so it "
+                            "buys real headroom and real noise.",
+                "software": "A software multiplier: it scales what "
+                            "was already digitised, so it buys no "
+                            "headroom against an analog overload "
+                            "and improves no noise.",
+                None: "Capture gain."}[kind]
+        note += (" Every take records the gain it was measured at; "
+                 "takes made at different gains are not comparable.")
+        row.set_tooltip_text(note)
+
+    def _assert_capture_gain(self):
+        """Put the card where the slider says, right before the
+        sweep. One write, no comparison, no remembering and nothing
+        put back: the slider IS the card's gain while this window is
+        open, and the operator is the only one who moves it.
+
+        Everything cleverer than this failed in the field within a
+        minute. Baking the value into the session let a number from
+        window-open time pull the slider back mid-sweep; keeping the
+        slider in sync with the graph on every heartbeat let a lagging
+        dump do the same; and locking it after the first sweep made
+        the one thing the operator actually wanted impossible --
+        record, see the clip, lower the gain, record again."""
+        if self._take_gain is None:
+            return
+        src = self._selected_source() or {}
+        nid = src.get("id")
+        if nid is None:
+            return
+        try:
+            pw_backend.set_gain(nid, self._take_gain)
+        except Exception as e:
+            debug.log("capture gain: %s" % e)
+
+    def _on_gain_edited(self, scale):
+        if self._gain_guard:
+            return
+        src = self._selected_source() or {}
+        nid = src.get("id")
+        if nid is None:
+            return
+        cubic = scale.get_value() / 100.0
+
+        def work():
+            try:
+                pw_backend.set_gain(nid, cubic)
+            except Exception as e:
+                debug.log("capture gain: %s" % e)
+
+        pw_backend.in_thread(work)
+
     def _lock_baked_rows(self):
         """The rig and its capsule count are baked into the
         session's config when it is built, and an ARMED session
@@ -2670,6 +2778,7 @@ class MeasureWindow(Adw.Window):
                 "sweep ran. Reopen the window to change them.")
         self.source_dd.set_sensitive(have and not armed)
         self.chan_dd.set_sensitive(not armed)
+        self._refresh_gain()
         for row in (self.source_dd, self.chan_dd):
             row.set_tooltip_text(note if armed else None)
 
@@ -2815,6 +2924,12 @@ class MeasureWindow(Adw.Window):
         # the session is entered. One door, zero shield flags.
         self._take_level = (None if level_only
                             else self.vol_spin.get_value() / 100.0)
+        # the input gain rides the SAME door, read here on the main
+        # thread: baking it into the session let a stale number from
+        # window-open time pull the slider back mid-sweep
+        self._take_gain = (self.gain_spin.get_value() / 100.0
+                           if getattr(self, "_gain_ok", False)
+                           else None)
         self._busy = True
         self._set_ring_sensitive(False)
         self._update_pult()
@@ -2834,6 +2949,7 @@ class MeasureWindow(Adw.Window):
         result = {"error": None, "outcome": None}
         try:
             self._assert_entry_route()
+            self._assert_capture_gain()
             if getattr(self, "_take_level", None) is not None:
                 self.session.set_level(self._take_level)
             guard = 0

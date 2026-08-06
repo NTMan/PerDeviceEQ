@@ -872,6 +872,11 @@ class TakeRecord:
                               # 1.0 when the device does the volume
     noise_dbfs: object = None  # core pre-sweep noise-floor estimate
     capture_channel: object = None  # analyze column (which mic saw it)
+    capture_gain: object = None  # (cubic, "hardware"/"software"/None)
+                                 # on the source at sweep time: two
+                                 # takes measured at different input
+                                 # gains are not comparable, and the
+                                 # passport must be able to say so
     created_utc: object = None      # ISO 8601 UTC acceptance time
     h2_db: object = None            # harmonic confession, core axes
     h3_db: object = None
@@ -1038,6 +1043,7 @@ class MeasureSession:
         self.source_ident = {"name": cfg.source}
         self.sink_layout = []
         self.volume_start = None
+        self._gain_now = None
         self._raw0 = None
         self.foreign = []
         self._resolved = False
@@ -1310,6 +1316,9 @@ class MeasureSession:
         # ports, and a passport must not be ambiguous about it
         self.source_ident["route"] = pw_backend.active_input_route(
             self.source_ident["name"], dump)
+        # what the card's input gain IS at this sweep -- the window
+        # sets it before calling in, and the session only witnesses
+        self._gain_now = pw_backend.gain_of_node(self.source)
         self.sink_layout = sink_channels(self.sink_ident["name"],
                                          dump)
         self._pending = None                # a new sweep supersedes it
@@ -1498,6 +1507,7 @@ class MeasureSession:
                          chan_vol=gains[0], soft_vol=gains[1],
                          noise_dbfs=t.noise_dbfs,
                          capture_channel=capture,
+                         capture_gain=getattr(self, "_gain_now", None),
                          created_utc=_utc_now(),
                          h2_db=t.h2_db, h3_db=t.h3_db,
                          thd_db=t.thd_db,
