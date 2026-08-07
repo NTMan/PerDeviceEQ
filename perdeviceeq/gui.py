@@ -1624,6 +1624,12 @@ class EqWindow(Adw.ApplicationWindow):
                     dev = []
             pch = list(p.get("ch_keys") or list((p.get("channels") or {}).keys()))
             self.ch_keys = dev or pch or ["FL", "FR"]
+            # the sink in front of us may have changed width, and the profile
+            # may be a different one than last time: bring the map up to date
+            # here, once, rather than deciding it again on every keystroke.
+            self.ch_map = (
+                self.store.reconcile_map(self.node, pch, self.ch_keys)
+                if (self.live and self.node) else {})
 
             self.preamp = float(p.get("preamp", 0.0))
             self.preamp_auto = bool(p.get("preamp_auto", True))
@@ -1778,9 +1784,12 @@ class EqWindow(Adw.ApplicationWindow):
         if self.bypass_row.get_active() or silent:
             pw_backend.in_thread(lambda: auth.clear_graph(node))
         else:
-            slots = eq.resolve_slots(
-                (body.get("ch_keys") or list((body.get("channels") or {}))),
-                self.ch_keys)
+            slots = ([self.ch_map.get(k) for k in self.ch_keys]
+                     if getattr(self, "ch_map", None) else
+                     eq.resolve_slots(
+                         (body.get("ch_keys")
+                          or list((body.get("channels") or {}))),
+                         self.ch_keys))
             graph = eq.profile_graph(body, extra=extra, slots=slots)
             pw_backend.in_thread(lambda: auth.publish_graph(node,
                                                            graph))

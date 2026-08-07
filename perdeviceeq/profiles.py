@@ -20,7 +20,7 @@ import os, sys, json, uuid
 
 from .config import (SYS_PROFILE_DIRS, USER_PROFILES_DIR, BINDINGS_FILE,
                      CONFIG_DIR, CLEAN_ID, SCHEMA_VERSION, V3_BLOCKS)
-from .eq import profile_graph, profile_has_content
+from .eq import profile_graph, profile_has_content, resolve_slots
 
 
 def _new_id():
@@ -253,19 +253,100 @@ class ProfileStore:
 
     # ---- bindings ----
     def _load_bindings(self):
+        """bindings.json holds either a bare profile id per node, as it always
+        did, or a record. The record exists because a node needs to remember
+        more than which profile it wears: it also remembers WHICH CHANNEL OF
+        THE PROFILE FEEDS WHICH OF ITS OWN -- the sink owns the route, the
+        profile owns the earphone, and the correspondence between them
+        belongs to neither.
+
+        Read into two dicts so that everything written against the old shape
+        keeps working: self.bindings stays node -> profile id, self.maps
+        carries node -> {sink channel: profile channel or None}, in sink
+        order. A node with no map is written back in the bare form, so a
+        file only grows a record once someone actually maps something.
+        """
+        binds, maps = {}, {}
         try:
             with open(BINDINGS_FILE, encoding="utf-8") as f:
                 b = json.load(f)
-            return {k: v for k, v in b.items()} if isinstance(b, dict) else {}
         except Exception:
-            return {}
+            b = {}
+        if isinstance(b, dict):
+            for node, v in b.items():
+                if isinstance(v, dict):
+                    pid = v.get("profile")
+                    if pid:
+                        binds[node] = pid
+                    m = v.get("map")
+                    if isinstance(m, dict) and m:
+                        maps[node] = {k: (x or None) for k, x in m.items()}
+                elif v:
+                    binds[node] = v
+        self.maps = maps
+        return binds
 
     def save_bindings(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
+        out = {}
+        for node, pid in self.bindings.items():
+            m = getattr(self, "maps", {}).get(node)
+            out[node] = {"profile": pid, "map": m} if m else pid
+        for node, m in getattr(self, "maps", {}).items():
+            if m and node not in out:
+                out[node] = {"profile": None, "map": m}
         tmp = BINDINGS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.bindings, f, indent=2, ensure_ascii=False)
+            json.dump(out, f, indent=2, ensure_ascii=False)
         os.replace(tmp, BINDINGS_FILE)
+
+    # ---- channel map: which profile channel feeds which sink channel ----
+    def map_for(self, node):
+        return dict(getattr(self, "maps", {}).get(node) or {})
+
+    def set_map(self, node, m):
+        if not node:
+            return
+        maps = getattr(self, "maps", None)
+        if maps is None:
+            maps = self.maps = {}
+        if m:
+            maps[node] = dict(m)
+        else:
+            maps.pop(node, None)
+        self.save_bindings()
+
+    def slots_for(self, node):
+        """The map as profile_graph wants it: one entry per sink channel, in
+        sink order. None when the node has no map and the caller should fall
+        back to the profile's own layout."""
+        m = getattr(self, "maps", {}).get(node)
+        return list(m.values()) if m else None
+
+    def reconcile_map(self, node, prof_keys, sink_keys):
+        """The map for `node` brought up to date with the sink in front of it
+        and the profile on it, without throwing away a deliberate choice.
+
+        A sink can change width under one identity -- the same card in
+        another mode -- and a profile can be swapped for one with different
+        channels. An entry survives when its sink channel still exists and
+        its target still exists in the profile, including a deliberate None;
+        everything else is answered again by resolve_slots. Returns the
+        reconciled map and saves it when it changed.
+        """
+        sink = list(sink_keys or [])
+        have = set(prof_keys or [])
+        stored = self.map_for(node)
+        auto = resolve_slots(prof_keys, sink)
+        out = {}
+        for i, ch in enumerate(sink):
+            if ch in stored and (stored[ch] is None or stored[ch] in have):
+                out[ch] = stored[ch]
+            else:
+                out[ch] = auto[i]
+        if out != stored:
+            self.set_map(node, out)
+        return out
 
     def binding_for(self, node):
         return self.bindings.get(node)
@@ -284,7 +365,7 @@ class ProfileStore:
         if not pid or pid == CLEAN_ID:
             return None                      # hook leaves the node alone
         p = self.profiles.get(pid)
-        return profile_graph(p) if p else None
+        return profile_graph(p, slots=self.slots_for(node)) if p else None
 
     def presets(self):
         """{node.name: graph_string} for every node bound to a non-Clean,
@@ -297,5 +378,5 @@ class ProfileStore:
             p = self.profiles.get(pid)
             if not p or not profile_has_content(p):
                 continue
-            out[node] = profile_graph(p)
+            out[node] = profile_graph(p, slots=self.slots_for(node))
         return out

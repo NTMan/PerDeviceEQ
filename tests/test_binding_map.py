@@ -1,0 +1,144 @@
+"""The channel map lives with the binding, not with the profile.
+
+A profile's channels name the sides of a transducer; a sink's channels name
+routes. The correspondence between them belongs to neither, so it is kept
+where the node's other route facts are kept: in bindings.json, next to the
+profile id.
+"""
+import json
+import os
+
+import pytest
+
+from perdeviceeq import profiles as P
+
+
+NODE = "alsa_output.usb-Topping_M62-00.HiFi__Line1__sink"
+OTHER = "alsa_output.usb-miniDSP_IL-DSP-00.analog-stereo"
+PK = {"type": "PK", "freq": 1000, "gain": -3.0, "q": 1.0, "enabled": True}
+
+
+@pytest.fixture
+def store(tmp_path, monkeypatch):
+    monkeypatch.setattr(P, "CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(P, "BINDINGS_FILE", str(tmp_path / "bindings.json"))
+    monkeypatch.setattr(P, "USER_PROFILES_DIR", str(tmp_path / "profiles"))
+    os.makedirs(tmp_path / "profiles", exist_ok=True)
+    return P.ProfileStore()
+
+
+def _written(tmp_path):
+    with open(tmp_path / "bindings.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ---- file format ----------------------------------------------------------
+
+def test_a_bare_id_is_still_a_binding(store, tmp_path):
+    """Files written before maps existed keep working untouched."""
+    with open(tmp_path / "bindings.json", "w", encoding="utf-8") as f:
+        json.dump({NODE: "abc123"}, f)
+    s = P.ProfileStore()
+    assert s.binding_for(NODE) == "abc123"
+    assert s.map_for(NODE) == {}
+    assert s.slots_for(NODE) is None
+
+
+def test_a_node_without_a_map_is_written_back_bare(store, tmp_path):
+    """No map, no record: the file only grows a record once someone maps."""
+    store.set_binding(NODE, "abc123")
+    assert _written(tmp_path) == {NODE: "abc123"}
+
+
+def test_a_mapped_node_is_written_as_a_record(store, tmp_path):
+    store.set_binding(NODE, "abc123")
+    store.set_map(NODE, {"AUX0": "FL", "AUX1": "FR", "AUX2": None})
+    rec = _written(tmp_path)[NODE]
+    assert rec["profile"] == "abc123"
+    assert rec["map"] == {"AUX0": "FL", "AUX1": "FR", "AUX2": None}
+
+
+def test_a_record_survives_a_reload(store, tmp_path):
+    store.set_binding(NODE, "abc123")
+    store.set_map(NODE, {"AUX0": "FL", "AUX1": "FR"})
+    s = P.ProfileStore()
+    assert s.binding_for(NODE) == "abc123"
+    assert s.slots_for(NODE) == ["FL", "FR"]
+
+
+def test_one_node_s_map_does_not_reach_another(store):
+    """Two identical cards on one machine are two outputs, not one."""
+    store.set_binding(NODE, "abc123")
+    store.set_binding(OTHER, "abc123")
+    store.set_map(NODE, {"AUX0": "FL", "AUX1": "FR"})
+    assert store.slots_for(OTHER) is None
+
+
+# ---- reconciliation -------------------------------------------------------
+
+def test_a_first_bind_answers_itself(store):
+    m = store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"])
+    assert m == {"FL": "FL", "FR": "FR"}
+
+
+def test_a_card_with_no_shared_names_falls_to_position(store):
+    m = store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
+    assert m == {"AUX0": "FL", "AUX1": "FR", "AUX2": None}
+
+
+def test_a_deliberate_choice_survives(store):
+    """Two routes fed by the same side, and one deliberately left alone:
+    reconciling must not undo either."""
+    store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
+    store.set_map(NODE, {"AUX0": "FL", "AUX1": "FR", "AUX2": "FL"})
+    m = store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
+    assert m == {"AUX0": "FL", "AUX1": "FR", "AUX2": "FL"}
+
+
+def test_a_widened_sink_keeps_what_was_and_answers_the_rest(store):
+    """The card changed mode and grew from two channels to ten."""
+    store.set_map(NODE, {"FL": "FL", "FR": "FR"})
+    m = store.reconcile_map(NODE, ["FL", "FR"],
+                            ["FL", "FR", "FC", "LFE"])
+    assert m == {"FL": "FL", "FR": "FR", "FC": None, "LFE": None}
+
+
+def test_a_narrowed_sink_drops_the_channels_it_no_longer_has(store):
+    store.set_map(NODE, {"FL": "FL", "FR": "FR", "FC": None, "LFE": None})
+    assert store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"]) == \
+        {"FL": "FL", "FR": "FR"}
+
+
+def test_a_target_the_new_profile_lacks_is_answered_again(store):
+    """A map pointing at SL is meaningless once a stereo profile is bound."""
+    store.set_map(NODE, {"AUX0": "SL", "AUX1": "RC"})
+    assert store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1"]) == \
+        {"AUX0": "FL", "AUX1": "FR"}
+
+
+def test_reconciling_an_unchanged_map_writes_nothing(store, tmp_path):
+    store.set_binding(NODE, "abc123")
+    store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"])
+    before = os.stat(tmp_path / "bindings.json").st_mtime_ns
+    store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"])
+    assert os.stat(tmp_path / "bindings.json").st_mtime_ns == before
+
+
+# ---- what reaches the wire ------------------------------------------------
+
+def test_the_hook_s_graph_is_cut_by_the_stored_map(store):
+    """graph_for_node runs where the sink cannot be asked, so the map is the
+    only thing that knows how wide the node is."""
+    pid = store.save_user({"name": "Pair", "apply_all": False,
+                           "floor_off": True, "preamp": 0.0,
+                           "ch_keys": ["FL", "FR", "FC", "LFE"],
+                           "channels": {"FL": {"bands": [PK]},
+                                        "FR": {"bands": [PK]},
+                                        "FC": {"bands": []},
+                                        "LFE": {"bands": []}}})
+    store.set_binding(NODE, pid)
+    assert store.graph_for_node(NODE).count("filters") == 4
+    store.set_map(NODE, {"AUX0": "FL", "AUX1": "FR"})
+    g = store.graph_for_node(NODE)
+    assert g.count("filters") == 2
+    assert g.count("gain = -3") == 2
