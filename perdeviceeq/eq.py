@@ -179,7 +179,7 @@ def resolve_slots(prof_keys, sink_keys):
     return [prof[i] if i < len(prof) else None for i in range(len(sink))]
 
 
-def auto_preamp_db(p, extra=None):
+def auto_preamp_db(p, extra=None, local=None):
     """The attenuation that zeroes the tier-1 estimate for this body: the
     max of the summed band curve with no preamp, or the WORST channel's
     when the channels are unlinked, so one shared value clears every slot.
@@ -197,16 +197,23 @@ def auto_preamp_db(p, extra=None):
     if p.get("apply_all", True) or not keys:
         bands = [Band.from_dict(b)
                  for b in ((p.get("all") or {}).get("bands") or [])]
-        peak = curve_max_db(0.0, bands + tail)
+        peaks = [curve_max_db(0.0, bands + tail)]
     else:
-        peak = max(curve_max_db(0.0, [Band.from_dict(b) for b in
-                                      ((chans.get(k) or {}).get("bands")
-                                       or [])] + tail)
-                   for k in keys)
-    return max(0.0, math.ceil(peak * 10.0 - 1e-9) / 10.0)
+        peaks = [curve_max_db(0.0, [Band.from_dict(b) for b in
+                                    ((chans.get(k) or {}).get("bands")
+                                     or [])] + tail)
+                 for k in keys]
+    # a route tuned by ear is published too, and one preamp serves the
+    # whole output: leave its chain out of the maximum and the hand that
+    # drew a +6 on it clips past every guard we have
+    for bands in (local or []):
+        if bands:
+            peaks.append(curve_max_db(0.0, [Band.from_dict(b)
+                                            for b in bands] + tail))
+    return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
 
-def profile_graph(p, extra=None, slots=None):
+def profile_graph(p, extra=None, slots=None, local=None):
     """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
     slots carry bands only (apply_all or per-channel). `extra` is a list
     of preference-layer band dicts appended after EVERY chain -- taste
@@ -233,9 +240,16 @@ def profile_graph(p, extra=None, slots=None):
                                for b in a.get("bands", [])] + tail)
     chans = p.get("channels") or {}
     keys = list(slots) if slots else (p.get("ch_keys") or list(chans.keys()))
-    sets = [(g, [Band.from_dict(b)
-                 for b in (chans.get(k) or {}).get("bands", [])] + tail)
-            for k in keys]
+    loc = list(local or [])
+    loc += [None] * (len(keys) - len(loc))
+    sets = []
+    for i, k in enumerate(keys):
+        # a mapped channel is fed by the profile, an unmapped one by
+        # whatever hand tuned this route; never both, so a channel has
+        # one source and the window can say which
+        bands = ((chans.get(k) or {}).get("bands", []) if k
+                 else (loc[i] or []))
+        sets.append((g, [Band.from_dict(b) for b in bands] + tail))
     if not sets:
         a = p.get("all") or {"bands": []}
         return build_graph(g, [Band.from_dict(b)

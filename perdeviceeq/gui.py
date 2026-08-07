@@ -1783,7 +1783,10 @@ class EqWindow(Adw.ApplicationWindow):
                          (body.get("ch_keys")
                           or list((body.get("channels") or {}))),
                          self.ch_keys))
-            graph = eq.profile_graph(body, extra=extra, slots=slots)
+            local = (self.store.locals_for(self.node, self.ch_keys)
+                     if self.node else None)
+            graph = eq.profile_graph(body, extra=extra, slots=slots,
+                                     local=local)
             pw_backend.in_thread(lambda: auth.publish_graph(node,
                                                            graph))
 
@@ -2083,12 +2086,18 @@ class EqWindow(Adw.ApplicationWindow):
                 for b in self.pref_layers.active_bands()]
         tail += self._floor_tail()
         if self.apply_all:
-            peak = eq.curve_max_db(0.0, self.bands + tail)
+            peaks = [eq.curve_max_db(0.0, self.bands + tail)]
         else:
-            peak = max(eq.curve_max_db(0.0,
-                                       self._slot(k)["bands"] + tail)
-                       for k in self.ch_keys)
-        return max(0.0, math.ceil(peak * 10.0 - 1e-9) / 10.0)
+            peaks = [eq.curve_max_db(0.0, self._slot(k)["bands"] + tail)
+                     for k in self.ch_keys]
+        # routes tuned by ear share the one preamp this card holds, so
+        # they share the duty of setting it
+        for bands in (self.store.locals_for(self.node, self.ch_keys)
+                      if self.node else []):
+            if bands:
+                peaks.append(eq.curve_max_db(
+                    0.0, [eq.Band.from_dict(b) for b in bands] + tail))
+        return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
     def _on_bypass(self, *_):
         """Bypass toggled: republish the device state."""
