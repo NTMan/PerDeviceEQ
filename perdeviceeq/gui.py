@@ -40,7 +40,8 @@ from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
 from . import __version__, config, eq, pw_backend, integration
 from .picker import NodePicker
-from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE, UI_STATE_FILE,
+from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
+                     load_ui_state, save_ui_state,
                      UI_FILE_CANDIDATES)
 from .peq_view import CollapsibleCard, PeqView
 from .preferences import PreferenceLayers
@@ -83,24 +84,6 @@ def _fmt_hz(f):
     return "%g" % round(f, 1)
 
 
-def _load_ui_state():
-    try:
-        with open(UI_STATE_FILE, encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_ui_state(d):
-    try:
-        os.makedirs(os.path.dirname(UI_STATE_FILE), exist_ok=True)
-        tmp = UI_STATE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=2)
-        os.replace(tmp, UI_STATE_FILE)
-    except OSError:
-        pass
 
 
 def _load_favorites():
@@ -222,7 +205,7 @@ class EqWindow(Adw.ApplicationWindow):
 
         # ---- the device card (Next #2): picker + trust in the
         # header, the editor collapsing underneath ------------------
-        self._ui_state = _load_ui_state()
+        self._ui_state = load_ui_state()
         self.device_card = CollapsibleCard(
             expanded=bool(self._ui_state.get("device_card", False)),
             on_toggled=self._on_device_card_toggled)
@@ -384,7 +367,7 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _on_device_card_toggled(self, expanded):
         self._ui_state["device_card"] = bool(expanded)
-        _save_ui_state(self._ui_state)
+        save_ui_state(self._ui_state)
 
     def _on_meas_toggle(self, btn):
         self.show_meas = btn.get_active()
@@ -1413,8 +1396,9 @@ class EqWindow(Adw.ApplicationWindow):
         body = {"id": self.current_pid,
                 "name": (p or {}).get("name", self.current_pid),
                 "apply_all": self.apply_all,
+                # the effective value rides along for the WIRE; the store
+                # does not keep it and the mode is not a profile fact
                 "preamp": float(self.preamp),
-                "preamp_auto": bool(self.preamp_auto),
                 "all": self._slot_to_dict("all"),
                 # the view is keyed by the SINK, so writing every key it
                 # shows would settle the card's channels into a profile
@@ -1637,8 +1621,11 @@ class EqWindow(Adw.ApplicationWindow):
                 self.store.reconcile_map(self.node, pch, self.ch_keys)
                 if (self.live and self.node) else {})
 
-            self.preamp = float(p.get("preamp", 0.0))
-            self.preamp_auto = bool(p.get("preamp_auto", True))
+            # the ride belongs to the app, not to the earphone: mode and
+            # manual value come from the ui state, and Auto is computed
+            self.preamp_auto = bool(self._ui_state.get("preamp_auto", True))
+            self.preamp = (0.0 if self.preamp_auto
+                           else float(self._ui_state.get("preamp", 0.0) or 0))
             self._clamped_note = None
             self._auto_syncing = True
             try:
@@ -1807,7 +1794,6 @@ class EqWindow(Adw.ApplicationWindow):
         return {"pid": self.current_pid,
                 "apply_all": self.apply_all,
                 "preamp": float(self.preamp),
-                "preamp_auto": bool(self.preamp_auto),
                 "ch_keys": list(self.ch_keys),
                 "slots": {k: self._slot_to_dict(k) for k in keys},
                 "taste": {
@@ -1995,11 +1981,24 @@ class EqWindow(Adw.ApplicationWindow):
             return
         self._clamped_note = None
         self._set_preamp_auto(False)
+        self._save_preamp_state()
         self._on_edit()
 
+    def _save_preamp_state(self):
+        """Mode and, in Manual, the number the user rides. App state: the
+        preamp card sits above every profile and the ride is not a fact
+        about the earphone. In Auto nothing is stored at all -- the value
+        is computed from the composition, and one of its inputs is the
+        taste layer, so storing it made a taste change rewrite profiles."""
+        self._ui_state["preamp_auto"] = bool(self.preamp_auto)
+        if self.preamp_auto:
+            self._ui_state.pop("preamp", None)
+        else:
+            self._ui_state["preamp"] = round(float(self.preamp), 1)
+        save_ui_state(self._ui_state)
+
     def _set_preamp_auto(self, on, land=False):
-        """Flip the follow mode and sync the toggle without echo.
-        The mode is profile state: it persists and rides undo."""
+        """Flip the follow mode and sync the toggle without echo."""
         on = bool(on)
         changed = on != self.preamp_auto
         self.preamp_auto = on
@@ -2011,8 +2010,7 @@ class EqWindow(Adw.ApplicationWindow):
         if on and land:
             self._land_safe()
         if changed and not self._loading and not self._restoring:
-            self._dev_dirty = True
-            self._schedule_save()
+            self._save_preamp_state()
 
     def _on_auto_toggled(self, btn):
         if self._auto_syncing or self._loading:
@@ -2039,9 +2037,7 @@ class EqWindow(Adw.ApplicationWindow):
             self.preamp_spin.set_value(v)
         finally:
             self._preamp_syncing = False
-        self._dev_dirty = True
-        self._apply_now()
-        self._schedule_save()
+        self._apply_now()          # Auto stores nothing: it is derived
 
     def _clamp_to_session(self):
         """A latched over-0 peak pulls the preamp down -- silently
@@ -2063,9 +2059,8 @@ class EqWindow(Adw.ApplicationWindow):
             self._preamp_syncing = False
         self._sess_peak = None          # consumed, like Session did
         self._clamped_note = "pulled to session %.1f" % v
-        self._dev_dirty = True
         self._apply_now()               # clipping is live: right now
-        self._schedule_save()
+        self._save_preamp_state()       # and it survives a restart
 
     def _floor_tail(self):
         """The sealed protection stages as Band objects, built
@@ -2869,7 +2864,7 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _on_taste_card_toggled(self, expanded):
         self._ui_state["taste_card"] = bool(expanded)
-        _save_ui_state(self._ui_state)
+        save_ui_state(self._ui_state)
 
     def _on_taste_row(self, _lb, row):
         self.taste_popover.popdown()

@@ -5,6 +5,7 @@ No third-party imports -- this module is safe to import anywhere (CLI, tests,
 GUI) without pulling in GTK.
 """
 
+import json
 import os
 
 FS = 48000.0
@@ -157,3 +158,26 @@ HOOK_CONF = (
     '  }\n'
     '}\n'
 ) % {"meta": METADATA_NAME, "script": WP_SCRIPT_NAME}
+
+
+def load_ui_state():
+    """App-level UI state (window furniture, and the preamp ride). Read by
+    the window and by the hook path, which needs the preamp without a
+    window to ask."""
+    try:
+        with open(UI_STATE_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_ui_state(d):
+    try:
+        os.makedirs(os.path.dirname(UI_STATE_FILE), exist_ok=True)
+        tmp = UI_STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2)
+        os.replace(tmp, UI_STATE_FILE)
+    except OSError:
+        pass

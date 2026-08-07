@@ -19,8 +19,10 @@ import hashlib
 import os, sys, json, uuid
 
 from .config import (SYS_PROFILE_DIRS, USER_PROFILES_DIR, BINDINGS_FILE,
-                     CONFIG_DIR, CLEAN_ID, SCHEMA_VERSION, V3_BLOCKS)
-from .eq import profile_graph, profile_has_content, resolve_slots
+                     CONFIG_DIR, CLEAN_ID, SCHEMA_VERSION, V3_BLOCKS,
+                     load_ui_state)
+from .eq import (profile_graph, profile_has_content,
+                 resolve_slots, auto_preamp_db)
 
 
 def _new_id():
@@ -220,7 +222,6 @@ class ProfileStore:
         body = {"id": p["id"], "name": p.get("name", p["id"]),
                 "version": SCHEMA_VERSION,
                 "apply_all": bool(p.get("apply_all", True)),
-                "preamp": float(p.get("preamp", 0.0)),
                 "ch_keys": list(p.get("ch_keys") or []),
                 "all": cls._sane_slot(p.get("all")),
                 "channels": {k: cls._sane_slot(v)
@@ -432,12 +433,33 @@ class ProfileStore:
             self.bindings[node] = pid
         self.save_bindings()
 
+    @staticmethod
+    def effective_preamp(p):
+        """What the wire gets. In Auto it is computed here and nowhere
+        stored; in Manual it is the number the user rides, which lives in
+        the app's ui state beside the mode. Neither is a property of the
+        earphone, so neither is written into the profile: the preamp card
+        sits above every profile in the window and belongs to the app.
+
+        The hook computes Auto exactly as it publishes -- without the taste
+        layer, which it does not apply either -- so its number and its
+        graph agree.
+        """
+        st = load_ui_state()
+        if not bool(st.get("preamp_auto", True)):
+            return float(st.get("preamp", 0.0) or 0.0)
+        t = auto_preamp_db(p)
+        return -t if t else 0.0
+
     def graph_for_node(self, node):
         pid = self.bindings.get(node)
         if not pid or pid == CLEAN_ID:
             return None                      # hook leaves the node alone
         p = self.profiles.get(pid)
-        return profile_graph(p, slots=self.slots_for(node)) if p else None
+        if not p:
+            return None
+        return profile_graph(dict(p, preamp=self.effective_preamp(p)),
+                             slots=self.slots_for(node))
 
     def presets(self):
         """{node.name: graph_string} for every node bound to a non-Clean,
@@ -450,5 +472,6 @@ class ProfileStore:
             p = self.profiles.get(pid)
             if not p or not profile_has_content(p):
                 continue
-            out[node] = profile_graph(p, slots=self.slots_for(node))
+            out[node] = profile_graph(dict(p, preamp=self.effective_preamp(p)),
+                                      slots=self.slots_for(node))
         return out

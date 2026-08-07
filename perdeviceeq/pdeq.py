@@ -67,7 +67,11 @@ import json
 from .config import SCHEMA_VERSION
 from .profiles import ProfileStore
 
-RUNTIME_KEYS = ("builtin", "path")
+# preamp joins them: the ride is app state, not a fact about the
+# corrected device. It lives in the ui state now, the store no
+# longer writes it, and a package carrying one would hand the
+# recipient a loudness decision made for someone else's chain.
+RUNTIME_KEYS = ("builtin", "path", "preamp", "preamp_auto")
 
 
 def _stripped(profile):

@@ -179,6 +179,33 @@ def resolve_slots(prof_keys, sink_keys):
     return [prof[i] if i < len(prof) else None for i in range(len(sink))]
 
 
+def auto_preamp_db(p, extra=None):
+    """The attenuation that zeroes the tier-1 estimate for this body: the
+    max of the summed band curve with no preamp, or the WORST channel's
+    when the channels are unlinked, so one shared value clears every slot.
+    Rounded UP to the 0.1 dB step the spin can express, so the result lands
+    at or below 0 dBFS.
+
+    Pure, and computed rather than stored: its inputs include the floor and
+    the taste layer, and taste is not part of a profile. Storing the answer
+    inside the profile meant that changing the taste rewrote every profile
+    that had been opened -- a derived number kept in the wrong house.
+    """
+    tail = [Band.from_dict(b) for b in floor_bands(p) + list(extra or [])]
+    chans = p.get("channels") or {}
+    keys = list(p.get("ch_keys") or list(chans.keys()))
+    if p.get("apply_all", True) or not keys:
+        bands = [Band.from_dict(b)
+                 for b in ((p.get("all") or {}).get("bands") or [])]
+        peak = curve_max_db(0.0, bands + tail)
+    else:
+        peak = max(curve_max_db(0.0, [Band.from_dict(b) for b in
+                                      ((chans.get(k) or {}).get("bands")
+                                       or [])] + tail)
+                   for k in keys)
+    return max(0.0, math.ceil(peak * 10.0 - 1e-9) / 10.0)
+
+
 def profile_graph(p, extra=None, slots=None):
     """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
     slots carry bands only (apply_all or per-channel). `extra` is a list
