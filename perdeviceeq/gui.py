@@ -1400,14 +1400,17 @@ class EqWindow(Adw.ApplicationWindow):
                 # does not keep it and the mode is not a profile fact
                 "preamp": float(self.preamp),
                 "all": self._slot_to_dict("all"),
-                # the view is keyed by the SINK, so writing every key it
-                # shows would settle the card's channels into a profile
-                # that never measured them; a slot enters the body when
-                # it has something in it
-                "channels": {k: d for k, d in
-                             ((k, self._slot_to_dict(k))
-                              for k in self.ch_keys)
-                             if (d or {}).get("bands")}}
+                "channels": {}}
+        # the view is keyed by the SINK: fold each tab onto the profile
+        # channel it feeds, drop the routes the profile does not reach
+        # (those belong to the binding), and keep only slots with
+        # something in them, so a card's channel list cannot settle into
+        # a profile that never measured it
+        prof, _route = eq.split_slots(
+            {k: self._slot_to_dict(k) for k in self.ch_keys},
+            getattr(self, "ch_map", None))
+        body["channels"] = {k: d for k, d in prof.items()
+                            if (d or {}).get("bands")}
         body["ch_keys"] = list(body["channels"])
         if self.floor_off:
             body["floor_off"] = True
@@ -1636,8 +1639,15 @@ class EqWindow(Adw.ApplicationWindow):
             self.slots = {"all": {"bands": [eq.Band.from_dict(x)
                                             for x in a.get("bands", [])]}}
             pchan = p.get("channels") or {}
+            loc = (self.store.local_for(self.node)
+                   if (self.live and self.node) else {})
             for k in self.ch_keys:
-                src = pchan.get(k) or {"bands": []}
+                # the tab wears a SINK name; what fills it is the profile
+                # channel it feeds from, or -- when it feeds from nothing
+                # -- whatever hand tuned this route
+                tgt = self.ch_map.get(k) if self.ch_map else k
+                src = ((pchan.get(tgt) or {"bands": []}) if tgt
+                       else {"bands": loc.get(k) or []})
                 self.slots[k] = {"bands": [eq.Band.from_dict(x)
                                            for x in src.get("bands", [])]}
 
@@ -1736,6 +1746,18 @@ class EqWindow(Adw.ApplicationWindow):
             GLib.source_remove(self._save_source)
         self._save_source = GLib.timeout_add(_SAVE_DEBOUNCE_MS, self._save_now)
 
+    def _save_routes(self):
+        """Bands drawn on tabs the profile does not reach land in the
+        binding. Written at save time rather than on every keystroke: the
+        graph already carries them live, this is only the disk."""
+        if not (self.live and self.node and getattr(self, "ch_map", None)):
+            return
+        for ch in self.ch_keys:
+            if self.ch_map.get(ch):
+                continue
+            self.store.set_local(self.node, ch,
+                                 self._slot_to_dict(ch).get("bands") or [])
+
     def _save_now(self):
         """Land the debounce: persist and apply the device profile
         when a device-side edit is pending, and record ONE history
@@ -1745,6 +1767,7 @@ class EqWindow(Adw.ApplicationWindow):
         if self._dev_dirty:
             self._dev_dirty = False
             if self._editable(self.current_pid):
+                self._save_routes()
                 self.store.save_user(self._working_body())
             self._apply_now()
             if not self._restoring:
@@ -1864,6 +1887,7 @@ class EqWindow(Adw.ApplicationWindow):
                                      t.get("active"))
             self._sync_taste_card()
         if self._editable(self.current_pid):
+            self._save_routes()
             self.store.save_user(self._working_body())
         self._apply_now()
         self._update_headroom()

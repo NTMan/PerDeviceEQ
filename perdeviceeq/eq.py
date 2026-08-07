@@ -213,6 +213,39 @@ def auto_preamp_db(p, extra=None, local=None):
     return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
 
+def split_slots(slots, ch_map):
+    """Sort the editor's slots into what belongs to the profile and what
+    belongs to the route.
+
+    The tabs are keyed by SINK channel, because that is what a person sees
+    and turns; the profile's channels carry its own names. While a card
+    calls its outputs FL and FR the two coincide and nobody notices. Point
+    AUX0 at FL and they part: the tab is AUX0, the correction is FL's.
+
+    Returns (profile_channels, route_channels). A mapped tab folds onto the
+    profile channel it feeds -- several tabs may feed from one side, which
+    is the same correction seen twice, so the last one written wins and
+    they stay identical. An unmapped tab keeps its sink name and goes to
+    the binding, because nothing about it is a fact about the earphone.
+
+    With no map at all (no live sink to ask) everything stays where it is:
+    the tabs ARE the profile's channels, which is the old behaviour.
+    """
+    prof, route = {}, {}
+    for ch, slot in (slots or {}).items():
+        if ch == "all":
+            continue
+        if not ch_map:
+            prof[ch] = slot
+            continue
+        target = ch_map.get(ch)
+        if target:
+            prof[target] = slot
+        else:
+            route[ch] = slot
+    return prof, route
+
+
 def profile_graph(p, extra=None, slots=None, local=None):
     """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
     slots carry bands only (apply_all or per-channel). `extra` is a list

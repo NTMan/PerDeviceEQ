@@ -127,3 +127,49 @@ def test_the_effective_preamp_sees_the_routes(store):
     store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR", "AUX2"])
     store.set_local(NODE, "AUX2", [BOOST])
     assert store.effective_preamp(store.get(pid), NODE) == pytest.approx(-6.0)
+
+
+# ---- which house an edit lands in -----------------------------------------
+
+def test_a_mapped_tab_writes_the_channel_it_feeds_from():
+    """The tab says AUX0, the correction is FL's. Without the map the two
+    coincide and nobody notices; with it, they must not be confused."""
+    prof, route = eq.split_slots({"AUX0": {"bands": [PK]},
+                                  "AUX1": {"bands": [PK]}},
+                                 {"AUX0": "FL", "AUX1": "FR"})
+    assert set(prof) == {"FL", "FR"}
+    assert route == {}
+
+
+def test_an_unmapped_tab_writes_the_route():
+    prof, route = eq.split_slots({"AUX0": {"bands": [PK]},
+                                  "AUX3": {"bands": [BOOST]}},
+                                 {"AUX0": "FL", "AUX3": None})
+    assert set(prof) == {"FL"}
+    assert route == {"AUX3": {"bands": [BOOST]}}
+
+
+def test_several_routes_fed_by_one_side_stay_one_correction():
+    """Many-to-one is deliberate on a card that sums its buses: the tabs
+    are two views of the same side, not two corrections."""
+    prof, route = eq.split_slots({"AUX0": {"bands": [PK]},
+                                  "AUX2": {"bands": [PK]}},
+                                 {"AUX0": "FL", "AUX2": "FL"})
+    assert list(prof) == ["FL"]
+    assert route == {}
+
+
+def test_the_all_tab_is_not_a_channel():
+    prof, route = eq.split_slots({"all": {"bands": [PK]},
+                                  "FL": {"bands": [PK]}},
+                                 {"FL": "FL"})
+    assert set(prof) == {"FL"}
+    assert route == {}
+
+
+def test_without_a_map_the_tabs_are_the_profile():
+    """No live sink to ask: the old behaviour, unchanged."""
+    prof, route = eq.split_slots({"FL": {"bands": [PK]},
+                                  "FR": {"bands": [PK]}}, None)
+    assert set(prof) == {"FL", "FR"}
+    assert route == {}
