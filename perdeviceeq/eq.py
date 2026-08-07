@@ -150,13 +150,52 @@ def floor_bands(p):
              "enabled": True} for q in FLOOR_QS]
 
 
-def profile_graph(p, extra=None):
+def resolve_slots(prof_keys, sink_keys):
+    """Which profile channel feeds each channel of the sink: a list as long
+    as `sink_keys`, holding a profile channel name or None.
+
+    A profile's channels name the SIDES of a transducer, a sink's channels
+    name ROUTES, and the two vocabularies agree only by luck. Names first,
+    since FL is FL wherever it appears and a partial agreement is still an
+    agreement -- a sink channel with no namesake gets None and carries the
+    tail alone. When NOTHING agrees, which is what a card handing out
+    AUX0..AUX9 does to a stereo profile, fall back to position: side one
+    to route one, side two to route two, the rest None. Matching by name
+    alone would leave such a card silently uncorrected, and silence is the
+    failure mode this whole area is being cured of.
+
+    This is the default policy and it lives here only until the binding
+    stores a map of its own; the graph builder below takes the answer, not
+    the question.
+    """
+    sink = list(sink_keys or [])
+    prof = list(prof_keys or [])
+    if not sink:
+        return []
+    have = set(prof)
+    by_name = [k if k in have else None for k in sink]
+    if any(x is not None for x in by_name):
+        return by_name
+    return [prof[i] if i < len(prof) else None for i in range(len(sink))]
+
+
+def profile_graph(p, extra=None, slots=None):
     """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
     slots carry bands only (apply_all or per-channel). `extra` is a list
     of preference-layer band dicts appended after EVERY chain -- taste
     composed over correction, whatever the profile's channel layout; the
     shared preamp stays the profile's own, and headroom over the
     composition is the caller's job (curve_max_db on the concatenation).
+
+    `slots` is the resolved answer from resolve_slots: one entry per SINK
+    channel, a profile channel name or None. Given it, the graph is that
+    wide and no wider. A profile legitimately holds more channels than the
+    sink in front of it -- profiles.save_user never strips a stored
+    channel, so a pair measured on one card keeps its keys after a visit
+    to another -- but param_eq is handed a fixed channel count and refuses
+    a config naming more, and it refuses in silence, taking the whole
+    chain with it, taste included. Cutting to the sink's width happens
+    here, at the one call that knows both sides.
     """
     g = float(p.get("preamp", 0.0))
     tail = [Band.from_dict(b)
@@ -166,7 +205,7 @@ def profile_graph(p, extra=None):
         return build_graph(g, [Band.from_dict(b)
                                for b in a.get("bands", [])] + tail)
     chans = p.get("channels") or {}
-    keys = p.get("ch_keys") or list(chans.keys())
+    keys = list(slots) if slots else (p.get("ch_keys") or list(chans.keys()))
     sets = [(g, [Band.from_dict(b)
                  for b in (chans.get(k) or {}).get("bands", [])] + tail)
             for k in keys]

@@ -1778,7 +1778,10 @@ class EqWindow(Adw.ApplicationWindow):
         if self.bypass_row.get_active() or silent:
             pw_backend.in_thread(lambda: auth.clear_graph(node))
         else:
-            graph = eq.profile_graph(body, extra=extra)
+            slots = eq.resolve_slots(
+                (body.get("ch_keys") or list((body.get("channels") or {}))),
+                self.ch_keys)
+            graph = eq.profile_graph(body, extra=extra, slots=slots)
             pw_backend.in_thread(lambda: auth.publish_graph(node,
                                                            graph))
 
