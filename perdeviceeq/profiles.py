@@ -266,7 +266,7 @@ class ProfileStore:
         order. A node with no map is written back in the bare form, so a
         file only grows a record once someone actually maps something.
         """
-        binds, maps = {}, {}
+        binds, maps, pins = {}, {}, {}
         try:
             with open(BINDINGS_FILE, encoding="utf-8") as f:
                 b = json.load(f)
@@ -281,20 +281,31 @@ class ProfileStore:
                     m = v.get("map")
                     if isinstance(m, dict) and m:
                         maps[node] = {k: (x or None) for k, x in m.items()}
+                    q = v.get("pinned")
+                    if isinstance(q, dict) and q:
+                        pins[node] = {k: (x or None) for k, x in q.items()}
                 elif v:
                     binds[node] = v
         self.maps = maps
+        self.pins = pins
         return binds
 
     def save_bindings(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
         out = {}
-        for node, pid in self.bindings.items():
+        nodes = list(self.bindings) + [n for n in getattr(self, "maps", {})
+                                       if n not in self.bindings]
+        for node in nodes:
+            pid = self.bindings.get(node)
             m = getattr(self, "maps", {}).get(node)
-            out[node] = {"profile": pid, "map": m} if m else pid
-        for node, m in getattr(self, "maps", {}).items():
-            if m and node not in out:
-                out[node] = {"profile": None, "map": m}
+            q = getattr(self, "pins", {}).get(node)
+            if m or q:
+                rec = {"profile": pid, "map": m}
+                if q:
+                    rec["pinned"] = q
+                out[node] = rec
+            else:
+                out[node] = pid
         tmp = BINDINGS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=2, ensure_ascii=False)
@@ -305,6 +316,8 @@ class ProfileStore:
         return dict(getattr(self, "maps", {}).get(node) or {})
 
     def set_map(self, node, m):
+        """The effective map, as the hook will read it. Written by
+        reconcile_map; a hand goes through pin_channel."""
         if not node:
             return
         maps = getattr(self, "maps", None)
@@ -315,6 +328,31 @@ class ProfileStore:
         else:
             maps.pop(node, None)
         self.save_bindings()
+
+    def pins_for(self, node):
+        return dict(getattr(self, "pins", {}).get(node) or {})
+
+    def pin_channel(self, node, sink_ch, prof_ch):
+        """A hand chose where this sink channel feeds from -- including the
+        choice to feed it from nothing, which is why pins are kept apart
+        from the effective map: a None that a person meant and a None that
+        the resolver produced look identical in the map, and treating the
+        second as deliberate makes it permanent."""
+        if not node or not sink_ch:
+            return
+        pins = getattr(self, "pins", None)
+        if pins is None:
+            pins = self.pins = {}
+        pins.setdefault(node, {})[sink_ch] = prof_ch or None
+        self.save_bindings()
+
+    def unpin_channel(self, node, sink_ch):
+        pins = getattr(self, "pins", {}).get(node)
+        if pins and sink_ch in pins:
+            pins.pop(sink_ch)
+            if not pins:
+                self.pins.pop(node, None)
+            self.save_bindings()
 
     def slots_for(self, node):
         """The map as profile_graph wants it: one entry per sink channel, in
@@ -329,22 +367,31 @@ class ProfileStore:
 
         A sink can change width under one identity -- the same card in
         another mode -- and a profile can be swapped for one with different
-        channels. An entry survives when its sink channel still exists and
-        its target still exists in the profile, including a deliberate None;
-        everything else is answered again by resolve_slots. Returns the
-        reconciled map and saves it when it changed.
+        channels. Only a PINNED entry survives that, and only while its sink
+        channel and its target both still exist; everything else is answered
+        again by resolve_slots. Pins that no longer apply are forgotten here,
+        so a stale choice cannot outlive the thing it was about.
+
+        The effective map is written back because the hook reads it: at login
+        it applies graphs with no sink to ask, and the map is the only record
+        of how wide each node is.
         """
         sink = list(sink_keys or [])
         have = set(prof_keys or [])
-        stored = self.map_for(node)
+        pinned = self.pins_for(node)
         auto = resolve_slots(prof_keys, sink)
-        out = {}
+        out, keep = {}, {}
         for i, ch in enumerate(sink):
-            if ch in stored and (stored[ch] is None or stored[ch] in have):
-                out[ch] = stored[ch]
+            if ch in pinned and (pinned[ch] is None or pinned[ch] in have):
+                out[ch] = pinned[ch]
+                keep[ch] = pinned[ch]
             else:
                 out[ch] = auto[i]
-        if out != stored:
+        if keep != pinned:
+            self.pins[node] = keep
+            if not keep:
+                self.pins.pop(node, None)
+        if out != self.map_for(node) or keep != pinned:
             self.set_map(node, out)
         return out
 

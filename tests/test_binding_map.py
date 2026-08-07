@@ -87,10 +87,10 @@ def test_a_card_with_no_shared_names_falls_to_position(store):
 
 
 def test_a_deliberate_choice_survives(store):
-    """Two routes fed by the same side, and one deliberately left alone:
-    reconciling must not undo either."""
+    """A third route fed by the left side as well: reconciling must not
+    undo a choice a hand made."""
     store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
-    store.set_map(NODE, {"AUX0": "FL", "AUX1": "FR", "AUX2": "FL"})
+    store.pin_channel(NODE, "AUX2", "FL")
     m = store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
     assert m == {"AUX0": "FL", "AUX1": "FR", "AUX2": "FL"}
 
@@ -142,3 +142,62 @@ def test_the_hook_s_graph_is_cut_by_the_stored_map(store):
     g = store.graph_for_node(NODE)
     assert g.count("filters") == 2
     assert g.count("gain = -3") == 2
+
+
+# ---- a hand's choice, kept apart from the resolver's answer ---------------
+
+def test_the_resolver_s_answer_is_never_mistaken_for_a_choice(store):
+    """The bug this file's second half exists for: reconciling once while no
+    profile was loaded wrote a map of all None, and every later reconcile
+    read those Nones as deliberate and kept them, so the node stayed
+    uncorrected for good."""
+    store.reconcile_map(NODE, [], ["FL", "FR"])          # nothing to map yet
+    assert store.map_for(NODE) == {"FL": None, "FR": None}
+    assert store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"]) == \
+        {"FL": "FL", "FR": "FR"}
+
+
+def test_a_pinned_none_is_deliberate_and_stays(store):
+    store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"])
+    store.pin_channel(NODE, "FR", None)
+    assert store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"]) == \
+        {"FL": "FL", "FR": None}
+
+
+def test_a_pin_survives_a_reload(store):
+    store.set_binding(NODE, "abc123")
+    store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
+    store.pin_channel(NODE, "AUX2", "FL")
+    s = P.ProfileStore()
+    assert s.pins_for(NODE) == {"AUX2": "FL"}
+    assert s.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"]) == \
+        {"AUX0": "FL", "AUX1": "FR", "AUX2": "FL"}
+
+
+def test_a_pin_whose_channel_is_gone_is_forgotten(store):
+    store.pin_channel(NODE, "AUX9", "FR")
+    store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"])
+    assert store.pins_for(NODE) == {}
+
+
+def test_a_pin_whose_target_is_gone_is_forgotten(store):
+    store.pin_channel(NODE, "AUX0", "SL")
+    store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1"])
+    assert store.pins_for(NODE) == {}
+
+
+def test_unpinning_returns_the_channel_to_the_resolver(store):
+    store.pin_channel(NODE, "FR", None)
+    store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"])
+    store.unpin_channel(NODE, "FR")
+    assert store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"]) == \
+        {"FL": "FL", "FR": "FR"}
+
+
+def test_pins_are_written_beside_the_map(store, tmp_path):
+    store.set_binding(NODE, "abc123")
+    store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1"])
+    store.pin_channel(NODE, "AUX1", None)
+    rec = _written(tmp_path)[NODE]
+    assert rec["map"] == {"AUX0": "FL", "AUX1": "FR"}
+    assert rec["pinned"] == {"AUX1": None}
