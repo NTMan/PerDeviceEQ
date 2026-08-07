@@ -38,6 +38,18 @@ PLAYBACK_KEYS = ("apply_all", "preamp", "ch_keys", "all", "channels")
 SHAPE_KEYS = ("apply_all", "ch_keys", "all", "channels")
 
 
+def _channel_is_earned(key, block, out, stored):
+    """True when a stored channel is worth carrying past a save: it holds
+    bands, or a take in either body measured it. Provenance, not presence."""
+    if any((block or {}).get("bands") or []):
+        return True
+    for body in (out, stored):
+        for t in (((body or {}).get("measurement") or {}).get("takes") or []):
+            if (t or {}).get("channel") == key:
+                return True
+    return False
+
+
 def playback_sha256(p):
     """sha256 over the canonical playback body, with the preamp
     PINNED to 0.0 in the hash: preamp is gain staging -- the
@@ -90,7 +102,7 @@ def editor_body(body, stored):
         block = (stored or {}).get(key)
         if isinstance(block, dict) and block and key not in out:
             out[key] = block
-    # ...and never strip a CHANNEL. The editor's view is keyed
+    # ...and never strip a CHANNEL THAT WAS EARNED. The editor's view is keyed
     # by the SINK's live map, so a profile visited through a
     # mono flap (LDAC falling to HFP, a DAC in a mono state)
     # assembles a body with only the sink's keys -- one
@@ -98,14 +110,27 @@ def editor_body(body, stored):
     # profile owns its layout; the sink owns only the route:
     # stored channels the view does not carry ride through
     # every save, and ch_keys keeps them reachable.
+    #
+    # Earned, though, and not merely present. A key also enters
+    # a profile by ACCIDENT: the editor seeds a slot for every
+    # channel the sink offers, so opening a stereo pair's
+    # profile on a ten-channel card wrote ten empty slots, and
+    # this rule then kept them for good. Two visits to a card
+    # that renames its channels left twenty keys under a
+    # correction that has two, and the graph built from them
+    # was refused whole. A channel is kept when it carries
+    # bands or when a take measured it; an empty slot nobody
+    # touched is not a layout, it is a leftover.
     sch = (stored or {}).get("channels") or {}
     mine = out.get("channels") or {}
-    keep = {k: v for k, v in sch.items() if k not in mine}
+    keep = {k: v for k, v in sch.items()
+            if k not in mine and _channel_is_earned(k, v, out, stored)}
     if keep:
         out["channels"] = {**keep, **mine}
         keys = list(out.get("ch_keys") or [])
         keys += [k for k in ((stored or {}).get("ch_keys")
-                             or sch.keys()) if k not in keys]
+                             or sch.keys())
+                 if k not in keys and k in out["channels"]]
         out["ch_keys"] = keys
     fit = out.get("fit")
     if isinstance(fit, dict):

@@ -1415,10 +1415,16 @@ class EqWindow(Adw.ApplicationWindow):
                 "apply_all": self.apply_all,
                 "preamp": float(self.preamp),
                 "preamp_auto": bool(self.preamp_auto),
-                "ch_keys": list(self.ch_keys),
                 "all": self._slot_to_dict("all"),
-                "channels": {k: self._slot_to_dict(k)
-                             for k in self.ch_keys}}
+                # the view is keyed by the SINK, so writing every key it
+                # shows would settle the card's channels into a profile
+                # that never measured them; a slot enters the body when
+                # it has something in it
+                "channels": {k: d for k, d in
+                             ((k, self._slot_to_dict(k))
+                              for k in self.ch_keys)
+                             if (d or {}).get("bands")}}
+        body["ch_keys"] = list(body["channels"])
         if self.floor_off:
             body["floor_off"] = True
         if self.floor_hz is not None:
