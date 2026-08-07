@@ -1472,6 +1472,7 @@ class EqWindow(Adw.ApplicationWindow):
             btn.connect("toggled", self._make_chan_cb(k))
             self.channel_bar.append(btn)
             self._chan_buttons[k] = btn
+        self._dress_tabs()
         # the [All] tab rides alone by design while channels are
         # linked -- and a lone segment needs no linked dress: the
         # style groups siblings, one child is costume (the CI
@@ -1484,6 +1485,47 @@ class EqWindow(Adw.ApplicationWindow):
             self.channel_bar.remove_css_class("linked")
         self.channel_row.set_visible(len(self.ch_keys) > 1)
         self._rebuild_meter_rows(show_meters)
+
+    # a tab wears the name of a SINK channel, and nothing on it used to
+    # say where its bands come from. Three sources are possible and the
+    # difference is audible, so it gets a colour: blue for the profile,
+    # orange for a tuning this hand drew on this output, grey for such a
+    # tuning kept on disk while the profile covers the channel. A dot is
+    # not enough on its own -- the tooltip says it in words.
+    _DOT_PROFILE = "#3584e4"
+    _DOT_ROUTE = "#c64600"
+    _DOT_KEPT = "#9a9996"
+
+    def _dress_tabs(self):
+        """Mark each channel tab with where its bands come from."""
+        buttons = getattr(self, "_chan_buttons", None) or {}
+        cmap = getattr(self, "ch_map", None) or {}
+        loc = (self.store.local_for(self.node)
+               if (self.live and self.node) else {})
+        for k, btn in buttons.items():
+            lbl = btn.get_child()
+            if k == "all" or not hasattr(lbl, "set_markup"):
+                continue
+            src = cmap.get(k) if cmap else k
+            dots, tip = "", ""
+            if src:
+                dots = self._dot(self._DOT_PROFILE)
+                tip = "Fed by %s" % src
+                if loc.get(k):
+                    dots += self._dot(self._DOT_KEPT)
+                    tip += "; your tuning for this output is kept, " \
+                           "and silent while the profile covers this channel"
+            elif loc.get(k):
+                dots = self._dot(self._DOT_ROUTE)
+                tip = "Tuned by ear for this output"
+            else:
+                tip = "No correction on this channel"
+            lbl.set_markup("%s%s" % (GLib.markup_escape_text(k), dots))
+            btn.set_tooltip_text(tip)
+
+    @staticmethod
+    def _dot(colour):
+        return " <span foreground=\"%s\">\u25cf</span>" % colour
 
     def _rebuild_meter_rows(self, show):
         """Per-channel post-composition levels with clip lamps, in
@@ -1757,6 +1799,7 @@ class EqWindow(Adw.ApplicationWindow):
                 continue
             self.store.set_local(self.node, ch,
                                  self._slot_to_dict(ch).get("bands") or [])
+        self._dress_tabs()      # a route just gained or lost its tuning
 
     def _save_now(self):
         """Land the debounce: persist and apply the device profile
