@@ -176,6 +176,14 @@ def resolve_slots(prof_keys, sink_keys):
     by_name = [k if k in have else None for k in sink]
     if any(x is not None for x in by_name):
         return by_name
+    if len(prof) == 1:
+        # one side and nothing to choose: it spreads. A profile with a
+        # single channel is a single curve -- an earphone measured on one
+        # side, or an imported correction that never had sides -- and the
+        # honest reading is that it applies to everything the sink has,
+        # not to its first channel while the rest play dry. This is what
+        # apply_all always meant; here it is a count rather than a flag.
+        return [prof[0]] * len(sink)
     return [prof[i] if i < len(prof) else None for i in range(len(sink))]
 
 
