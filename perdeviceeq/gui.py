@@ -130,6 +130,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._save_source = 0
         self._loading = False
         self.sinks = []
+        self._born_pending = None   # a fork waiting for its history mark
         self._node_gone = False
         self._pw = pw_backend.backend()
         self._pw_unsub = None
@@ -1396,7 +1397,7 @@ class EqWindow(Adw.ApplicationWindow):
         # (those belong to the binding), and keep only slots with
         # something in them, so a card's channel list cannot settle into
         # a profile that never measured it
-        prof, _route = eq.split_slots(
+        prof = eq.profile_slots(
             {k: self._slot_to_dict(k) for k in self.ch_keys},
             getattr(self, "ch_map", None))
         body["channels"] = {k: d for k, d in prof.items()
@@ -1470,47 +1471,6 @@ class EqWindow(Adw.ApplicationWindow):
             self.channel_bar.remove_css_class("linked")
         self.channel_row.set_visible(len(self.ch_keys) > 1)
         self._rebuild_meter_rows(show_meters)
-
-    # a tab wears the name of a SINK channel, and nothing on it used to
-    # say where its bands come from. Three sources are possible and the
-    # difference is audible, so it gets a colour: blue for the profile,
-    # orange for a tuning this hand drew on this output, grey for such a
-    # tuning kept on disk while the profile covers the channel. A dot is
-    # not enough on its own -- the tooltip says it in words.
-    _DOT_PROFILE = "#3584e4"
-    _DOT_ROUTE = "#c64600"
-    _DOT_KEPT = "#9a9996"
-
-    def _dress_tabs(self):
-        """Mark each channel tab with where its bands come from."""
-        buttons = getattr(self, "_chan_buttons", None) or {}
-        cmap = getattr(self, "ch_map", None) or {}
-        loc = (self.store.local_for(self.node)
-               if (self.live and self.node) else {})
-        for k, btn in buttons.items():
-            lbl = btn.get_child()
-            if not hasattr(lbl, "set_markup"):
-                continue
-            src = cmap.get(k) if cmap else k
-            dots, tip = "", ""
-            if src:
-                dots = self._dot(self._DOT_PROFILE)
-                tip = "Fed by %s" % src
-                if loc.get(k):
-                    dots += self._dot(self._DOT_KEPT)
-                    tip += "; your tuning for this output is kept, " \
-                           "and silent while the profile covers this channel"
-            elif loc.get(k):
-                dots = self._dot(self._DOT_ROUTE)
-                tip = "Tuned by ear for this output"
-            else:
-                tip = "No correction on this channel"
-            lbl.set_markup("%s%s" % (GLib.markup_escape_text(k), dots))
-            btn.set_tooltip_text(tip)
-
-    @staticmethod
-    def _dot(colour):
-        return " <span foreground=\"%s\">\u25cf</span>" % colour
 
     def _rebuild_meter_rows(self, show):
         """Per-channel post-composition levels with clip lamps, in
@@ -1623,12 +1583,7 @@ class EqWindow(Adw.ApplicationWindow):
                     dev = []
             pch = list(p.get("ch_keys") or list((p.get("channels") or {}).keys()))
             self.ch_keys = dev or pch or ["FL", "FR"]
-            # the sink in front of us may have changed width, and the profile
-            # may be a different one than last time: bring the map up to date
-            # here, once, rather than deciding it again on every keystroke.
-            self.ch_map = (
-                self.store.reconcile_map(self.node, pch, self.ch_keys)
-                if (self.live and self.node) else {})
+            self._sync_map(widen=False)
 
             # the ride belongs to the app, not to the earphone: mode and
             # manual value come from the ui state, and Auto is computed
@@ -1643,15 +1598,12 @@ class EqWindow(Adw.ApplicationWindow):
                 self._auto_syncing = False
             self.slots = {}
             pchan = p.get("channels") or {}
-            loc = (self.store.local_for(self.node)
-                   if (self.live and self.node) else {})
             for k in self.ch_keys:
                 # the tab wears a SINK name; what fills it is the profile
-                # channel it feeds from, or -- when it feeds from nothing
-                # -- whatever hand tuned this route
-                tgt = self.ch_map.get(k) if self.ch_map else k
-                src = ((pchan.get(tgt) or {"bands": []}) if tgt
-                       else {"bands": loc.get(k) or []})
+                # channel it feeds from, and a tab the map does not answer
+                # for carries its own name into the profile
+                tgt = (self.ch_map.get(k) if self.ch_map else k) or k
+                src = pchan.get(tgt) or {"bands": []}
                 self.slots[k] = {"bands": [eq.Band.from_dict(x)
                                            for x in src.get("bands", [])]}
 
@@ -1723,6 +1675,11 @@ class EqWindow(Adw.ApplicationWindow):
         pid = self.store.save_user(body)
         self.favorites.add(pid)
         _save_favorites(self.favorites)
+        # the fork is a BIRTH, and undo buries a birth -- but the entry
+        # that carries the mark is the one this edit is about to push,
+        # so the mark waits for it here. Without this every touch of a
+        # built-in left a profile that no undo could take back.
+        self._born_pending = pid
         self.current_pid = pid
         self.store.set_binding(self.node, pid)
         self.profile_button.set_label(self._display_name(self.store.get(pid)))
@@ -1732,6 +1689,11 @@ class EqWindow(Adw.ApplicationWindow):
         if self._loading:
             return
         self._ensure_editable()
+        # the edit may have just given the profile its first channel, so
+        # the map is answered again BEFORE the siblings are handed the
+        # slot -- that is what makes one channel spread as it is typed
+        self._sync_map()
+        self._mirror_siblings()
         self._dev_dirty = True
         self.view.graph.queue_draw()
         # any edit starts a new measurement era: peak, percentages and
@@ -1743,24 +1705,82 @@ class EqWindow(Adw.ApplicationWindow):
         self._update_headroom()
         self._schedule_save()
 
+    def _dress_tabs(self):
+        """Write each tab's label: its own SINK name, and under it in
+        small type the profile channel that feeds it when the two
+        differ. That happens whenever a profile is mapped onto a card
+        of other names, and on every tab but one when a single-channel
+        profile spreads over the whole sink -- both of which change
+        what is heard while saying nothing on screen."""
+        cmap = getattr(self, "ch_map", None) or {}
+        for k, btn in (getattr(self, "_chan_buttons", None) or {}).items():
+            lbl = btn.get_child()
+            if not hasattr(lbl, "set_markup"):
+                continue
+            src = cmap.get(k)
+            if src and src != k:
+                lbl.set_markup("%s\n<small>%s</small>"
+                               % (GLib.markup_escape_text(k),
+                                  GLib.markup_escape_text(src)))
+                lbl.set_justify(Gtk.Justification.CENTER)
+            else:
+                lbl.set_text(k)
+
+    def _sync_map(self, widen=True):
+        """Recompute which profile channel feeds each tab.
+
+        The answer depends on how many channels the profile HAS -- one
+        spreads over the whole sink, two or more match by name -- so it
+        goes stale the moment that set changes, and it changes more
+        often than a profile switch. The first band typed under No EQ
+        forks a brand-new ONE-channel profile; undo lands on another
+        profile entirely; a tab that gains its first band adds a
+        channel. Deciding this once at load was the bug behind every
+        symptom in this area: an edit that did not spread, a headroom
+        row quoting a stale sibling, and a save that folded the tabs
+        through names belonging to the profile before this one.
+
+        The channel list is the STORED profile's, widened by whatever
+        the tabs already fold to, since the store lags the editor by
+        one debounce. `widen` is off where the tabs are about to be
+        replaced wholesale -- a load or an undo -- and still hold the
+        previous profile's bands.
+        """
+        if not (self.live and self.node):
+            self.ch_map = {}
+            return
+        p = self.store.get(self.current_pid) or {}
+        pch = list(p.get("ch_keys") or list((p.get("channels") or {})))
+        cmap = getattr(self, "ch_map", None) or {}
+        for k in (self.ch_keys if widen else []):
+            t = cmap.get(k) or k
+            if self._slot(k)["bands"] and t not in pch:
+                pch.append(t)
+        was = getattr(self, "ch_map", None)
+        self.ch_map = self.store.reconcile_map(self.node, pch,
+                                               self.ch_keys)
+        if self.ch_map != was:
+            # the row is built once per profile load, but the map moves
+            # under it: the first band typed makes a one-channel profile
+            # spread, and nine tabs change what they are playing
+            self._dress_tabs()
+
+    def _mirror_siblings(self):
+        """Hand the edited slot to every tab fed by the same profile
+        channel. They ARE that channel, seen several times -- most often
+        because a one-channel profile spreads over the whole sink -- so
+        they share one band list and stay identical by construction."""
+        src = self._slot(self.cur_ch)
+        for k in eq.sibling_tabs(self.cur_ch,
+                                 getattr(self, "ch_map", None),
+                                 self.ch_keys):
+            self.slots[k] = src
+
     def _schedule_save(self):
         """(Re)arm the save debounce timer."""
         if self._save_source:
             GLib.source_remove(self._save_source)
         self._save_source = GLib.timeout_add(_SAVE_DEBOUNCE_MS, self._save_now)
-
-    def _save_routes(self):
-        """Bands drawn on tabs the profile does not reach land in the
-        binding. Written at save time rather than on every keystroke: the
-        graph already carries them live, this is only the disk."""
-        if not (self.live and self.node and getattr(self, "ch_map", None)):
-            return
-        for ch in self.ch_keys:
-            if self.ch_map.get(ch):
-                continue
-            self.store.set_local(self.node, ch,
-                                 self._slot_to_dict(ch).get("bands") or [])
-        self._dress_tabs()      # a route just gained or lost its tuning
 
     def _save_now(self):
         """Land the debounce: persist and apply the device profile
@@ -1771,14 +1791,15 @@ class EqWindow(Adw.ApplicationWindow):
         if self._dev_dirty:
             self._dev_dirty = False
             if self._editable(self.current_pid):
-                self._save_routes()
                 self.store.save_user(self._working_body())
             self._apply_now()
             if not self._restoring:
-                self._push_history()
+                self._push_history(born=self._born_pending)
+                self._born_pending = None
             self._canvas_refresh()
         elif not self._restoring:
-            self._push_history()
+            self._push_history(born=self._born_pending)
+            self._born_pending = None
         return GLib.SOURCE_REMOVE
 
     def _apply_now(self):
@@ -1804,16 +1825,17 @@ class EqWindow(Adw.ApplicationWindow):
         if self.bypass_row.get_active() or silent:
             pw_backend.in_thread(lambda: auth.clear_graph(node))
         else:
-            slots = ([self.ch_map.get(k) for k in self.ch_keys]
+            # the map's answer, or the tab's OWN name -- the same rule
+            # eq.profile_slots writes by. A tab the map cannot answer for
+            # keeps its name in the profile, so the publish has to look
+            # for it there or the bands are saved and never played
+            slots = ([(self.ch_map.get(k) or k) for k in self.ch_keys]
                      if getattr(self, "ch_map", None) else
                      eq.resolve_slots(
                          (body.get("ch_keys")
                           or list((body.get("channels") or {}))),
                          self.ch_keys))
-            local = (self.store.locals_for(self.node, self.ch_keys)
-                     if self.node else None)
-            graph = eq.profile_graph(body, extra=extra, slots=slots,
-                                     local=local)
+            graph = eq.profile_graph(body, extra=extra, slots=slots)
             pw_backend.in_thread(lambda: auth.publish_graph(node,
                                                            graph))
 
@@ -1853,6 +1875,7 @@ class EqWindow(Adw.ApplicationWindow):
                 # rewind the sink binding too, or a restart would
                 # resurrect the selection undo just unwound
                 self.store.set_binding(self.node, pid)
+            self._sync_map(widen=False)
             self._populate_picker()
         view = self.cur_ch          # keep the user's current tab if still valid
         self._loading = True
@@ -1883,7 +1906,6 @@ class EqWindow(Adw.ApplicationWindow):
                                      t.get("active"))
             self._sync_taste_card()
         if self._editable(self.current_pid):
-            self._save_routes()
             self.store.save_user(self._working_body())
         self._apply_now()
         self._update_headroom()
@@ -2107,13 +2129,6 @@ class EqWindow(Adw.ApplicationWindow):
         tail += self._floor_tail()
         peaks = [eq.curve_max_db(0.0, self._slot(k)["bands"] + tail)
                  for k in self.ch_keys] or [eq.curve_max_db(0.0, tail)]
-        # routes tuned by ear share the one preamp this card holds, so
-        # they share the duty of setting it
-        for bands in (self.store.locals_for(self.node, self.ch_keys)
-                      if self.node else []):
-            if bands:
-                peaks.append(eq.curve_max_db(
-                    0.0, [eq.Band.from_dict(b) for b in bands] + tail))
         return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
     def _on_bypass(self, *_):

@@ -190,7 +190,7 @@ def resolve_slots(prof_keys, sink_keys):
     return [prof[i] if i < len(prof) else None for i in range(len(sink))]
 
 
-def auto_preamp_db(p, extra=None, local=None):
+def auto_preamp_db(p, extra=None):
     """The attenuation that zeroes the tier-1 estimate for this body: the
     max of the WORST channel's summed band curve with no preamp, so one
     shared value clears every slot.
@@ -209,48 +209,51 @@ def auto_preamp_db(p, extra=None, local=None):
                                 ((chans.get(k) or {}).get("bands")
                                  or [])] + tail)
              for k in keys] or [curve_max_db(0.0, tail)]
-    # a route tuned by ear is published too, and one preamp serves the
-    # whole output: leave its chain out of the maximum and the hand that
-    # drew a +6 on it clips past every guard we have
-    for bands in (local or []):
-        if bands:
-            peaks.append(curve_max_db(0.0, [Band.from_dict(b)
-                                            for b in bands] + tail))
     return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
 
-def split_slots(slots, ch_map):
-    """Sort the editor's slots into what belongs to the profile and what
-    belongs to the route.
+def profile_slots(slots, ch_map):
+    """The editor's slots keyed by PROFILE channel.
 
     The tabs are keyed by SINK channel, because that is what a person sees
     and turns; the profile's channels carry its own names. While a card
     calls its outputs FL and FR the two coincide and nobody notices. Point
     AUX0 at FL and they part: the tab is AUX0, the correction is FL's.
 
-    Returns (profile_channels, route_channels). A mapped tab folds onto the
-    profile channel it feeds -- several tabs may feed from one side, which
-    is the same correction seen twice, so the last one written wins and
-    they stay identical. An unmapped tab keeps its sink name and goes to
-    the binding, because nothing about it is a fact about the earphone.
-
-    With no map at all (no live sink to ask) everything stays where it is:
-    the tabs ARE the profile's channels, which is the old behaviour.
+    A mapped tab folds onto the profile channel it feeds -- several tabs
+    may feed from one side, which is the same correction seen twice, so
+    the last one written wins and they stay identical. A tab the map does
+    not answer for keeps its own name: bands drawn there are a correction
+    somebody typed, and the profile is the only house there is. With no
+    map at all (no live sink to ask) that is every tab, which is also what
+    an offline window has always done.
     """
-    prof, route = {}, {}
+    out = {}
     for ch, slot in (slots or {}).items():
-        if not ch_map:
-            prof[ch] = slot
-            continue
-        target = ch_map.get(ch)
-        if target:
-            prof[target] = slot
-        else:
-            route[ch] = slot
-    return prof, route
+        out[(ch_map or {}).get(ch) or ch] = slot
+    return out
 
 
-def profile_graph(p, extra=None, slots=None, local=None):
+def sibling_tabs(ch, ch_map, keys):
+    """Every tab in `keys` fed by the same profile channel as `ch`, `ch`
+    itself excluded.
+
+    Many-to-one is ordinary, not exotic: a profile with ONE channel
+    spreads over the whole sink, so every tab on a ten-channel node feeds
+    from that one side, and a card that sums its buses can point two
+    routes at one side deliberately. Such tabs are several views of ONE
+    correction, so an edit on any of them is an edit on all -- and the
+    window has to say so, because profile_slots folds them together with
+    the last write winning, and a stale sibling would fold over a fresh
+    edit on the next save.
+    """
+    m = ch_map or {}
+    tgt = m.get(ch) or ch
+    return [k for k in (keys or [])
+            if k != ch and (m.get(k) or k) == tgt]
+
+
+def profile_graph(p, extra=None, slots=None):
     """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
     the channels carry bands only. `extra` is a list
     of preference-layer band dicts appended after EVERY chain -- taste
@@ -273,15 +276,11 @@ def profile_graph(p, extra=None, slots=None, local=None):
             for b in floor_bands(p) + list(extra or [])]
     chans = p.get("channels") or {}
     keys = list(slots) if slots else (p.get("ch_keys") or list(chans.keys()))
-    loc = list(local or [])
-    loc += [None] * (len(keys) - len(loc))
     sets = []
-    for i, k in enumerate(keys):
-        # a mapped channel is fed by the profile, an unmapped one by
-        # whatever hand tuned this route; never both, so a channel has
-        # one source and the window can say which
-        bands = ((chans.get(k) or {}).get("bands", []) if k
-                 else (loc[i] or []))
+    for k in keys:
+        # a sink channel the profile does not reach carries the tail
+        # alone -- it plays dry, and nothing else is kept for it
+        bands = (chans.get(k) or {}).get("bands", []) if k else []
         sets.append((g, [Band.from_dict(b) for b in bands] + tail))
     if not sets:
         return build_graph(g, tail)

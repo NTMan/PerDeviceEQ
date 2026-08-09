@@ -287,7 +287,7 @@ class ProfileStore:
         order. A node with no map is written back in the bare form, so a
         file only grows a record once someone actually maps something.
         """
-        binds, maps, pins, locs = {}, {}, {}, {}
+        binds, maps, pins = {}, {}, {}
         try:
             with open(BINDINGS_FILE, encoding="utf-8") as f:
                 b = json.load(f)
@@ -305,36 +305,25 @@ class ProfileStore:
                     q = v.get("pinned")
                     if isinstance(q, dict) and q:
                         pins[node] = {k: (x or None) for k, x in q.items()}
-                    l = v.get("local")
-                    if isinstance(l, dict) and l:
-                        locs[node] = {k: {"bands": list(
-                            (x or {}).get("bands") or [])}
-                            for k, x in l.items()
-                            if (x or {}).get("bands")}
                 elif v:
                     binds[node] = v
         self.maps = maps
         self.pins = pins
-        self.locals = locs
         return binds
 
     def save_bindings(self):
         os.makedirs(CONFIG_DIR, exist_ok=True)
         out = {}
         extra = [n for n in list(getattr(self, "maps", {}))
-                 + list(getattr(self, "locals", {}))
                  if n not in self.bindings]
         for node in list(self.bindings) + extra:
             pid = self.bindings.get(node)
             m = getattr(self, "maps", {}).get(node)
             q = getattr(self, "pins", {}).get(node)
-            l = getattr(self, "locals", {}).get(node)
-            if m or q or l:
+            if m or q:
                 rec = {"profile": pid, "map": m}
                 if q:
                     rec["pinned"] = q
-                if l:
-                    rec["local"] = l
                 out[node] = rec
             else:
                 out[node] = pid
@@ -388,40 +377,12 @@ class ProfileStore:
 
     def slots_for(self, node):
         """The map as profile_graph wants it: one entry per sink channel, in
-        sink order. None when the node has no map and the caller should fall
-        back to the profile's own layout."""
+        sink order. An entry the map does not answer for falls back to the
+        sink channel's own name, which is where the editor writes such a
+        tab. None when the node has no map at all and the caller should
+        fall back to the profile's own layout."""
         m = getattr(self, "maps", {}).get(node)
-        return list(m.values()) if m else None
-
-    # ---- bands a hand drew on a route this profile does not cover ----
-    def local_for(self, node):
-        return {k: list(v.get("bands") or []) for k, v
-                in (getattr(self, "locals", {}).get(node) or {}).items()}
-
-    def set_local(self, node, sink_ch, bands):
-        """Bands tuned by ear on a channel the profile does not feed. They
-        belong to the OUTPUT, not to the earphone: they stay when the
-        profile changes, they never travel in a package, and a profile that
-        later covers this channel simply overrides them without erasing
-        them."""
-        if not node or not sink_ch:
-            return
-        locs = getattr(self, "locals", None)
-        if locs is None:
-            locs = self.locals = {}
-        if bands:
-            locs.setdefault(node, {})[sink_ch] = {"bands": list(bands)}
-        else:
-            (locs.get(node) or {}).pop(sink_ch, None)
-            if not locs.get(node):
-                locs.pop(node, None)
-        self.save_bindings()
-
-    def locals_for(self, node, sink_keys):
-        """Parallel to slots_for: one entry per sink channel, in sink order,
-        each a band list or None."""
-        loc = self.local_for(node)
-        return [loc.get(k) or None for k in (sink_keys or [])]
+        return [v or k for k, v in m.items()] if m else None
 
     def reconcile_map(self, node, prof_keys, sink_keys):
         """The map for `node` brought up to date with the sink in front of it
@@ -483,8 +444,7 @@ class ProfileStore:
         st = load_ui_state()
         if not bool(st.get("preamp_auto", True)):
             return float(st.get("preamp", 0.0) or 0.0)
-        loc = list(self.local_for(node).values()) if node else None
-        t = auto_preamp_db(p, local=loc)
+        t = auto_preamp_db(p)
         return -t if t else 0.0
 
     def graph_for_node(self, node):
@@ -494,10 +454,8 @@ class ProfileStore:
         p = self.profiles.get(pid)
         if not p:
             return None
-        m = getattr(self, "maps", {}).get(node) or {}
         return profile_graph(dict(p, preamp=self.effective_preamp(p, node)),
-                             slots=self.slots_for(node),
-                             local=self.locals_for(node, list(m)))
+                             slots=self.slots_for(node))
 
     def presets(self):
         """{node.name: graph_string} for every node bound to a non-Clean,
