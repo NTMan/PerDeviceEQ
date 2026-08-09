@@ -13,7 +13,7 @@ PK = {"type": "PK", "freq": 1000, "gain": -3.0, "q": 1.0, "enabled": True}
 
 
 def _body(channels, **kw):
-    b = {"name": "Pair", "apply_all": False, "preamp": 0.0,
+    b = {"name": "Pair", "preamp": 0.0,
          "ch_keys": list(channels), "channels": channels}
     b.update(kw)
     return b

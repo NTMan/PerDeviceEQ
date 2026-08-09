@@ -165,8 +165,7 @@ def _prof():
     params = {"bands": 6, "f_lo": 20.0, "f_hi": 12000.0,
               "max_boost": 6.0, "smoothing": 6, "mono": False}
     return {"id": "p1", "name": "P", "version": 3,
-            "apply_all": True, "preamp": -2.0, "ch_keys": [],
-            "all": {"bands": []}, "channels": {},
+            "preamp": -2.0, "ch_keys": [], "channels": {},
             "provenance": {"kind": "measured"},
             "device": {"label": "dev"},
             "measurement": m,
@@ -185,7 +184,7 @@ def test_refit_updates_fit_and_keeps_canvas():
     assert out is not prof and prof["fit"]["at"] == "old"
     assert out["measurement"] == prof["measurement"]
     assert out["provenance"] == {"kind": "measured"}
-    assert out["apply_all"] is False
+    assert list(out["channels"]) == out["ch_keys"]
     assert set(out["ch_keys"]) == {"FL", "FR"}
     for k in ("FL", "FR"):
         assert out["channels"][k]["bands"]      # the bump got bands
@@ -240,8 +239,7 @@ def test_reconstruction_matches_live_pipeline(shim_state, store,
                            channels=2, samples=131072,
                            save_dir=str(tmp_path / "takes"))
     pid = store.save_user({"id": "e2e", "name": "e2e", "version": 3,
-                           "apply_all": True, "preamp": 0.0,
-                           "ch_keys": [], "all": {"bands": []},
+                           "preamp": 0.0, "ch_keys": [],
                            "channels": {}})
     ses = ms.MeasureSession(cfg)
     with ses:

@@ -11,21 +11,20 @@ from perdeviceeq import export_peq as ex
 
 
 def _profile_all():
-    return {"apply_all": True, "preamp": -2.5,
-            "all": {"bands": [
+    """A profile with ONE channel: one curve, and it spreads."""
+    return {"preamp": -2.5, "ch_keys": ["FL"],
+            "channels": {"FL": {"bands": [
                 {"type": "PK", "freq": 1000.0, "gain": 3.0, "q": 1.0,
                  "enabled": True},
                 {"type": "LSC", "freq": 100.0, "gain": -4.0, "q": 0.7,
                  "enabled": True},
                 {"type": "PK", "freq": 5000.0, "gain": 2.0, "q": 2.0,
-                 "enabled": False}]},
-            "channels": {}, "ch_keys": []}
+                 "enabled": False}]}}}
 
 
 def _profile_channels():
-    return {"apply_all": False, "preamp": -1.0,
+    return {"preamp": -1.0,
             "ch_keys": ["FL", "FR"],
-            "all": {"bands": []},
             "channels": {
                 "FL": {"bands": [
                     {"type": "HSC", "freq": 0.0, "gain": -1.5,
@@ -79,9 +78,9 @@ def test_targets_dropin_override_and_append(tmp_path):
 
 # ---- composition -------------------------------------------------------
 
-def test_composed_chains_apply_all_with_taste():
+def test_composed_chains_one_channel_with_taste():
     ch = ex.composed_chains(_profile_all(), _TASTE)
-    assert [k for k, _g, _b in ch] == ["all"]
+    assert [k for k, _g, _b in ch] == ["FL"]
     _k, g, bands = ch[0]
     assert g == -2.5
     assert [b["freq"] for b in bands][-1] == 3000.0
@@ -96,13 +95,14 @@ def test_composed_chains_per_channel_shared_preamp():
         assert bands[-1]["freq"] == 3000.0
 
 
-def test_composed_chains_empty_channels_falls_back_to_all():
-    p = {"apply_all": False, "preamp": 0.5, "ch_keys": [],
-         "channels": {},
-         "all": {"bands": [{"type": "PK", "freq": 500.0,
-                            "gain": 1.0, "q": 1.0, "enabled": True}]}}
-    ch = ex.composed_chains(p, None)
-    assert [k for k, _g, _b in ch] == ["all"]
+def test_composed_chains_without_channels_have_no_name():
+    """No channel produced this chain, so it carries no channel name --
+    only the preamp and whatever taste rides along. Everything below
+    decides by the number of chains, so nothing reads the key."""
+    p = {"preamp": 0.5, "ch_keys": [], "channels": {}}
+    ch = ex.composed_chains(p, _TASTE)
+    assert [k for k, _g, _b in ch] == [None]
+    assert ch[0][1] == 0.5
     assert len(ch[0][2]) == 1
 
 
@@ -112,7 +112,8 @@ def test_fold_flat_trim_and_disabled():
     assert folded == -1.5
     assert g2 == pytest.approx(-2.5)
     assert all(b["freq"] >= 1.0 for b in b2)
-    g3, b3, _ = ex.fold_flat(-2.5, _profile_all()["all"]["bands"])
+    g3, b3, _ = ex.fold_flat(
+        -2.5, _profile_all()["channels"]["FL"]["bands"])
     assert len(b3) == 2               # the disabled band is dropped
 
 
@@ -127,8 +128,8 @@ def test_fit_band_from_params_and_default():
 def test_collapse_choices():
     one = ex.composed_chains(_profile_all(), None)
     two = ex.composed_chains(_profile_channels(), None)
-    assert ex.collapse_choices(one, band_domain=True) == ["all"]
-    assert ex.collapse_choices(one, band_domain=False) == ["all"]
+    assert ex.collapse_choices(one, band_domain=True) == ["FL"]
+    assert ex.collapse_choices(one, band_domain=False) == ["FL"]
     # mean leads for every writer: the shared-channels default
     # (field feedback); band-domain realizes it via the export
     # re-fit
@@ -272,43 +273,41 @@ def test_graphiceq_line_and_null():
     gf = ex.graphic_grid()
     assert len(gf) == len(set(gf))
     assert gf[0] == 20.0 and gf[-1] == 19871.0
-    resp, _note = ex.collapse(chains, "all", gf)
+    resp, _note = ex.collapse(chains, "FL", gf)
     text, shift = ex.graphiceq_text(gf, resp)
     assert shift < 0.0                # this chain peaks at +0.5 dB
     fs, gs = ex.parse_graphiceq(text)
     assert len(fs) == len(gf)
     freqs = ex.log_grid(20.0, 12000.0, 480)
-    ref, _ = ex.collapse(chains, "all", freqs)
+    ref, _ = ex.collapse(chains, "FL", freqs)
     assert ex.null_test_graphic(text, freqs, ref, shift) <= 0.1
 
 
 def test_graphiceq_shifts_positive_chains():
-    p = {"apply_all": True, "preamp": 0.0,
-         "all": {"bands": [{"type": "PK", "freq": 1000.0,
-                            "gain": 3.0, "q": 1.0,
-                            "enabled": True}]},
-         "channels": {}, "ch_keys": []}
+    p = {"preamp": 0.0, "ch_keys": ["FL"],
+         "channels": {"FL": {"bands": [{"type": "PK", "freq": 1000.0,
+                                        "gain": 3.0, "q": 1.0,
+                                        "enabled": True}]}}}
     chains = ex.composed_chains(p, None)
     gf = ex.graphic_grid()
-    resp, _ = ex.collapse(chains, "all", gf)
+    resp, _ = ex.collapse(chains, "FL", gf)
     text, shift = ex.graphiceq_text(gf, resp)
     assert shift == pytest.approx(-3.0, abs=0.05)
     assert "Level shifted" in text
     _fs, gs = ex.parse_graphiceq(text)
     assert max(gs) <= 0.0
     freqs = ex.log_grid(20.0, 12000.0, 480)
-    ref, _ = ex.collapse(chains, "all", freqs)
+    ref, _ = ex.collapse(chains, "FL", freqs)
     assert ex.null_test_graphic(text, freqs, ref, shift) <= 0.1
 
 
 def test_graphiceq_no_shift_for_cut_only_chains():
-    p = {"apply_all": True, "preamp": 0.0,
-         "all": {"bands": [{"type": "PK", "freq": 1000.0,
-                            "gain": -3.0, "q": 1.0,
-                            "enabled": True}]},
-         "channels": {}, "ch_keys": []}
+    p = {"preamp": 0.0, "ch_keys": ["FL"],
+         "channels": {"FL": {"bands": [{"type": "PK", "freq": 1000.0,
+                                        "gain": -3.0, "q": 1.0,
+                                        "enabled": True}]}}}
     gf = ex.graphic_grid()
-    resp, _ = ex.collapse(ex.composed_chains(p, None), "all", gf)
+    resp, _ = ex.collapse(ex.composed_chains(p, None), "FL", gf)
     _text, shift = ex.graphiceq_text(gf, resp)
     assert shift == 0.0
 
@@ -456,9 +455,13 @@ def test_poweramp_clamps_and_refusals():
     out = ex._pa_band(band, t, ex.PA_BOTH)
     assert out["frequency"] == 20.0 and out["gain"] == 15.0
     assert out["q"] == 0.1
+    # a LONE chain always maps: it goes to both channels whatever it
+    # is called, so the refusal needs a set that really cannot route
+    two = [("FC", 0.0, []), ("RL", 0.0, [])]
     with pytest.raises(ValueError):
-        ex.poweramp_json(t, [("FC", 0.0, [])], "x")
-    assert not ex.poweramp_stereo_keys([("FC", 0.0, [])])
+        ex.poweramp_json(t, two, "x")
+    assert not ex.poweramp_stereo_keys(two)
+    assert ex.poweramp_stereo_keys([("FC", 0.0, [])])
 
 
 def test_headroom_preamp_manual_and_auto():
@@ -535,8 +538,8 @@ def _canvas_profile(fl_tilt=6.0, fr_tilt=6.0, fl_lift=3.0):
            "takes": ["t1", "t2"], "edited": False,
            "inputs_sha256": fit_fingerprint(meas, ["t1", "t2"],
                                             params)}
-    return {"name": "synth", "preamp": 0.0, "apply_all": False,
-            "ch_keys": ["FL", "FR"], "all": {"bands": []},
+    return {"name": "synth", "preamp": 0.0,
+            "ch_keys": ["FL", "FR"],
             "channels": {"FL": {"bands": []},
                          "FR": {"bands": []}},
             "measurement": meas, "fit": fit}
@@ -953,7 +956,7 @@ def test_poweramp_preamp_spills_past_the_range():
     errs = ex.null_test_poweramp(text, chains, freqs)
     assert max(errs.values()) <= ex.NULL_PASS_DB, errs
     # inside the range nothing spills and no flat band appears
-    calm = [("all", -6.0, fl)]
+    calm = [("FL", -6.0, fl)]
     t2 = _json.loads(ex.poweramp_json(t, calm, "calm"))[0]
     assert t2["preamp"] == -6.0
     assert not [b for b in t2["bands"]

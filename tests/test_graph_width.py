@@ -24,8 +24,8 @@ def _wide():
     chans = {k: {"bands": []} for k in keys}
     chans["FL"] = {"bands": [PK]}
     chans["FR"] = {"bands": [PK]}
-    return {"preamp": -6.0, "apply_all": False, "floor_off": True,
-            "ch_keys": keys, "all": {"bands": []}, "channels": chans}
+    return {"preamp": -6.0, "floor_off": True,
+            "ch_keys": keys, "channels": chans}
 
 
 def _sets(graph):
@@ -108,17 +108,18 @@ def test_without_slots_nothing_changes():
 # ---- one channel is one curve --------------------------------------------
 
 def test_a_single_channel_spreads_over_the_whole_sink():
-    """apply_all as a count rather than a flag: a profile with one channel
+    """One curve as a count rather than a flag: a profile with one channel
     is one curve, and one curve applies to everything the sink has -- not
     to its first channel while the rest play dry."""
     assert eq.resolve_slots(["ALL"], ["FL", "FR"]) == ["ALL", "ALL"]
     assert eq.resolve_slots(["ALL"], AUX) == ["ALL"] * 10
 
 
-def test_a_single_channel_still_prefers_its_own_name():
-    """Spreading is the answer when nothing matches, not a rule that
-    overrides one that does."""
-    assert eq.resolve_slots(["FL"], ["FL", "FR"]) == ["FL", None]
+def test_a_single_channel_spreads_even_over_its_own_name():
+    """One channel is one curve and it goes everywhere. Measuring one
+    ear and correcting both is the case this serves; letting the name
+    win would feed FL and leave FR dry."""
+    assert eq.resolve_slots(["FL"], ["FL", "FR"]) == ["FL", "FL"]
 
 
 def test_two_channels_do_not_spread():
@@ -129,9 +130,8 @@ def test_two_channels_do_not_spread():
 
 
 def test_the_single_curve_reaches_every_chain():
-    p = {"preamp": -6.0, "apply_all": False, "floor_off": True,
-         "ch_keys": ["ALL"], "all": {"bands": []},
-         "channels": {"ALL": {"bands": [PK]}}}
+    p = {"preamp": -6.0, "floor_off": True,
+         "ch_keys": ["ALL"], "channels": {"ALL": {"bands": [PK]}}}
     g = eq.profile_graph(p, slots=eq.resolve_slots(["ALL"], ["FL", "FR"]))
     assert _sets(g) == 2
     assert g.count("gain = -3") == 2

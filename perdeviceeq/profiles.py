@@ -30,14 +30,13 @@ def _new_id():
 
 
 def _clean_profile():
-    return {"id": CLEAN_ID, "name": "Clean (no EQ)", "apply_all": True,
+    return {"id": CLEAN_ID, "name": "Clean (no EQ)",
             "version": SCHEMA_VERSION, "preamp": 0.0, "ch_keys": [],
-            "all": {"bands": []}, "channels": {}, "builtin": True,
-            "path": None}
+            "channels": {}, "builtin": True, "path": None}
 
 
-PLAYBACK_KEYS = ("apply_all", "preamp", "ch_keys", "all", "channels")
-SHAPE_KEYS = ("apply_all", "ch_keys", "all", "channels")
+PLAYBACK_KEYS = ("preamp", "ch_keys", "channels")
+SHAPE_KEYS = ("ch_keys", "channels")
 
 
 def _channel_is_earned(key, block, out, stored):
@@ -191,8 +190,6 @@ class ProfileStore:
             pid = p.get("id") or os.path.splitext(fn)[0]
             p["id"] = pid
             p.setdefault("name", pid)
-            p.setdefault("apply_all", True)
-            p.setdefault("all", {"preamp": 0.0, "bands": []})
             p.setdefault("channels", {})
             p.setdefault("ch_keys", [])
             p["builtin"] = builtin
@@ -221,9 +218,7 @@ class ProfileStore:
     def _body(cls, p):
         body = {"id": p["id"], "name": p.get("name", p["id"]),
                 "version": SCHEMA_VERSION,
-                "apply_all": bool(p.get("apply_all", True)),
                 "ch_keys": list(p.get("ch_keys") or []),
-                "all": cls._sane_slot(p.get("all")),
                 "channels": {k: cls._sane_slot(v)
                              for k, v in (p.get("channels") or {}).items()}}
         # speaker protection is a first-class citizen of the

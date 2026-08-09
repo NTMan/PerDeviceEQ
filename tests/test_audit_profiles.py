@@ -1,5 +1,5 @@
 """audit_headroom's app-profile support (Task 2 tier 3): schema conversion
-(band key "enabled" -> "on", per-slot preamps, linked "all" replication),
+(band key "enabled" -> "on", per-slot preamps, one-channel spreading),
 --profile NAME resolution against the app's saved profiles, the 0.1 dB
 ceil on suggestions, and byte-stable --demo output."""
 import json
@@ -27,11 +27,12 @@ def test_normalize_three_modes():
     chains, meta = ah.normalize_profile(audit)
     assert meta["mode"] == "audit" and chains[0][1] == -1.5
 
-    linked = {"apply_all": True, "preamp": -3.0, "all": {"bands": []}}
-    chains, meta = ah.normalize_profile(linked)
-    assert meta["mode"] == "all" and chains == [("all", -3.0, [])]
+    one = {"preamp": -3.0, "ch_keys": ["FL"],
+           "channels": {"FL": {"bands": []}}}
+    chains, meta = ah.normalize_profile(one)
+    assert meta["mode"] == "one" and chains == [("FL", -3.0, [])]
 
-    per = {"apply_all": False, "preamp": -2.0, "ch_keys": ["FR", "FL"],
+    per = {"preamp": -2.0, "ch_keys": ["FR", "FL"],
            "channels": {"FL": {"bands": []}, "FR": {"bands": []}}}
     chains, meta = ah.normalize_profile(per)
     assert meta["mode"] == "per-channel"
@@ -39,7 +40,7 @@ def test_normalize_three_modes():
 
 
 def test_v1_app_profile_is_rejected():
-    v1 = {"apply_all": False, "ch_keys": ["FL"],
+    v1 = {"ch_keys": ["FL"],
           "channels": {"FL": {"preamp": -1.0, "bands": []}}}
     with pytest.raises(SystemExit):
         ah.normalize_profile(v1)
@@ -48,8 +49,8 @@ def test_v1_app_profile_is_rejected():
 def test_resolve_profile_by_name(tmp_path):
     for pid, name in (("a1", "soundcore Liberty 5"), ("b2", "iLoud Micro")):
         (tmp_path / ("%s.json" % pid)).write_text(
-            json.dumps({"id": pid, "name": name, "apply_all": True,
-                        "version": 3, "preamp": 0.0, "all": {"bands": []}}))
+            json.dumps({"id": pid, "name": name,
+                        "version": 3, "preamp": 0.0}))
     raw, path = ah.resolve_profile("soundcore liberty 5", str(tmp_path))
     assert raw["id"] == "a1"
     raw, path = ah.resolve_profile("micro", str(tmp_path))   # unique substring
@@ -85,7 +86,7 @@ def test_main_app_profile_end_to_end(tmp_path, monkeypatch, capsys):
     sf.write(wav, np.column_stack([sig, sig]), fs, subtype="FLOAT")
 
     prof = {"id": "p1", "name": "Test Buds", "version": 3,
-            "apply_all": False, "preamp": -1.0, "ch_keys": ["FL", "FR"],
+            "preamp": -1.0, "ch_keys": ["FL", "FR"],
             "channels": {"FL": {"bands": [
                              {"type": "PK", "freq": 1000, "gain": 12.0,
                               "q": 1.0, "enabled": True}]},
@@ -121,8 +122,7 @@ def test_playback_hash_is_blind_to_channel_seating():
     `edited` flag sticks forever after the first touch -- the
     architect's field profile convicted exactly this."""
     from perdeviceeq import profiles as P
-    body = {"apply_all": False, "preamp": -3.0,
-            "ch_keys": ["FR", "FL"], "all": {"bands": []},
+    body = {"preamp": -3.0, "ch_keys": ["FR", "FL"],
             "channels": {"FL": {"bands": [
                 {"type": "PK", "freq": 100.0, "gain": 2.0,
                  "q": 1.0, "enabled": True}]},

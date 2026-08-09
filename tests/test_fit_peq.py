@@ -80,7 +80,6 @@ def test_cli_writes_importable_v2_profile(tmp_path):
     p = json.loads(out.read_text())
     # exactly the shape gui._import_profile / ProfileStore expect (v2)
     assert p["version"] == 5
-    assert p["apply_all"] is False
     assert p["ch_keys"] == ["FL", "FR"]
     assert p["preamp"] == 0.0                  # the app derives Safe/Session
     for key in ("FL", "FR"):
@@ -107,7 +106,6 @@ def test_fit_profiles_direct_call():
                                 f_lo=20.0, f_hi=12000.0)
     assert prof["name"] == "Unit"
     assert prof["version"] == 5
-    assert prof["apply_all"] is False
     assert prof["ch_keys"] == ["FL", "FR"]
     assert prof["preamp"] == 0.0
     for key in ("FL", "FR"):
@@ -115,10 +113,12 @@ def test_fit_profiles_direct_call():
         assert bnds and all(b["enabled"] for b in bnds)
         assert all(b["gain"] <= 6.0 + 1e-6 for b in bnds)
 
-    mono = fit_peq.fit_profiles({"all": result_for("FL")}, mono=True)
-    assert mono["apply_all"] is True
-    assert mono["all"]["bands"]
-    assert mono["channels"] == {}
+    # ONE measurement is fit under the channel it measured, and that
+    # is the whole of it: the fitter never merges channels into a
+    # curve of its own, so there is no shape here but the channels
+    one = fit_peq.fit_profiles({"FL": result_for("FL")})
+    assert one["ch_keys"] == ["FL"]
+    assert one["channels"]["FL"]["bands"]
 
 
 # --- balance trim: equalize the channels' TRUE acoustic levels -------------

@@ -44,19 +44,17 @@ def test_deleting_the_active_layer_turns_it_off(tmp_path):
 
 
 def test_layer_composes_after_every_chain():
-    prof = {"preamp": -3.0, "apply_all": False,
+    prof = {"preamp": -3.0,
             "ch_keys": ["FL", "FR"],
             "channels": {
                 "FL": {"bands": [{"type": "PK", "freq": 200,
                                   "gain": -2.0, "q": 1.0,
                                   "enabled": True}]},
-                "FR": {"bands": []}},
-            "all": {"bands": []}}
+                "FR": {"bands": []}}}
     g = eq.profile_graph(prof, extra=[LSC50])
     assert g.count("freq = 50") == 2            # one per channel
     assert g.count("freq = 200") == 1           # the profile's own
-    flat = {"preamp": 0.0, "apply_all": True, "ch_keys": [],
-            "all": {"bands": []}, "channels": {}}
+    flat = {"preamp": 0.0, "ch_keys": [], "channels": {}}
     g = eq.profile_graph(flat, extra=[LSC50])
     assert g.count("freq = 50") == 1            # taste over Clean
     # no layer: byte-identical to the plain call
@@ -65,8 +63,7 @@ def test_layer_composes_after_every_chain():
 
 def test_disabled_layer_bands_stay_out_of_the_graph():
     off = dict(LSC50, enabled=False)
-    flat = {"preamp": 0.0, "apply_all": True, "ch_keys": [],
-            "all": {"bands": []}, "channels": {}}
+    flat = {"preamp": 0.0, "ch_keys": [], "channels": {}}
     assert "freq = 50" not in eq.profile_graph(flat, extra=[off])
 
 

@@ -29,13 +29,13 @@ def test_explicit_argument_beats_pending_prefs():
 def test_defaults_when_the_profile_is_bare():
     p = refit.resolve_fit_params({})
     assert p["bands"] == 10
-    assert p["mono"] is False
+    assert p["f_lo"] == 20.0
 
 
 def test_store_body_carries_the_parked_word():
-    prof = {"id": "x", "name": "X", "apply_all": True,
-            "preamp": 0.0, "ch_keys": [], "all": {"bands": []},
-            "channels": {}, "fit_prefs": {"bands": 15}}
+    prof = {"id": "x", "name": "X",
+            "preamp": 0.0, "ch_keys": [], "channels": {},
+            "fit_prefs": {"bands": 15}}
     body = ProfileStore._body(prof)
     assert body["fit_prefs"] == {"bands": 15}
     prof.pop("fit_prefs")

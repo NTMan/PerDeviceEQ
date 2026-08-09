@@ -19,8 +19,8 @@ from perdeviceeq import profiles
 
 
 def _v2():
-    return {"id": "x", "name": "X", "version": 2, "apply_all": False,
-            "preamp": -3.0, "ch_keys": ["FL"], "all": {"bands": []},
+    return {"id": "x", "name": "X", "version": 2,
+            "preamp": -3.0, "ch_keys": ["FL"],
             "channels": {"FL": {"bands": [
                 {"type": "PK", "freq": 200, "gain": 3.0, "q": 1.0}]}}}
 
@@ -90,8 +90,7 @@ def test_save_drops_empty_or_non_dict_blocks(tmp_path, monkeypatch):
 def test_editor_body_carries_blocks_and_marks_edited():
     stored = dict(_v2(), version=3, **_blocks())
     body = {k: stored[k] for k in
-            ("id", "name", "apply_all", "preamp", "ch_keys",
-             "all", "channels")}
+            ("id", "name", "preamp", "ch_keys", "channels")}
     same = profiles.editor_body(dict(body), stored)
     for key in profiles.V3_BLOCKS:
         assert same[key] == _blocks()[key]
@@ -142,7 +141,7 @@ def test_a_save_never_strips_a_channel():
     measurement survived, the bands died, the edited chip
     lit). Stored channels the view does not carry now ride
     through every save, and ch_keys keeps them reachable."""
-    stored = {"id": "x", "apply_all": False,
+    stored = {"id": "x",
               "ch_keys": ["FL", "FR"],
               "channels": {
                   "FL": {"bands": [{"type": "PK", "freq": 100.0,
@@ -150,9 +149,8 @@ def test_a_save_never_strips_a_channel():
                   "FR": {"bands": [{"type": "PK", "freq": 200.0,
                                     "gain": 2.0, "q": 2.0}]}},
               "measurement": {"grid": {"f_lo": 20.0}}}
-    body = {"id": "x", "apply_all": False, "preamp": 0.0,
+    body = {"id": "x", "preamp": 0.0,
             "ch_keys": ["MONO"],
-            "all": {"bands": []},
             "channels": {"MONO": {"bands": []}}}
     out = profiles.editor_body(dict(body), stored)
     assert out["channels"]["FL"]["bands"][0]["freq"] == 100.0

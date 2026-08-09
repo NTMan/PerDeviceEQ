@@ -155,14 +155,23 @@ def resolve_slots(prof_keys, sink_keys):
     as `sink_keys`, holding a profile channel name or None.
 
     A profile's channels name the SIDES of a transducer, a sink's channels
-    name ROUTES, and the two vocabularies agree only by luck. Names first,
-    since FL is FL wherever it appears and a partial agreement is still an
-    agreement -- a sink channel with no namesake gets None and carries the
-    tail alone. When NOTHING agrees, which is what a card handing out
-    AUX0..AUX9 does to a stereo profile, fall back to position: side one
-    to route one, side two to route two, the rest None. Matching by name
-    alone would leave such a card silently uncorrected, and silence is the
-    failure mode this whole area is being cured of.
+    name ROUTES, and the two vocabularies agree only by luck.
+
+    ONE channel spreads, and it is asked first, before any name is looked
+    at: a profile with a single channel is a single curve -- one ear
+    measured, or an imported correction that never had sides -- and the
+    honest reading is that it applies to everything the sink has. Deciding
+    by name first would send a lone channel called FL to FL alone and
+    leave the other side dry, which is not what measuring one ear means.
+
+    With two or more channels, names decide, since FL is FL wherever it
+    appears and a partial agreement is still an agreement -- a sink
+    channel with no namesake gets None and carries the tail alone. When
+    NOTHING agrees, which is what a card handing out AUX0..AUX9 does to a
+    stereo profile, fall back to position: side one to route one, side two
+    to route two, the rest None. Matching by name alone would leave such a
+    card silently uncorrected, and silence is the failure mode this whole
+    area is being cured of.
 
     This is the default policy and it lives here only until the binding
     stores a map of its own; the graph builder below takes the answer, not
@@ -172,25 +181,19 @@ def resolve_slots(prof_keys, sink_keys):
     prof = list(prof_keys or [])
     if not sink:
         return []
+    if len(prof) == 1:
+        return [prof[0]] * len(sink)
     have = set(prof)
     by_name = [k if k in have else None for k in sink]
     if any(x is not None for x in by_name):
         return by_name
-    if len(prof) == 1:
-        # one side and nothing to choose: it spreads. A profile with a
-        # single channel is a single curve -- an earphone measured on one
-        # side, or an imported correction that never had sides -- and the
-        # honest reading is that it applies to everything the sink has,
-        # not to its first channel while the rest play dry. This is what
-        # apply_all always meant; here it is a count rather than a flag.
-        return [prof[0]] * len(sink)
     return [prof[i] if i < len(prof) else None for i in range(len(sink))]
 
 
 def auto_preamp_db(p, extra=None, local=None):
     """The attenuation that zeroes the tier-1 estimate for this body: the
-    max of the summed band curve with no preamp, or the WORST channel's
-    when the channels are unlinked, so one shared value clears every slot.
+    max of the WORST channel's summed band curve with no preamp, so one
+    shared value clears every slot.
     Rounded UP to the 0.1 dB step the spin can express, so the result lands
     at or below 0 dBFS.
 
@@ -202,15 +205,10 @@ def auto_preamp_db(p, extra=None, local=None):
     tail = [Band.from_dict(b) for b in floor_bands(p) + list(extra or [])]
     chans = p.get("channels") or {}
     keys = list(p.get("ch_keys") or list(chans.keys()))
-    if p.get("apply_all", True) or not keys:
-        bands = [Band.from_dict(b)
-                 for b in ((p.get("all") or {}).get("bands") or [])]
-        peaks = [curve_max_db(0.0, bands + tail)]
-    else:
-        peaks = [curve_max_db(0.0, [Band.from_dict(b) for b in
-                                    ((chans.get(k) or {}).get("bands")
-                                     or [])] + tail)
-                 for k in keys]
+    peaks = [curve_max_db(0.0, [Band.from_dict(b) for b in
+                                ((chans.get(k) or {}).get("bands")
+                                 or [])] + tail)
+             for k in keys] or [curve_max_db(0.0, tail)]
     # a route tuned by ear is published too, and one preamp serves the
     # whole output: leave its chain out of the maximum and the hand that
     # drew a +6 on it clips past every guard we have
@@ -241,8 +239,6 @@ def split_slots(slots, ch_map):
     """
     prof, route = {}, {}
     for ch, slot in (slots or {}).items():
-        if ch == "all":
-            continue
         if not ch_map:
             prof[ch] = slot
             continue
@@ -256,7 +252,7 @@ def split_slots(slots, ch_map):
 
 def profile_graph(p, extra=None, slots=None, local=None):
     """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
-    slots carry bands only (apply_all or per-channel). `extra` is a list
+    the channels carry bands only. `extra` is a list
     of preference-layer band dicts appended after EVERY chain -- taste
     composed over correction, whatever the profile's channel layout; the
     shared preamp stays the profile's own, and headroom over the
@@ -275,10 +271,6 @@ def profile_graph(p, extra=None, slots=None, local=None):
     g = float(p.get("preamp", 0.0))
     tail = [Band.from_dict(b)
             for b in floor_bands(p) + list(extra or [])]
-    if p.get("apply_all", True):
-        a = p.get("all") or {"bands": []}
-        return build_graph(g, [Band.from_dict(b)
-                               for b in a.get("bands", [])] + tail)
     chans = p.get("channels") or {}
     keys = list(slots) if slots else (p.get("ch_keys") or list(chans.keys()))
     loc = list(local or [])
@@ -292,9 +284,7 @@ def profile_graph(p, extra=None, slots=None, local=None):
                  else (loc[i] or []))
         sets.append((g, [Band.from_dict(b) for b in bands] + tail))
     if not sets:
-        a = p.get("all") or {"bands": []}
-        return build_graph(g, [Band.from_dict(b)
-                               for b in a.get("bands", [])] + tail)
+        return build_graph(g, tail)
     return build_graph_channels(sets)
 
 
@@ -307,8 +297,6 @@ def profile_has_content(p):
     non-zero preamp). A flat profile is equivalent to Clean / no binding."""
     if abs(float(p.get("preamp", 0.0))) > 1e-9:   # schema v2 shared preamp
         return True
-    if p.get("apply_all", True):
-        return _set_has_content(p.get("all"))
     chans = p.get("channels") or {}
     for k in (p.get("ch_keys") or chans.keys()):
         if _set_has_content(chans.get(k)):

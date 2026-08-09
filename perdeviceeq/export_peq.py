@@ -314,21 +314,22 @@ def composed_chains(profile, taste_bands=None):
     """[(key, preamp, band_dicts)] of the chain the app actually
     plays: the profile's own slots with the active taste layer's
     bands appended to EVERY chain and the one shared preamp --
-    mirrors eq.profile_graph, including the fall-back to the "all"
-    slot when a per-channel profile has no channel sets."""
+    mirrors eq.profile_graph.
+
+    A profile with no channels still has a chain to export -- the
+    preamp and the taste tail are played whatever the correction is
+    -- and that chain has NO channel name, because no channel
+    produced it. Its key is None rather than a word: every consumer
+    below decides by the number of chains, so the name is never
+    read, and inventing one would put a value in the channel
+    vocabulary that no sink can ever have."""
     tail = [dict(b) for b in (taste_bands or [])]
     g = float(profile.get("preamp", 0.0))
-    if profile.get("apply_all", True):
-        a = profile.get("all") or {"bands": []}
-        return [("all", g, list(a.get("bands", [])) + tail)]
     chans = profile.get("channels") or {}
     keys = list(profile.get("ch_keys") or chans.keys())
     out = [(k, g, list((chans.get(k) or {}).get("bands", [])) + tail)
            for k in keys]
-    if not out:
-        a = profile.get("all") or {"bands": []}
-        return [("all", g, list(a.get("bands", [])) + tail)]
-    return out
+    return out or [(None, g, list(tail))]
 
 
 def to_bands(band_dicts):
@@ -386,8 +387,10 @@ def pick_chain(chains, policy):
     keys = [k for k, _g, _b in chains]
     for k, g, b in chains:
         if k == policy:
-            if k == "all":
-                return g, b, "single chain (apply-all)"
+            # a lone chain IS the whole correction, whatever it is
+            # called: the note reads the COUNT, never a name
+            if len(chains) == 1:
+                return g, b, "single chain (one curve)"
             return g, b, "channel %s of %s" % (k, ", ".join(keys))
     raise KeyError(policy)
 
@@ -405,8 +408,8 @@ def collapse(chains, policy, freqs):
         return resp, "mean of %s" % keys
     for k, g, b in chains:
         if k == policy:
-            note = ("single chain (apply-all)" if k == "all" else
-                    "channel %s of %s" % (k, ", ".join(
+            note = ("single chain (one curve)" if len(chains) == 1
+                    else "channel %s of %s" % (k, ", ".join(
                         c[0] for c in chains)))
             return chain_response(g, b, freqs), note
     raise KeyError(policy)
@@ -968,9 +971,10 @@ def preamp_spill(preamp, target):
 
 def poweramp_stereo_keys(chains):
     """True when the chain set maps onto Poweramp's per-band
-    channel routing: one shared chain, or exactly FL / FR."""
+    channel routing: ONE chain, whatever it is called, since a lone
+    chain goes to both channels -- or exactly FL / FR."""
     keys = {k for k, _g, _b in chains}
-    return keys == {"all"} or keys <= {"FL", "FR"}
+    return len(chains) == 1 or keys <= {"FL", "FR"}
 
 
 def poweramp_json(target, chains, name):
@@ -989,7 +993,7 @@ def poweramp_json(target, chains, name):
     preamp, spill = preamp_spill(chains[0][1], target)
     out_bands = [dict(b) for b in PA_INERT_PAIR]
     for key, _g, bands in chains:
-        ch = PA_BOTH if key == "all" else PA_CH[key]
+        ch = PA_BOTH if len(chains) == 1 else PA_CH[key]
         poured = False
         for b in bands:
             if not b.get("enabled", True):

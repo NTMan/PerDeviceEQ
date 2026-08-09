@@ -27,9 +27,8 @@ def store(tmp_path, monkeypatch):
 def _profile():
     return {
         "id": "abc123def456", "name": "TANCHJIM ORIGIN",
-        "version": SCHEMA_VERSION, "apply_all": False,
+        "version": SCHEMA_VERSION,
         "preamp": -16.2, "ch_keys": ["FL", "FR"],
-        "all": {"bands": []},
         "channels": {
             "FL": {"bands": [{"type": "PK", "freq": 2985.0,
                               "gain": -14.35, "q": 0.696,
@@ -147,8 +146,7 @@ def test_report_names_the_provenance():
     assert sha[:16] in lines
     bare = {"id": "x", "name": "bare",
             "version": SCHEMA_VERSION, "preamp": 0.0,
-            "apply_all": True, "ch_keys": [],
-            "all": {"bands": []}, "channels": {}}
+            "ch_keys": [], "channels": {}}
     blines = "\n".join(pdeq.package_report(
         bare, pdeq.payload_sha256(bare)))
     assert "bands only" in blines
@@ -170,8 +168,8 @@ def test_working_body_packs():
     refuse the app's own working profile."""
     from perdeviceeq.profiles import editor_body
     p = _profile()
-    playback = {k: p[k] for k in ("id", "name", "apply_all",
-                                  "preamp", "ch_keys", "all",
+    playback = {k: p[k] for k in ("id", "name",
+                                  "preamp", "ch_keys",
                                   "channels")}
     body = editor_body(playback, p)
     assert body["version"] == SCHEMA_VERSION

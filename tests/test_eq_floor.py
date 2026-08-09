@@ -12,8 +12,7 @@ from perdeviceeq import eq
 
 
 def _floored(hz=38.3):
-    return {"preamp": 0.0, "apply_all": True,
-            "all": {"bands": []}, "floor_hz": hz}
+    return {"preamp": 0.0, "floor_hz": hz}
 
 
 def test_floor_is_four_hp_stages_at_the_hands_mark():
@@ -89,9 +88,7 @@ def test_protection_keys_survive_the_body():
 
 def test_protection_is_pinned_out_of_the_fit_hash():
     from perdeviceeq import profiles as pr
-    base = {"apply_all": True, "preamp": 0.0,
-            "ch_keys": ["FL"], "all": {"bands": []},
-            "channels": {}}
+    base = {"preamp": 0.0, "ch_keys": ["FL"], "channels": {}}
     with_floor = dict(base, floor_hz=55.0, floor_off=True)
     assert (pr.playback_sha256(base)
             == pr.playback_sha256(with_floor))
@@ -119,8 +116,7 @@ def test_no_floor_key_means_no_floor():
 def test_the_graph_wears_the_floor_sealed():
     g = eq.profile_graph(_floored())
     assert g.count("bq_highpass") == 4
-    bare = eq.profile_graph({"preamp": 0.0, "apply_all": True,
-                             "all": {"bands": []}})
+    bare = eq.profile_graph({"preamp": 0.0})
     assert "bq_highpass" not in bare
 
 

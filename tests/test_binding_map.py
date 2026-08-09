@@ -129,7 +129,7 @@ def test_reconciling_an_unchanged_map_writes_nothing(store, tmp_path):
 def test_the_hook_s_graph_is_cut_by_the_stored_map(store):
     """graph_for_node runs where the sink cannot be asked, so the map is the
     only thing that knows how wide the node is."""
-    pid = store.save_user({"name": "Pair", "apply_all": False,
+    pid = store.save_user({"name": "Pair",
                            "floor_off": True, "preamp": 0.0,
                            "ch_keys": ["FL", "FR", "FC", "LFE"],
                            "channels": {"FL": {"bands": [PK]},

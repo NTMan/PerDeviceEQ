@@ -117,8 +117,8 @@ class ExportDialog(Adw.Dialog):
         keys = [k for k, _g, _b in self.chains]
         if policy == "mean":
             return "mean of %s" % ", ".join(keys)
-        if policy == "all":
-            return "single chain (apply-all)"
+        if len(keys) == 1:
+            return "single chain (one curve)"
         return "channel %s of %s" % (policy, ", ".join(keys))
 
     def _canvas_desired(self):
@@ -249,8 +249,6 @@ class ExportDialog(Adw.Dialog):
     def _policy_label(policy):
         if policy == "stereo":
             return "True stereo (per-band channels)"
-        if policy == "all":
-            return "Single chain (apply-all)"
         if policy == "mean":
             return "Mean of all channels"
         return "Channel %s" % policy
@@ -502,7 +500,10 @@ class ExportDialog(Adw.Dialog):
             else:
                 g, bands, _note = xp.pick_chain(allc,
                                                 st["policy"])
-                chains = [("all", g, bands)]
+                # one chain from here on, and Poweramp routes a lone
+                # chain to both channels: the key rides along only so
+                # the tuple keeps its shape
+                chains = [(st["policy"], g, bands)]
             adj, moved = xp.headroom_preamp(
                 chains[0][1], [b for _k, _g, b in chains],
                 auto=auto)

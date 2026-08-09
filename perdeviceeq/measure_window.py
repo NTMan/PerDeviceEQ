@@ -3051,8 +3051,7 @@ class MeasureWindow(Adw.Window):
         store = self.parent.store
         pid = store.save_user({
             "name": self._profile_name(),
-            "apply_all": True, "preamp": 0.0, "ch_keys": [],
-            "all": {"bands": []}, "channels": {}})
+            "preamp": 0.0, "ch_keys": [], "channels": {}})
         self.edit_pid = pid
         self._minted = pid
         return pid

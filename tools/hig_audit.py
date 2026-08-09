@@ -423,13 +423,13 @@ def _window_audit():
                 for t in xp.load_targets():
                     xdlg._on_target(None, t)
                 f1, l1 = audit_widget(self.win)
-                # the same window in its second costume: the
-                # separated-channels mode populates the linked
-                # FL|FR bar and the per-channel band cards --
-                # strictly more widgets; the merge dedups what
-                # both snapshots share
+                # the same window in its second costume: a wider
+                # output populates more tabs and more per-channel
+                # band cards -- strictly more widgets; the merge
+                # dedups what both snapshots share
                 try:
-                    self.win.sep_switch.set_active(True)
+                    self.win.ch_keys = ["FL", "FR", "FC", "LFE"]
+                    self.win._build_channel_bar()
                 except Exception:
                     pass
                 f2, l2 = audit_widget(self.win)

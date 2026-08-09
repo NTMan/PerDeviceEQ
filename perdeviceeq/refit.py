@@ -151,8 +151,7 @@ def resolve_fit_params(prof, bands=None, f_lo=None, f_hi=None,
             "f_lo": float(pick(f_lo, "f_lo", 20.0)),
             "f_hi": float(pick(f_hi, "f_hi", 12000.0)),
             "max_boost": float(pick(max_boost, "max_boost", 6.0)),
-            "smoothing": pick(smoothing, "smoothing", 6),
-            "mono": bool(old.get("mono", False))}
+            "smoothing": pick(smoothing, "smoothing", 6)}
 
 
 def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
@@ -163,7 +162,7 @@ def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
     Fit parameters default to the stored fit.params (falling back to
     the build defaults for a canvas that never had a fit); any of
     them can be overridden. Returns a NEW profile dict: same id, name
-    and canvas, new bands/ch_keys/apply_all; the preamp is NOT
+    and canvas, new bands and ch_keys; the preamp is NOT
     touched -- the mode governs it (Auto lands the composed Safe,
     manual is protected by the session clamp)
     exactly like a fresh fit (the bands changed, the app re-derives
@@ -172,8 +171,7 @@ def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
 
     Raises RefitError when the profile has no canvas, when the fit is
     marked hand-edited and allow_edited is False, or when the takes
-    cannot be combined (unknown ids, off-grid data, a mono fit
-    over several channels)."""
+    cannot be combined (unknown ids, off-grid data)."""
     m = prof.get("measurement")
     if not m:
         raise RefitError("the profile carries no measurement canvas")
@@ -187,18 +185,14 @@ def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
                                 smoothing=smoothing)
     results, used = channel_results(m, take_ids=take_ids,
                                     smoothing=params["smoothing"])
-    if params["mono"] and len(results) != 1:
-        raise RefitError("a mono fit needs exactly one channel; the "
-                         "canvas has %d" % len(results))
     fitted = fit_peq.fit_profiles(results, name=prof.get("name"),
                                   bands=params["bands"],
                                   f_lo=params["f_lo"],
                                   f_hi=params["f_hi"],
                                   max_boost=params["max_boost"],
-                                  mono=params["mono"],
                                   progress=progress)
     out = dict(prof)
-    for k in ("apply_all", "ch_keys", "all", "channels"):
+    for k in ("ch_keys", "channels"):
         out[k] = fitted[k]
 
     # The fit lands BANDS ONLY. Its old gain staging predated the

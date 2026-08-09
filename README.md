@@ -221,7 +221,9 @@ cannot clip behind the meter's back.
   taste adjustments in the **Taste** layer, not in the device correction:
   corrections stay measured, and every device keeps sounding equally
   right.
-- **Per-channel EQ:** untick *Separate channels* to edit FL/FR together.
+- **Per-channel EQ:** every channel the output has gets its own tab and
+  its own curve. A profile that holds a single channel is a single curve
+  and plays on all of them.
 
 ---
 

@@ -7,8 +7,7 @@ liftable into gnome-control-center):
   * a Weather-style profile picker in the header (empty query = favorites,
     typing = the whole catalog; check on the active one, x to remove),
   * the EQ controls inline on the page (FR graph + bands + preamp + bypass),
-  * channel tabs ([All], or FL | FR | ... with the inline "Separate
-    channels" switch at the end of the same row),
+  * channel tabs (one per channel the output has),
   * undo/redo (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y; buttons in the header).
 
 The static shell is loaded from data/<APP_ID>.ui; everything dynamic (graph,
@@ -16,8 +15,8 @@ band rows, channel buttons, picker rows, footer buttons, header buttons) is
 built here. Backend logic (graph building, profiles, the metadata bridge to the
 WP hook) lives in the sibling package modules and is reused as-is.
 
-Editor state is kept as channel "slots": self.slots maps "all" + each channel
-key to {"preamp": float, "bands": [eq.Band]}. self.cur_ch selects which slot the
+Editor state is kept as channel "slots": self.slots maps each channel key to
+{"preamp": float, "bands": [eq.Band]}. self.cur_ch selects which slot the
 single editor (graph + band table + preamp) is currently editing. On save/apply
 the slots are assembled into a profile body and handed to the tested
 profiles.save_user / eq.profile_graph.
@@ -113,12 +112,6 @@ def _new_slot():
     return {"bands": []}
 
 
-def _copy_slot(s):
-    """Deep copy of a slot with independent Band objects."""
-    return {"bands": [eq.Band.from_dict(b.to_dict())
-                      for b in s.get("bands", [])]}
-
-
 class EqWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         """Build the window from the .ui design and wire all behavior to it."""
@@ -142,13 +135,12 @@ class EqWindow(Adw.ApplicationWindow):
         self._pw_unsub = None
         self._measure_win = None
 
-        # editor state ("slots": "all" + one per channel key)
-        self.apply_all = True
+        # editor state ("slots": one per channel key)
         self.ch_keys = ["FL", "FR"]
-        self.slots = {"all": _new_slot()}
-        self.cur_ch = "all"
+        self.slots = {k: _new_slot() for k in self.ch_keys}
+        self.cur_ch = self.ch_keys[0]
         self.preamp = 0.0
-        self.bands = self.slots["all"]["bands"]     # alias of the current slot
+        self.bands = self.slots[self.cur_ch]["bands"]   # alias: current slot
         self._chan_buttons = {}
 
         # tier-2 live meter (engine created lazily: scipy is optional)
@@ -195,7 +187,6 @@ class EqWindow(Adw.ApplicationWindow):
         self.profile_list = b.get_object("profile_list")
         self.device_dd = b.get_object("device_dd")
         self.follow_btn = b.get_object("follow_btn")
-        self.sep_switch = b.get_object("sep_switch")
         self.channel_row = b.get_object("channel_row")
         self.bypass_row = Gtk.ToggleButton(label="Bypass")
         self.bypass_row.set_tooltip_text(
@@ -271,7 +262,6 @@ class EqWindow(Adw.ApplicationWindow):
         self._install_shortcuts(app)
 
         self.search_entry.connect("search-changed", lambda *_: self._populate_picker())
-        self.sep_switch.connect("notify::active", self._on_link)
         self.bypass_row.connect("notify::active", self._on_bypass)
         self.profile_button.connect("notify::active", self._on_picker_toggle)
         self.follow_btn.connect("toggled", self._on_follow_toggled)
@@ -445,17 +435,19 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _overlay_curve(self):
         """(freqs, measured, spread, trust_band) for the slot on
-        screen, or None: no canvas, overlay off, or the slot has no
-        measured channel ('all' over a multi-channel canvas)."""
+        screen, or None: no canvas, overlay off, or this tab feeds
+        from a channel the canvas never measured."""
         c = self._canvas
         if not c or not self.show_meas or not c.get("curves"):
             return None
-        key = self.cur_ch
+        # the tab wears a SINK name, the canvas is keyed by the
+        # PROFILE channel it feeds from -- the same translation the
+        # slots use, and the one that makes a lone channel show up
+        # under every tab it spreads to
+        key = (getattr(self, "ch_map", None) or {}).get(self.cur_ch,
+                                                        self.cur_ch)
         if key not in c["curves"]:
-            if self.apply_all and len(c["curves"]) == 1:
-                key = next(iter(c["curves"]))
-            else:
-                return None
+            return None
         cv = c["curves"][key]
         return cv["f"], cv["meas"], cv["spread"], c["band"].get(key)
 
@@ -1395,11 +1387,9 @@ class EqWindow(Adw.ApplicationWindow):
         p = self.store.get(self.current_pid)
         body = {"id": self.current_pid,
                 "name": (p or {}).get("name", self.current_pid),
-                "apply_all": self.apply_all,
                 # the effective value rides along for the WIRE; the store
                 # does not keep it and the mode is not a profile fact
                 "preamp": float(self.preamp),
-                "all": self._slot_to_dict("all"),
                 "channels": {}}
         # the view is keyed by the SINK: fold each tab onto the profile
         # channel it feeds, drop the routes the profile does not reach
@@ -1450,35 +1440,30 @@ class EqWindow(Adw.ApplicationWindow):
             child = nxt
 
     def _build_channel_bar(self):
-        """Rebuild the channel tab bar: a lone [All] tab while channels are
-        linked, FL | FR | ... when separated. The row also hosts the
-        "Separate channels" switch, so it is always visible on multichannel
-        devices -- which gives the clip badge a home in both modes."""
+        """Rebuild the channel tab bar: one tab per channel the output
+        has, FL | FR | ... -- there is no second mode to switch to, so
+        the row carries the tabs and nothing else."""
         self._clear_box(self.channel_bar)
         self._chan_buttons = {}
-        keys = ["all"] if self.apply_all else list(self.ch_keys)
+        keys = list(self.ch_keys)
         show_meters = pw_backend.backend().meter_available()
         first = None
         for k in keys:
-            btn = Gtk.ToggleButton(
-                label="All" if k == "all" else k)
+            btn = Gtk.ToggleButton(label=k)
             if first is None:
                 first = btn
             else:
                 btn.set_group(first)
             btn.set_active(k == self.cur_ch)
             if len(keys) == 1:
-                btn.set_can_target(False)   # lone [All]: a tab, not a control
+                btn.set_can_target(False)   # a lone tab is not a control
             btn.connect("toggled", self._make_chan_cb(k))
             self.channel_bar.append(btn)
             self._chan_buttons[k] = btn
         self._dress_tabs()
-        # the [All] tab rides alone by design while channels are
-        # linked -- and a lone segment needs no linked dress: the
-        # style groups siblings, one child is costume (the CI
-        # floor called it on the default apply-all profile). The
-        # dress follows the POPULATION, not the device: [All] is
-        # one tab even on an 8-channel sink.
+        # a lone segment needs no linked dress: the style groups
+        # siblings, and one child is costume (the CI floor called
+        # it). The dress follows the POPULATION of the row.
         if len(keys) > 1:
             self.channel_bar.add_css_class("linked")
         else:
@@ -1504,7 +1489,7 @@ class EqWindow(Adw.ApplicationWindow):
                if (self.live and self.node) else {})
         for k, btn in buttons.items():
             lbl = btn.get_child()
-            if k == "all" or not hasattr(lbl, "set_markup"):
+            if not hasattr(lbl, "set_markup"):
                 continue
             src = cmap.get(k) if cmap else k
             dots, tip = "", ""
@@ -1592,26 +1577,6 @@ class EqWindow(Adw.ApplicationWindow):
                 self._load_slot(key)     # view change only; nothing to re-apply
         return cb
 
-    def _on_link(self, *_):
-        """Handle the 'Same EQ for all channels' switch (profile apply_all)."""
-        if self._loading:
-            return
-        self.apply_all = not self.sep_switch.get_active()
-        if self.apply_all:
-            self.cur_ch = "all"
-            self._build_channel_bar()
-            self._load_slot("all")
-        else:
-            base = self._slot("all")
-            for k in self.ch_keys:                 # seed empty channels from "all"
-                s = self.slots.get(k)
-                if not s or not s["bands"]:
-                    self.slots[k] = _copy_slot(base)
-            self.cur_ch = self.ch_keys[0] if self.ch_keys else "all"
-            self._build_channel_bar()
-            self._load_slot(self.cur_ch)
-        self._on_edit()
-
     # ---- profile load / edit ----------------------------------------------
     def _display_name(self, p):
         """Profile name for display ('Default (no EQ)' for Clean)."""
@@ -1646,7 +1611,6 @@ class EqWindow(Adw.ApplicationWindow):
         try:
             self.current_pid = pid
             p = self.store.get(pid)
-            self.apply_all = bool(p.get("apply_all", True))
             self.floor_off = bool(p.get("floor_off"))
             self.floor_hz = p.get("floor_hz")
             self._sync_floor_btn()
@@ -1677,9 +1641,7 @@ class EqWindow(Adw.ApplicationWindow):
                 self.auto_button.set_active(self.preamp_auto)
             finally:
                 self._auto_syncing = False
-            a = p.get("all") or {"bands": []}
-            self.slots = {"all": {"bands": [eq.Band.from_dict(x)
-                                            for x in a.get("bands", [])]}}
+            self.slots = {}
             pchan = p.get("channels") or {}
             loc = (self.store.local_for(self.node)
                    if (self.live and self.node) else {})
@@ -1693,11 +1655,10 @@ class EqWindow(Adw.ApplicationWindow):
                 self.slots[k] = {"bands": [eq.Band.from_dict(x)
                                            for x in src.get("bands", [])]}
 
-            self.cur_ch = "all" if self.apply_all else (self.ch_keys[0]
-                                                        if self.ch_keys else "all")
+            self.cur_ch = (self.cur_ch if self.cur_ch in self.slots
+                           else next(iter(self.slots), ""))
             self.profile_button.set_label(self._display_name(p))
             self.bypass_row.set_active(False)
-            self.sep_switch.set_active(not self.apply_all)
             self._build_channel_bar()
             self._load_slot(self.cur_ch)
             self.store.set_binding(self.node, pid)
@@ -1859,9 +1820,8 @@ class EqWindow(Adw.ApplicationWindow):
     # ---- undo / redo -------------------------------------------------------
     def _snapshot(self):
         """Serialize editor state for undo (the viewed channel is left out)."""
-        keys = ["all"] + list(self.ch_keys)
+        keys = list(self.ch_keys)
         return {"pid": self.current_pid,
-                "apply_all": self.apply_all,
                 "preamp": float(self.preamp),
                 "ch_keys": list(self.ch_keys),
                 "slots": {k: self._slot_to_dict(k) for k in keys},
@@ -1897,7 +1857,6 @@ class EqWindow(Adw.ApplicationWindow):
         view = self.cur_ch          # keep the user's current tab if still valid
         self._loading = True
         try:
-            self.apply_all = bool(snap["apply_all"])
             self.preamp = float(snap.get("preamp", 0.0))
             self.preamp_auto = bool(snap.get("preamp_auto", True))
             self._auto_syncing = True
@@ -1910,16 +1869,10 @@ class EqWindow(Adw.ApplicationWindow):
             for k, sd in snap["slots"].items():
                 self.slots[k] = {"bands": [eq.Band.from_dict(x)
                                            for x in sd.get("bands", [])]}
-            self.slots.setdefault("all", _new_slot())
             for k in self.ch_keys:
                 self.slots.setdefault(k, _new_slot())
-            if self.apply_all:
-                self.cur_ch = "all"
-            elif view in self.ch_keys:
-                self.cur_ch = view
-            else:
-                self.cur_ch = self.ch_keys[0] if self.ch_keys else "all"
-            self.sep_switch.set_active(not self.apply_all)
+            self.cur_ch = (view if view in self.ch_keys
+                           else (self.ch_keys[0] if self.ch_keys else ""))
             self._build_channel_bar()
             self._load_slot(self.cur_ch)
         finally:
@@ -2145,18 +2098,15 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _auto_preamp_db(self):
         """Preamp that zeroes the tier-1 estimate: the max of the edited
-        chain's band curve (no preamp) -- or, with unlinked channels, of
-        the WORST channel's curve, so one shared value clears every slot.
+        chain's band curve (no preamp) -- the WORST channel's, so one
+        shared value clears every slot.
         Rounded UP to the 0.1 dB step the spin can express, so the result
         lands at or below 0 dBFS."""
         tail = [eq.Band.from_dict(b)
                 for b in self.pref_layers.active_bands()]
         tail += self._floor_tail()
-        if self.apply_all:
-            peaks = [eq.curve_max_db(0.0, self.bands + tail)]
-        else:
-            peaks = [eq.curve_max_db(0.0, self._slot(k)["bands"] + tail)
-                     for k in self.ch_keys]
+        peaks = [eq.curve_max_db(0.0, self._slot(k)["bands"] + tail)
+                 for k in self.ch_keys] or [eq.curve_max_db(0.0, tail)]
         # routes tuned by ear share the one preamp this card holds, so
         # they share the duty of setting it
         for bands in (self.store.locals_for(self.node, self.ch_keys)
@@ -2177,12 +2127,11 @@ class EqWindow(Adw.ApplicationWindow):
     _CLIP_EPS_DB = 0.05     # "crossed 0 dBFS" once it can show as +0.1 dB
 
     def _applied_chains(self):
-        """(key, slot) pairs the device actually runs: the linked "all" slot,
-        or every per-channel slot when channels are unlinked."""
-        if self.apply_all:
-            return [("all", self._slot("all"))]
+        """(key, slot) pairs the device actually runs: one per channel
+        tab. With no channels at all the profile plays nothing of its
+        own, and the estimate still needs a chain to stand on."""
         return ([(k, self._slot(k)) for k in self.ch_keys]
-                or [("all", self._slot("all"))])
+                or [(self.cur_ch, self._slot(self.cur_ch))])
 
     def _update_headroom(self):
         """Tier-1 clip estimate, no capture running:  monitor_peak +
@@ -2216,7 +2165,7 @@ class EqWindow(Adw.ApplicationWindow):
                          key=lambda t: t[0])
         over = bound > self._CLIP_EPS_DB
         shown = bound if abs(bound) >= self._CLIP_EPS_DB else 0.0  # no "-0.0"
-        where = "" if key in ("all", self.cur_ch) else " on %s" % key
+        where = "" if key == self.cur_ch else " on %s" % key
         offenders = [(k, v) for k, v in bounds.items()
                      if v > self._CLIP_EPS_DB]
 
@@ -2262,9 +2211,6 @@ class EqWindow(Adw.ApplicationWindow):
             return 0.0, [[] for _ in self.ch_keys]
         tail = [eq.Band.from_dict(b)
                 for b in self.pref_layers.active_bands()]
-        if self.apply_all:
-            b = self._slot("all")["bands"] + tail
-            return self.preamp, [b for _ in self.ch_keys]
         return self.preamp, [self._slot(k)["bands"] + tail
                              for k in self.ch_keys]
 
@@ -2716,14 +2662,14 @@ class EqWindow(Adw.ApplicationWindow):
     def _apply_rew_import(self, preamp, bands):
         """Load a parsed REW/AutoEQ result into the CURRENT slot. The file's
         preamp is honored only where the file sees the whole picture -- a
-        linked profile's single chain. A per-ear file cannot know the other
-        channels, so with unlinked channels its number is ignored and the
-        shared preamp is recomputed from ALL channels' curves (the
-        balanced-Auto requirement): exact, never stale, and better math
-        than REW's -(largest gain) anyway. The content-aware tier-3 audit
-        stays the authority for refining below this static bound."""
+        single chain. A per-ear file cannot know the other channels, so
+        with more than one the number is ignored and the shared preamp is
+        recomputed from ALL channels' curves (the balanced-Auto
+        requirement): exact, never stale, and better math than REW's
+        -(largest gain) anyway. The content-aware tier-3 audit stays the
+        authority for refining below this static bound."""
         self.slots[self.cur_ch] = {"bands": bands}
-        if self.apply_all:
+        if len(self.ch_keys) <= 1:
             self.preamp = float(preamp)
         else:
             v = self._auto_preamp_db()

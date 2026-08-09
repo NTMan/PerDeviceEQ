@@ -33,7 +33,7 @@ def store(tmp_path, monkeypatch):
 
 
 def _pair():
-    return {"name": "Pair", "apply_all": False, "floor_off": True,
+    return {"name": "Pair", "floor_off": True,
             "ch_keys": ["FL", "FR"],
             "channels": {"FL": {"bands": [PK]}, "FR": {"bands": [PK]}}}
 
@@ -156,14 +156,6 @@ def test_several_routes_fed_by_one_side_stay_one_correction():
                                   "AUX2": {"bands": [PK]}},
                                  {"AUX0": "FL", "AUX2": "FL"})
     assert list(prof) == ["FL"]
-    assert route == {}
-
-
-def test_the_all_tab_is_not_a_channel():
-    prof, route = eq.split_slots({"all": {"bands": [PK]},
-                                  "FL": {"bands": [PK]}},
-                                 {"FL": "FL"})
-    assert set(prof) == {"FL"}
     assert route == {}
 
 

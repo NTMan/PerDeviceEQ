@@ -67,10 +67,10 @@ def check(a):
         assert w.clip_icon.get_visible()
         assert "Over 0 dBFS by 9.6 dB" in st and "Auto fixes" in st, st
         assert w.preamp_row.get_tooltip_text()
-        # the lone [All] tab exists in linked mode; the estimate is in its
-        # tooltip -- red paint is reserved for FACTS (the tier-2 latch)
-        assert "clip-risk" not in w._chan_buttons["all"].get_css_classes()
-        assert w._chan_buttons["all"].get_tooltip_text() is None
+        # the estimate is not painted on a tab -- red paint is
+        # reserved for FACTS (the tier-2 latch)
+        for _k, _b in w._chan_buttons.items():
+            assert "clip-risk" not in _b.get_css_classes()
 
         # 3. Auto zeroes the estimate (curve max, not largest gain)
         w._on_auto(None)
@@ -86,8 +86,7 @@ def check(a):
 
         # 5. Per-channel: the shared preamp's readout shows the WORST
         #    chain; every over-0 channel is flagged on its tab
-        w.sep_switch.set_active(True)         # separate channels; editor shows FL
-        assert w.cur_ch == "FL"
+        assert w.cur_ch == "FL"               # the first tab of the output
         w.slots["FR"]["bands"].append(eq.Band("PK", 1000.0, 12.0, 1.0, True))
         w._update_headroom()
         exp = eq.headroom_bound_db(w.preamp, w.slots["FR"]["bands"])
@@ -129,22 +128,26 @@ def check(a):
         w._apply_rew_import(-20.0, [eq.Band("PK", 100.0, 5.0, 1.0, True)])
         assert abs(w.preamp - tgt2) < 1e-9, w.preamp
 
-        # 6. Linked import overwrites the preamp (single chain, the file's
-        #    number is the whole story); old-Auto regression: dueling
-        #    demo-FR boosts/cuts must not over-attenuate (old rule: -16.1)
-        w.sep_switch.set_active(False)
+        # 6. A single-channel output takes the file's preamp verbatim
+        #    (one chain, so the file sees the whole story); old-Auto
+        #    regression: dueling demo-FR boosts/cuts must not
+        #    over-attenuate (old rule: -16.1)
+        w.ch_keys = ["FL"]
+        w._build_channel_bar()
+        w._load_slot("FL")
         w._apply_rew_import(-4.0, [eq.Band(d["type"], d["freq"], d["gain"],
                                            d["q"], True) for d in DEMO_FR])
         assert w.preamp == -4.0
         w._on_auto(None)
         assert abs(w.preamp + 8.5) < 1e-6, w.preamp
+        w.ch_keys = ["FL", "FR"]              # back to the stereo output
+        w._build_channel_bar()
+        w._load_slot("FL")
 
         # 7. Tier-2 wiring: engine frames drive the tab bars, the clip
         #    latch and the throttled live readout -- no PipeWire needed
         from perdeviceeq.meter import Ballistics
         import time as _t
-        assert set(w._meter_areas) == {"all"}       # linked: one tab, 2 bars
-        w.sep_switch.set_active(True)
         assert set(w._meter_areas) == {"FL", "FR"}
         w._bal = [Ballistics(), Ballistics()]
         w._meter_node = "fake.sink"                 # readout treats it live

@@ -15,7 +15,7 @@ Usage:
 profile.json is either this tool's own schema ({"preamp": g, "channels":
 {"FL": [band, ...]}}, band key "on") or a profile saved by the app
 (~/.config/per-device-eq/profiles/*.json, v2+: one shared preamp, band
-key "enabled", optional linked "all" slot; v1 files are pre-epoch and
+key "enabled", one entry per channel; v1 files are pre-epoch and
 no converter exists any more). --profile NAME resolves
 a saved app profile by its "name" field: case-insensitive, an
 unambiguous substring is enough. The suggestion is a single shared value
@@ -46,7 +46,10 @@ def _app_bands(slot):
 
 
 def _is_app_schema(p):
-    if "apply_all" in p or "all" in p or "ch_keys" in p:
+    # both schemas have "channels"; only the app's has ch_keys, so that
+    # is the marker -- and it is the only one left now that the app
+    # stores nothing beside its channel map
+    if "ch_keys" in p:
         return True
     return any(isinstance(v, dict) for v in (p.get("channels") or {}).values())
 
@@ -54,8 +57,9 @@ def _is_app_schema(p):
 def normalize_profile(raw):
     """-> (chains, meta). chains is an ordered [(name, preamp_db, bands)]
     with audit-style bands; meta = {"name", "mode"} where mode is "audit"
-    (this tool's schema, one global preamp), "all" (linked app profile,
-    one chain for every capture channel) or "per-channel"."""
+    (this tool's schema, one global preamp), "one" (an app profile with a
+    single channel, whose one chain plays on every capture channel) or
+    "per-channel"."""
     if not _is_app_schema(raw):
         g = float(raw.get("preamp", 0.0))
         chains = [(k, g, v) for k, v in (raw.get("channels") or {}).items()]
@@ -66,13 +70,13 @@ def normalize_profile(raw):
                  "converters retired with the confession epoch -- "
                  "re-measure the device in the app")
     g = float(raw["preamp"])
-    if raw.get("apply_all", True):
-        return ([("all", g, _app_bands(raw.get("all")))],
-                {"name": raw.get("name"), "mode": "all"})
     ch = raw.get("channels") or {}
     keys = raw.get("ch_keys") or list(ch.keys())
     chains = [(k, g, _app_bands(ch.get(k))) for k in keys]
-    return chains, {"name": raw.get("name"), "mode": "per-channel"}
+    # one channel is one curve and it spreads over the whole output,
+    # exactly as the app plays it: the COUNT says so, not a key
+    mode = "one" if len(chains) == 1 else "per-channel"
+    return chains, {"name": raw.get("name"), "mode": mode}
 
 
 def resolve_profile(arg, profiles_dir=None):
@@ -138,7 +142,7 @@ def main():
             bands = (raw.get("channels") or {}).get(nm)
             per_ch[i] = None if bands is None else (
                 nm, float(raw.get("preamp", 0.0)), bands)
-    elif meta["mode"] == "all":
+    elif meta["mode"] == "one":
         _, g, bands = chains[0]
         for i in range(n_ch):
             nm = CH_NAMES[i] if i < len(CH_NAMES) else "ch%d" % i
@@ -148,7 +152,7 @@ def main():
             per_ch[i] = chains[i] if i < len(chains) else None
 
     if meta["mode"] != "audit":
-        pres = (("preamp %+.1f" % chains[0][1]) if meta["mode"] == "all" else
+        pres = (("preamp %+.1f" % chains[0][1]) if meta["mode"] == "one" else
                 "preamps " + ", ".join("%s %+.1f" % (k, g)
                                        for k, g, _ in chains))
         print("profile: %s (%s; %s)%s"

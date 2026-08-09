@@ -1113,13 +1113,15 @@ def _curve(result):
 
 
 def fit_profiles(results, name=None, bands=10, f_lo=20.0, f_hi=12000.0,
-                 max_boost=6.0, mono=False, report=False,
+                 max_boost=6.0, report=False,
                  progress=None):
     """Fit a profile dict from measurement result dicts. `results` maps
-    a channel key (e.g. "FL") to a process_takes result. With mono=True a
-    single result is fit once and applied to all channels (apply_all);
-    otherwise each channel is fit separately and ch_keys follows the
-    mapping's order. This is what the CLI main() and the measurement
+    a channel key (e.g. "FL") to a process_takes result. Each channel is
+    fit separately and ch_keys follows the mapping's order: the fitter
+    never merges channels, because merging several measurements into one
+    curve is a decision about publishing, not about this transducer, and
+    it is made where profiles are published. This is what the CLI main()
+    and the measurement
     wizard both call; only the target (flat) is shared, the per-channel
     curves are not. When the results carry usable per-take drives and
     share one cal (see balance_trims), a freq-0 shelf band with the
@@ -1137,7 +1139,7 @@ def fit_profiles(results, name=None, bands=10, f_lo=20.0, f_hi=12000.0,
     that visibly ticks while the bar creeps."""
     name = name or "Measured %s" % datetime.date.today().isoformat()
     prof = {"name": name, "version": SCHEMA_VERSION, "preamp": 0.0,
-            "all": {"bands": []}, "channels": {}, "ch_keys": []}
+            "channels": {}, "ch_keys": []}
     n_ch = max(1, len(results))
 
     def chan_prog(i, key):
@@ -1150,49 +1152,37 @@ def fit_profiles(results, name=None, bands=10, f_lo=20.0, f_hi=12000.0,
         return cb
     if progress:
         progress(0.0, next(iter(results), None), 0, 0, 0)
-    if mono:
-        (_key, result), = results.items()
+    prof["ch_keys"] = list(results.keys())
+    fits, means = {}, {}
+    keys = list(results.keys())
+    for i, key in enumerate(keys):
+        result = results[key]
         freq, mag = _curve(result)
-        bnds, fg, _desired, resid = fit_channel(
-            freq, mag, f_lo, f_hi, bands, max_boost,
-            progress=chan_prog(0, _key))
+        fits[key] = fit_channel(freq, mag, f_lo, f_hi, bands,
+                                max_boost,
+                                progress=chan_prog(i, key))
+        _fg, yg = _grid_interp(freq, mag, f_lo, f_hi)
+        means[key] = float(yg.mean())
+    trims, why = balance_trims(results, means)
+    for key, (bnds, fg, _desired, resid) in fits.items():
+        t = (trims or {}).get(key, 0.0)
         if report:
-            _report("all", bnds, fg, resid, f_lo, f_hi)
-        prof["apply_all"] = True
-        prof["all"] = {"bands": _bands_to_dicts(bnds)}
-    else:
-        prof["apply_all"] = False
-        prof["ch_keys"] = list(results.keys())
-        fits, means = {}, {}
-        keys = list(results.keys())
-        for i, key in enumerate(keys):
-            result = results[key]
-            freq, mag = _curve(result)
-            fits[key] = fit_channel(freq, mag, f_lo, f_hi, bands,
-                                    max_boost,
-                                    progress=chan_prog(i, key))
-            _fg, yg = _grid_interp(freq, mag, f_lo, f_hi)
-            means[key] = float(yg.mean())
-        trims, why = balance_trims(results, means)
-        for key, (bnds, fg, _desired, resid) in fits.items():
-            t = (trims or {}).get(key, 0.0)
-            if report:
-                _report(key, bnds, fg, resid, f_lo, f_hi,
-                        trim_db=(t if trims is not None else None))
-            bd = _bands_to_dicts(bnds)
-            if abs(t) >= TRIM_MIN_DB:
-                bd.insert(0, {"type": "HSC", "freq": 0.0,
-                              "gain": round(t, 2), "q": 1.0,
-                              "enabled": True})
-            prof["channels"][key] = {"bands": bd}
-        if report:
-            if trims is None:
-                print("\nno balance trim: %s" % why)
-            elif min(trims.values()) <= -TRIM_WARN_DB:
-                print("\nNOTE: a balance trim past %g dB usually means "
-                      "a seating/seal difference between the channels "
-                      "-- reseat and remeasure rather than EQ it away"
-                      % TRIM_WARN_DB)
+            _report(key, bnds, fg, resid, f_lo, f_hi,
+                    trim_db=(t if trims is not None else None))
+        bd = _bands_to_dicts(bnds)
+        if abs(t) >= TRIM_MIN_DB:
+            bd.insert(0, {"type": "HSC", "freq": 0.0,
+                          "gain": round(t, 2), "q": 1.0,
+                          "enabled": True})
+        prof["channels"][key] = {"bands": bd}
+    if report:
+        if trims is None:
+            print("\nno balance trim: %s" % why)
+        elif min(trims.values()) <= -TRIM_WARN_DB:
+            print("\nNOTE: a balance trim past %g dB usually means "
+                  "a seating/seal difference between the channels "
+                  "-- reseat and remeasure rather than EQ it away"
+                  % TRIM_WARN_DB)
     if progress:
         progress(1.0, None, 0, 0, 0)
     return prof
@@ -1208,7 +1198,6 @@ def main(argv):
                                             "measurement")
     p.add_argument("--left", help="result.json for the left channel (FL)")
     p.add_argument("--right", help="result.json for the right channel (FR)")
-    p.add_argument("--mono", help="result.json applied to all channels")
     p.add_argument("--bands", type=int, default=10,
                    help="max biquads per channel (default 10)")
     p.add_argument("--f-lo", type=float, default=20.0)
@@ -1220,22 +1209,19 @@ def main(argv):
     p.add_argument("--out", required=True, help="profile JSON to write")
     a = p.parse_args(argv)
 
-    if not (a.left or a.right or a.mono):
-        p.error("give --left/--right or --mono")
+    if not (a.left or a.right):
+        p.error("give --left and/or --right")
 
-    if a.mono:
-        results = {"all": _load_result(a.mono)}
-        prof = fit_profiles(results, name=a.name, bands=a.bands,
-                            f_lo=a.f_lo, f_hi=a.f_hi,
-                            max_boost=a.max_boost, mono=True, report=True)
-    else:
-        results = {}
-        for key, path in (("FL", a.left), ("FR", a.right)):
-            if path:
-                results[key] = _load_result(path)
-        prof = fit_profiles(results, name=a.name, bands=a.bands,
-                            f_lo=a.f_lo, f_hi=a.f_hi,
-                            max_boost=a.max_boost, report=True)
+    # one measurement is fit under the channel it measured; a profile
+    # with a single channel spreads over whatever sink it lands on, so
+    # there is nothing to fit "to all channels" and no name to invent
+    results = {}
+    for key, path in (("FL", a.left), ("FR", a.right)):
+        if path:
+            results[key] = _load_result(path)
+    prof = fit_profiles(results, name=a.name, bands=a.bands,
+                        f_lo=a.f_lo, f_hi=a.f_hi,
+                        max_boost=a.max_boost, report=True)
 
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(prof, f, indent=2, ensure_ascii=False)

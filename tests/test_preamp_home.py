@@ -23,9 +23,8 @@ LSC12 = {"type": "LSC", "freq": 50, "gain": 12.0, "q": 1.0, "enabled": True}
 
 def _profile(**kw):
     b = {"id": "abc123", "name": "Pair", "version": P.SCHEMA_VERSION,
-         "apply_all": False, "floor_off": True,
+         "floor_off": True,
          "ch_keys": ["FL", "FR"],
-         "all": {"bands": []},
          "channels": {"FL": {"bands": [PK6]}, "FR": {"bands": [PK6]}}}
     b.update(kw)
     return b
@@ -68,7 +67,7 @@ def test_the_worst_channel_sets_the_shared_value():
 
 
 def test_a_flat_profile_asks_for_nothing():
-    p = _profile(apply_all=True, all={"bands": []})
+    p = _profile(ch_keys=[], channels={})
     assert eq.auto_preamp_db(p) == 0.0
 
 

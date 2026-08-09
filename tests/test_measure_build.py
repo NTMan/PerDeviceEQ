@@ -72,8 +72,7 @@ def _session(tmp_path, takes):
 
 def _bare(store, pid="inc", name="Inc"):
     return store.save_user({"id": pid, "name": name, "version": 3,
-                            "apply_all": True, "preamp": 0.0,
-                            "ch_keys": [], "all": {"bands": []},
+                            "preamp": 0.0, "ch_keys": [],
                             "channels": {}})
 
 
