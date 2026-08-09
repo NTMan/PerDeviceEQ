@@ -137,7 +137,8 @@ class EqWindow(Adw.ApplicationWindow):
         self._measure_win = None
 
         # editor state ("slots": one per channel key)
-        self.ch_keys = ["FL", "FR"]
+        self.sink_keys = ["FL", "FR"]   # what the card has
+        self.ch_keys = ["FL", "FR"]     # what is PAIRED: one tab each
         self.slots = {k: _new_slot() for k in self.ch_keys}
         self.cur_ch = self.ch_keys[0]
         self.preamp = 0.0
@@ -918,6 +919,11 @@ class EqWindow(Adw.ApplicationWindow):
             self.add_action(action)
             if accels:
                 app.set_accels_for_action("win." + name, accels)
+        pair = Gio.SimpleAction.new("pair-add",
+                                    GLib.VariantType.new("s"))
+        pair.connect("activate",
+                     lambda _a, p: self._add_pair(p.get_string()))
+        self.add_action(pair)
 
     _WP_RESTART_CMD = "systemctl --user restart wireplumber"
 
@@ -1415,6 +1421,14 @@ class EqWindow(Adw.ApplicationWindow):
         self._loading = True
         try:
             self.cur_ch = ch
+            # the tab row follows the viewed channel, and it is not
+            # decoration: the x acts on cur_ch, so a highlight that
+            # disagrees with it removes a tab the person did not point
+            # at. _loading is on here, so the toggle does not bounce
+            # back through _make_chan_cb.
+            btn = (getattr(self, "_chan_buttons", None) or {}).get(ch)
+            if btn is not None and not btn.get_active():
+                btn.set_active(True)
             slot = self._slot(ch)
             self.bands = slot["bands"]               # alias: edits mutate the slot
             self.preamp_spin.set_value(self.preamp)
@@ -1428,6 +1442,8 @@ class EqWindow(Adw.ApplicationWindow):
             self.view.set_preamp(self.preamp)
             self._sync_view_curves()
             self._update_headroom()
+            # what the x would remove has just changed
+            self._dress_pair_controls()
         finally:
             self._loading = prev
 
@@ -1446,6 +1462,7 @@ class EqWindow(Adw.ApplicationWindow):
         the row carries the tabs and nothing else."""
         self._clear_box(self.channel_bar)
         self._chan_buttons = {}
+        self._build_pair_controls()
         keys = list(self.ch_keys)
         show_meters = pw_backend.backend().meter_available()
         first = None
@@ -1462,6 +1479,7 @@ class EqWindow(Adw.ApplicationWindow):
             self.channel_bar.append(btn)
             self._chan_buttons[k] = btn
         self._dress_tabs()
+        self._dress_pair_controls()
         # a lone segment needs no linked dress: the style groups
         # siblings, and one child is costume (the CI floor called
         # it). The dress follows the POPULATION of the row.
@@ -1469,7 +1487,7 @@ class EqWindow(Adw.ApplicationWindow):
             self.channel_bar.add_css_class("linked")
         else:
             self.channel_bar.remove_css_class("linked")
-        self.channel_row.set_visible(len(self.ch_keys) > 1)
+        self.channel_row.set_visible(len(self.sink_keys) > 1)
         self._rebuild_meter_rows(show_meters)
 
     def _rebuild_meter_rows(self, show):
@@ -1480,8 +1498,8 @@ class EqWindow(Adw.ApplicationWindow):
         self._clear_box(self.meters_grid)
         self._meter_areas = {}
         self._meter_lamps = {}
-        self._meters_row.set_visible(show and bool(self.ch_keys))
-        for i, k in enumerate(self.ch_keys):
+        self._meters_row.set_visible(show and bool(self.sink_keys))
+        for i, k in enumerate(self.sink_keys):
             lbl = Gtk.Label(label=k, xalign=0.0)
             lbl.add_css_class("dim-label")
             lbl.add_css_class("caption")
@@ -1582,7 +1600,7 @@ class EqWindow(Adw.ApplicationWindow):
                 except Exception:
                     dev = []
             pch = list(p.get("ch_keys") or list((p.get("channels") or {}).keys()))
-            self.ch_keys = dev or pch or ["FL", "FR"]
+            self.sink_keys = dev or pch or ["FL", "FR"]
             self._sync_map(widen=False)
 
             # the ride belongs to the app, not to the earphone: mode and
@@ -1705,6 +1723,117 @@ class EqWindow(Adw.ApplicationWindow):
         self._update_headroom()
         self._schedule_save()
 
+    def _build_pair_controls(self):
+        """Add and remove, at the end of the tab row. Built once and
+        kept: _clear_box only empties the tab strip beside them."""
+        if getattr(self, "_pair_add", None) is not None:
+            return
+        rm = Gtk.Button(icon_name="window-close-symbolic",
+                        valign=Gtk.Align.CENTER)
+        rm.add_css_class("flat")
+        rm.connect("clicked", lambda *_: self._del_pair())
+        add = Gtk.MenuButton(icon_name="list-add-symbolic",
+                             valign=Gtk.Align.CENTER)
+        add.add_css_class("flat")
+        box = Gtk.Box(spacing=6, hexpand=True, valign=Gtk.Align.CENTER,
+                      halign=Gtk.Align.END)
+        box.append(rm)
+        box.append(add)
+        self.channel_row.append(box)
+        self._pair_add, self._pair_del = add, rm
+
+    def _profile_channels(self):
+        """The profile's own channels, in its order, plus anything the
+        tabs already fold to -- the second half because the store lags
+        the editor by one debounce."""
+        p = self.store.get(self.current_pid) or {}
+        out = list(p.get("ch_keys") or list((p.get("channels") or {})))
+        cmap = getattr(self, "ch_map", None) or {}
+        for k in self.ch_keys:
+            t = cmap.get(k) or k
+            if t not in out:
+                out.append(t)
+        return out
+
+    def _fill_tab(self, k):
+        """Give a newly paired tab its bands: the slot of a tab already
+        fed by the same profile channel (the SAME object, so the two
+        stay one correction), or a fresh read of that channel."""
+        cmap = getattr(self, "ch_map", None) or {}
+        tgt = cmap.get(k) or k
+        for other in list(self.slots):
+            if other != k and (cmap.get(other) or other) == tgt:
+                self.slots[k] = self.slots[other]
+                return
+        p = self.store.get(self.current_pid) or {}
+        src = (p.get("channels") or {}).get(tgt) or {"bands": []}
+        self.slots[k] = {"bands": [eq.Band.from_dict(x)
+                                   for x in src.get("bands", [])]}
+
+    def _add_pair(self, value):
+        """Pair a sink channel with a profile channel by hand."""
+        prof, _, sink = (value or "").partition("|")
+        if not (prof and sink and self.node):
+            return
+        self.store.pin_channel(self.node, sink, prof)
+        self._sync_map()
+        if sink in self.ch_keys:
+            # the pair is new or has changed hands, so the tab reads its
+            # channel again -- and it is safe here because the reload
+            # right after re-aliases self.bands onto the new slot
+            self._fill_tab(sink)
+            self._tab_src[sink] = prof
+            self._load_slot(sink)
+        self._apply_now()
+
+    def _del_pair(self):
+        """Unpair the tab in view: it disappears and the sink channel
+        plays dry. Deliberate, so it is PINNED -- the resolver must not
+        hand the pair back on the next reconcile. Add EQ sink is the way
+        back."""
+        ch = self.cur_ch
+        if not (ch and self.node) or len(self.ch_keys) <= 1:
+            return
+        self.slots.pop(ch, None)
+        getattr(self, "_tab_src", {}).pop(ch, None)
+        self.store.pin_channel(self.node, ch, None)
+        self._sync_map()
+        self._load_slot(self.cur_ch)
+        self._apply_now()
+
+    def _dress_pair_controls(self):
+        """Offer only what can be done: a profile channel can be paired
+        with a sink channel that has no tab, and the tab in view can be
+        removed unless it is the last one -- a profile feeding nothing
+        is what No EQ is for."""
+        add = getattr(self, "_pair_add", None)
+        if add is None:
+            return
+        free = [k for k in self.sink_keys if k not in self.ch_keys]
+        pch = self._profile_channels()
+        menu = Gio.Menu()
+        for prof in pch:
+            sub = Gio.Menu()
+            for sink in free:
+                item = Gio.MenuItem.new(sink, None)
+                item.set_action_and_target_value(
+                    "win.pair-add", GLib.Variant("s",
+                                                 "%s|%s" % (prof, sink)))
+                sub.append_item(item)
+            menu.append_submenu(prof, sub)
+        add.set_menu_model(menu if (pch and free) else None)
+        add.set_sensitive(bool(pch and free))
+        add.set_tooltip_text(
+            "Add EQ sink: play a profile channel on another output "
+            "channel" if (pch and free) else
+            "Every output channel already has a tab")
+        rm = self._pair_del
+        rm.set_sensitive(len(self.ch_keys) > 1 and bool(self.cur_ch))
+        rm.set_tooltip_text(
+            ("Remove the %s tab: that output channel plays dry"
+             % self.cur_ch) if len(self.ch_keys) > 1 else
+            "The last tab stays -- choose No EQ to play dry")
+
     def _dress_tabs(self):
         """Write each tab's label: its own SINK name, and under it in
         small type the profile channel that feeds it when the two
@@ -1748,18 +1877,48 @@ class EqWindow(Adw.ApplicationWindow):
         """
         if not (self.live and self.node):
             self.ch_map = {}
+            self.ch_keys = list(self.sink_keys)
             return
         p = self.store.get(self.current_pid) or {}
         pch = list(p.get("ch_keys") or list((p.get("channels") or {})))
         cmap = getattr(self, "ch_map", None) or {}
-        for k in (self.ch_keys if widen else []):
+        for k in (list(self.ch_keys) if widen else []):
             t = cmap.get(k) or k
-            if self._slot(k)["bands"] and t not in pch:
+            # read, never create: _slot() is a setdefault, and asking it
+            # about a tab that was just unpaired put an empty slot back
+            # where the delete had removed one -- which then looked like
+            # a slot worth keeping when the pair came back
+            if (self.slots.get(k) or {}).get("bands") and t not in pch:
                 pch.append(t)
         was = getattr(self, "ch_map", None)
         self.ch_map = self.store.reconcile_map(self.node, pch,
-                                               self.ch_keys)
-        if self.ch_map != was:
+                                               self.sink_keys)
+        tabs = eq.paired_tabs(self.ch_map, self.sink_keys)
+        srcs = getattr(self, "_tab_src", None)
+        if srcs is None:
+            srcs = self._tab_src = {}
+        # never the tab in view: self.bands is an ALIAS of its band
+        # list, and swapping the slot under it would send the next
+        # keystroke into an orphan. The two callers that re-pair the
+        # viewed tab refill it themselves and reload it after.
+        for k in eq.tabs_needing_fill(tabs, self.slots, srcs,
+                                      self.ch_map):
+            if k != self.cur_ch:
+                self._fill_tab(k)
+        self._tab_src = {k: (self.ch_map.get(k) or k) for k in tabs}
+        if tabs != self.ch_keys:
+            self.ch_keys = tabs
+            moved = self.cur_ch not in tabs
+            if moved:
+                self.cur_ch = tabs[0] if tabs else ""
+            held, self._loading = self._loading, True
+            try:
+                self._build_channel_bar()
+            finally:
+                self._loading = held
+            if moved and not held:
+                self._load_slot(self.cur_ch)
+        elif self.ch_map != was:
             # the row is built once per profile load, but the map moves
             # under it: the first band typed makes a one-channel profile
             # spread, and nine tabs change what they are playing
@@ -1825,16 +1984,14 @@ class EqWindow(Adw.ApplicationWindow):
         if self.bypass_row.get_active() or silent:
             pw_backend.in_thread(lambda: auth.clear_graph(node))
         else:
-            # the map's answer, or the tab's OWN name -- the same rule
-            # eq.profile_slots writes by. A tab the map cannot answer for
-            # keeps its name in the profile, so the publish has to look
-            # for it there or the bands are saved and never played
-            slots = ([(self.ch_map.get(k) or k) for k in self.ch_keys]
+            # one entry per channel the CARD has, and an unpaired one
+            # is None on purpose: it has no tab, and it plays dry
+            slots = ([self.ch_map.get(k) for k in self.sink_keys]
                      if getattr(self, "ch_map", None) else
                      eq.resolve_slots(
                          (body.get("ch_keys")
                           or list((body.get("channels") or {}))),
-                         self.ch_keys))
+                         self.sink_keys))
             graph = eq.profile_graph(body, extra=extra, slots=slots)
             pw_backend.in_thread(lambda: auth.publish_graph(node,
                                                            graph))
@@ -1887,7 +2044,9 @@ class EqWindow(Adw.ApplicationWindow):
                 self.auto_button.set_active(self.preamp_auto)
             finally:
                 self._auto_syncing = False
-            self.ch_keys = list(snap["ch_keys"])
+            # the tab set is NOT the profile's history: pairing a
+            # channel changes what plays, not what the profile holds,
+            # so undo restores bands and leaves the pairs alone
             self.slots = {}
             for k, sd in snap["slots"].items():
                 self.slots[k] = {"bands": [eq.Band.from_dict(x)
@@ -2223,11 +2382,14 @@ class EqWindow(Adw.ApplicationWindow):
         identity everywhere in Bypass -- the meter then shows the raw
         input, closing the hot-master-in-bypass blind spot."""
         if self.bypass_row.get_active():
-            return 0.0, [[] for _ in self.ch_keys]
+            return 0.0, [[] for _ in self.sink_keys]
         tail = [eq.Band.from_dict(b)
                 for b in self.pref_layers.active_bands()]
-        return self.preamp, [self._slot(k)["bands"] + tail
-                             for k in self.ch_keys]
+        # an unpaired channel plays the tail alone, exactly as the
+        # published graph gives it
+        return self.preamp, [((self._slot(k)["bands"]
+                               if k in self.ch_keys else []) + tail)
+                             for k in self.sink_keys]
 
     def _update_meter(self):
         """Single choke point (first line of _apply_now): keep the engine's

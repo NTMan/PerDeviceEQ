@@ -234,6 +234,43 @@ def profile_slots(slots, ch_map):
     return out
 
 
+def paired_tabs(ch_map, sink_keys):
+    """The sink channels that have a TAB: the ones some profile channel
+    feeds.
+
+    A tab is a PAIR, not a channel of the card. A sink channel the map
+    answers None for is unpaired -- either because the resolver found
+    nothing for it or because a hand deleted its pair -- and an unpaired
+    channel plays dry and has nothing to show, so it gets no tab and no
+    slot. With no map at all (no live sink to ask) every channel is its
+    own pair, which is what an offline window has always shown.
+    """
+    m = ch_map or {}
+    if not m:
+        return list(sink_keys or [])
+    return [k for k in (sink_keys or []) if m.get(k)]
+
+
+def tabs_needing_fill(tabs, have, sources, ch_map):
+    """Which tabs must be read from the profile again: the ones with no
+    slot yet, and the ones whose SOURCE changed.
+
+    A tab's bands are a view of the profile channel that feeds it, so
+    the slot has to follow that channel and not merely exist. Re-pair a
+    tab to another channel and its old bands are the wrong ones; delete
+    a pair and add it back and the slot left behind is whatever it was.
+    Existence alone is a poor test -- an empty slot can appear from
+    nothing more than someone asking for it -- and that is exactly how
+    a re-added tab came back blank while the profile held its bands.
+    """
+    out = []
+    for k in (tabs or []):
+        src = (ch_map or {}).get(k) or k
+        if k not in (have or ()) or (sources or {}).get(k) != src:
+            out.append(k)
+    return out
+
+
 def sibling_tabs(ch, ch_map, keys):
     """Every tab in `keys` fed by the same profile channel as `ch`, `ch`
     itself excluded.

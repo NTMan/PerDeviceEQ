@@ -21,11 +21,10 @@ def test_a_mapped_tab_writes_the_channel_it_feeds_from():
     assert set(out) == {"FL", "FR"}
 
 
-def test_an_unmapped_tab_keeps_its_own_name():
-    """The crash-test case: a ten-channel node in front of a stereo
-    profile. Typing on a channel the profile does not reach makes the
-    profile carry that channel -- visible, editable, and saved, rather
-    than swallowed by a binding nobody can see."""
+def test_a_slot_the_map_cannot_place_keeps_its_own_name():
+    """Defensive: with pairs, every tab has an answer, so this is the
+    offline shape -- a slot the map says nothing about is the profile's
+    own channel and must not be dropped on the way to disk."""
     out = eq.profile_slots({"AUX0": {"bands": [PK]},
                             "AUX3": {"bands": [BOOST]}},
                            {"AUX0": "FL", "AUX3": None})
@@ -49,31 +48,55 @@ def test_without_a_map_the_tabs_are_the_profile():
     assert set(out) == {"FL", "FR"}
 
 
-def test_an_unmapped_tab_is_played_as_well_as_saved():
-    """The other half of the same rule: the editor writes such a tab
-    under its own name, so the WIRE has to look for it there. A slot
-    list of bare Nones publishes ten tail-only chains and the bands the
-    profile really holds are never heard."""
-    body = {"preamp": 0.0, "floor_off": True, "ch_keys": ["FLC"],
-            "channels": {"FLC": {"bands": [PK]}}}
-    sink = ["FL", "FR", "FC", "LFE", "RL", "RR", "FLC", "FRC", "RC", "SL"]
-    cmap = {k: None for k in sink}
-    slots = [(cmap.get(k) or k) for k in sink]
-    g = eq.profile_graph(body, slots=slots)
-    # the empty channels carry a transparent filter at the same freq,
-    # so the GAIN is what tells the real band from the placeholders
-    assert g.count("gain = -3") == 1
+def test_tabs_are_the_paired_channels():
+    """A tab is a PAIR. An unpaired sink channel -- nothing resolved for
+    it, or a hand deleted its pair -- has no tab at all."""
+    sink = ["FL", "FR", "FC", "LFE"]
+    assert eq.paired_tabs({"FL": "FL", "FR": "FR", "FC": None,
+                           "LFE": None}, sink) == ["FL", "FR"]
+    assert eq.paired_tabs({k: "FL" for k in sink}, sink) == sink
+    assert eq.paired_tabs({}, sink) == sink        # offline: no map
+    assert eq.paired_tabs({k: None for k in sink}, sink) == []
 
 
-def test_the_store_slot_list_falls_back_to_the_sink_name(tmp_path,
-                                                         monkeypatch):
+def test_an_unpaired_channel_plays_dry(tmp_path, monkeypatch):
+    """Deleting a pair pins None, and None is not a name to look up --
+    the wire gives that channel the tail alone, which is the whole
+    point of being able to delete one."""
     from perdeviceeq import profiles as P
     monkeypatch.setattr(P, "BINDINGS_FILE", str(tmp_path / "b.json"))
     monkeypatch.setattr(P, "USER_PROFILES_DIR", str(tmp_path / "p"))
     monkeypatch.setattr(P, "CONFIG_DIR", str(tmp_path))
     st = P.ProfileStore()
     st.maps = {"n": {"AUX0": "FL", "AUX3": None}}
-    assert st.slots_for("n") == ["FL", "AUX3"]
+    assert st.slots_for("n") == ["FL", None]
+    body = {"preamp": 0.0, "floor_off": True, "ch_keys": ["FL"],
+            "channels": {"FL": {"bands": [PK]}}}
+    g = eq.profile_graph(body, slots=st.slots_for("n"))
+    # the empty channel carries a transparent filter, so the GAIN is
+    # what tells the real band from the placeholder
+    assert g.count("gain = -3") == 1
+
+
+def test_a_deleted_pair_is_pinned_and_survives_a_reconcile(tmp_path,
+                                                           monkeypatch):
+    """A None the resolver produced and a None a hand chose look the
+    same in the map, so the choice is kept apart as a PIN -- otherwise
+    the next reconcile hands the pair straight back."""
+    from perdeviceeq import profiles as P
+    monkeypatch.setattr(P, "BINDINGS_FILE", str(tmp_path / "b.json"))
+    monkeypatch.setattr(P, "USER_PROFILES_DIR", str(tmp_path / "p"))
+    monkeypatch.setattr(P, "CONFIG_DIR", str(tmp_path))
+    st = P.ProfileStore()
+    sink = ["FL", "FR", "FC", "LFE"]
+    assert set(st.reconcile_map("n", ["FL"], sink).values()) == {"FL"}
+    st.pin_channel("n", "FC", None)
+    m = st.reconcile_map("n", ["FL"], sink)
+    assert m["FC"] is None and m["FR"] == "FL"
+    assert eq.paired_tabs(m, sink) == ["FL", "FR", "LFE"]
+    st.pin_channel("n", "FC", "FL")            # Add EQ sink, back again
+    assert eq.paired_tabs(st.reconcile_map("n", ["FL"], sink),
+                          sink) == sink
 
 
 def test_one_channel_spread_makes_every_tab_a_sibling():
@@ -129,3 +152,22 @@ def test_the_first_band_under_no_eq_spreads(tmp_path, monkeypatch):
     slots = [(cmap.get(k) or k) for k in sink]
     g = eq.profile_graph(dict(p, floor_off=True), slots=slots)
     assert g.count("gain = -3") == len(sink)
+
+
+def test_a_tab_is_refilled_when_its_source_changes():
+    """Existence is not enough: a slot must follow the channel that
+    feeds the tab. An empty slot can appear from nothing more than
+    someone asking for it, and a re-added tab then came back blank."""
+    tabs = ["FL", "FR"]
+    src = {"FL": "FL", "FR": "FR"}
+    assert eq.tabs_needing_fill(tabs, {"FL": 1, "FR": 1}, src,
+                                {"FL": "FL", "FR": "FR"}) == []
+    # FL was unpaired and paired again: the leftover slot is stale
+    assert eq.tabs_needing_fill(tabs, {"FL": 1, "FR": 1}, {"FR": "FR"},
+                                {"FL": "FL", "FR": "FR"}) == ["FL"]
+    # re-paired to another channel: the old bands are the wrong ones
+    assert eq.tabs_needing_fill(tabs, {"FL": 1, "FR": 1}, src,
+                                {"FL": "FL", "FR": "FL"}) == ["FR"]
+    # a tab with no slot at all
+    assert eq.tabs_needing_fill(tabs, {"FL": 1}, src,
+                                {"FL": "FL", "FR": "FR"}) == ["FR"]

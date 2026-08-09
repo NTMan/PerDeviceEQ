@@ -377,12 +377,12 @@ class ProfileStore:
 
     def slots_for(self, node):
         """The map as profile_graph wants it: one entry per sink channel, in
-        sink order. An entry the map does not answer for falls back to the
-        sink channel's own name, which is where the editor writes such a
-        tab. None when the node has no map at all and the caller should
-        fall back to the profile's own layout."""
+        sink order, None where the channel is unpaired -- it has no tab
+        and it plays dry. None for the whole list when the node has no
+        map at all and the caller should fall back to the profile's own
+        layout."""
         m = getattr(self, "maps", {}).get(node)
-        return [v or k for k, v in m.items()] if m else None
+        return list(m.values()) if m else None
 
     def reconcile_map(self, node, prof_keys, sink_keys):
         """The map for `node` brought up to date with the sink in front of it
