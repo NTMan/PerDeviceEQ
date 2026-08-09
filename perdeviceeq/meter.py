@@ -105,15 +105,21 @@ class MeterEngine:
             return len(src)
 
     # ---- lifecycle ----------------------------------------------------------
-    def start(self, node):
-        """Spawn pw-record on the sink monitor and the worker thread."""
+    def start(self, node, positions=None):
+        """Spawn pw-record on the sink monitor and the worker thread.
+
+        `positions` are the node's own channel names, in its order. One
+        chain is applied per COLUMN of the captured frames, so the tap
+        must hand back the node's channels in the node's order or every
+        chain lands on a stranger.
+        """
         self.stop()
         n = self.n_channels
         if not n:
             raise RuntimeError("set_chains() before start()")
         from . import pw_backend
         self._proc = pw_backend.backend().monitor_capture(
-            node, n, self.fs)
+            node, n, self.fs, positions)
         self._stop.clear()
         self._thread = threading.Thread(target=self._run,
                                         args=(self._proc,),

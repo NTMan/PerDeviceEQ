@@ -394,3 +394,41 @@ def test_the_gain_rides_the_same_dump_as_the_sources():
     g, kind = src["alsa_input.usb-0d8c-00.analog-stereo"]["gain"]
     assert abs(g - 0.5) < 1e-9 and kind == "hardware"
     assert src["virtual-thing"]["gain"] == (None, None)
+
+
+# ---- a node's channel NAMES come from its ports ---------------------------
+
+def _m62_dump():
+    """The M62 in its ten-channel mode, as pw-dump really shows it: the
+    ports are AUX0..AUX9 while the negotiated Format still repeats the
+    firmware's surround fiction."""
+    return [{"id": 137, "type": "PipeWire:Interface:Node",
+             "info": {"props": {
+                 "node.name": "m62.direct",
+                 "audio.position": "[ AUX0, AUX1, AUX2, AUX3, AUX4, "
+                                   "AUX5, AUX6, AUX7, AUX8, AUX9 ]"},
+                      "params": {"Format": [{
+                          "channels": 10,
+                          "position": ["FL", "FR", "FC", "LFE", "RL",
+                                       "RR", "FLC", "FRC", "RC",
+                                       "SL"]}]}}}]
+
+
+def test_channel_names_come_from_the_ports_not_the_format():
+    from perdeviceeq import pw_backend as pw
+    keys = pw._node_channels("m62.direct", _m62_dump())
+    assert keys == ["AUX%d" % i for i in range(10)]
+
+
+def test_the_format_still_answers_when_the_ports_do_not():
+    from perdeviceeq import pw_backend as pw
+    d = _m62_dump()
+    d[0]["info"]["props"].pop("audio.position")
+    assert pw._node_channels("m62.direct", d)[:3] == ["FL", "FR", "FC"]
+
+
+def test_a_repeated_channel_name_still_addresses_one_channel_each():
+    from perdeviceeq import pw_backend as pw
+    d = _m62_dump()
+    d[0]["info"]["props"]["audio.position"] = "[ MONO, MONO ]"
+    assert pw._node_channels("m62.direct", d) == ["MONO", "MONO.1"]

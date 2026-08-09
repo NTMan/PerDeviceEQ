@@ -196,3 +196,20 @@ def test_alive_follows_the_worker():
     assert eng.alive()
     eng._thread = FakeThread(False)
     assert not eng.alive()
+
+
+def test_the_monitor_tap_states_the_channel_map():
+    """A count alone lets PipeWire choose the positions and matrix the
+    monitor onto them, so the columns come back in the STREAM's order
+    while the caller labels them with the node's and applies one chain
+    per column. On a ten-channel node that put every bar and every
+    filter on a stranger."""
+    from perdeviceeq.pw_backend import PipeWireBackend as B
+    ten = ["FL", "FR", "FC", "LFE", "RL", "RR", "FLC", "FRC", "RC", "SL"]
+    cmd = B.monitor_cmd("some.sink", 10, 48000, ten)
+    assert "--channel-map" in cmd
+    assert cmd[cmd.index("--channel-map") + 1] == ",".join(ten)
+    assert cmd[-1] == "-"
+    # a map that does not match the count is no map at all
+    assert "--channel-map" not in B.monitor_cmd("s", 10, 48000, ["FL"])
+    assert "--channel-map" not in B.monitor_cmd("s", 2, 48000, None)

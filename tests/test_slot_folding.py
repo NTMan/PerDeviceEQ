@@ -171,3 +171,31 @@ def test_a_tab_is_refilled_when_its_source_changes():
     # a tab with no slot at all
     assert eq.tabs_needing_fill(tabs, {"FL": 1}, src,
                                 {"FL": "FL", "FR": "FR"}) == ["FR"]
+
+
+def test_re_pairing_does_not_reorder_the_profile():
+    """His field catch: FL was moved onto AUX6, so the tabs became
+    AUX1, AUX6 and the fold -- which walks tabs in SINK order -- wrote
+    ch_keys as FR, FL. The positional fallback then handed AUX1 to FL,
+    the correction moved ear, and toggling a band was enough to do it."""
+    stored = ["FL", "FR"]
+    folded = {"FR": 1, "FL": 1}                  # tabs AUX1 then AUX6
+    assert eq.keep_channel_order(folded, stored) == ["FL", "FR"]
+    # a channel the profile did not have yet lands at the end
+    assert eq.keep_channel_order({"FR": 1, "FC": 1, "FL": 1},
+                                 stored) == ["FL", "FR", "FC"]
+    assert eq.keep_channel_order({"FL": 1}, stored) == ["FL"]
+    assert eq.keep_channel_order({"FL": 1, "FR": 1}, []) == ["FL", "FR"]
+
+
+def test_one_channel_still_spreads_over_a_pin(tmp_path, monkeypatch):
+    """The exemption: a profile with a single channel spreads by rule,
+    so pinning one output must not unpair the other nine."""
+    from perdeviceeq import profiles as P
+    monkeypatch.setattr(P, "BINDINGS_FILE", str(tmp_path / "b.json"))
+    monkeypatch.setattr(P, "USER_PROFILES_DIR", str(tmp_path / "p"))
+    monkeypatch.setattr(P, "CONFIG_DIR", str(tmp_path))
+    st = P.ProfileStore()
+    sink = ["AUX0", "AUX1", "AUX2"]
+    st.pin_channel("n", "AUX2", "FL")
+    assert set(st.reconcile_map("n", ["FL"], sink).values()) == {"FL"}

@@ -284,6 +284,28 @@ def node_params(name, dump=None):
             return (o.get("info") or {}).get("params") or {}, o["id"]
     return None, None
 
+
+def node_props(name, dump=None):
+    dump = dump if dump is not None else pw_dump()
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("node.name") == name:
+            return p
+    return None
+
+
+def _parse_position(raw):
+    """audio.position as pw-dump gives it: the string "[ FL, FR ]" or a
+    plain list. Empty when the property is absent or unreadable."""
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if not isinstance(raw, str):
+        return []
+    return [s.strip() for s in raw.strip().strip("[]").split(",")
+            if s.strip()]
+
 def resolve_sink_id(name, dump=None):
     _, nid = node_params(name, dump)
     return nid
@@ -317,8 +339,25 @@ _POS_FALLBACK = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"]
 
 
 def _node_channels(name, dump=None):
-    """Channel keys for any node (sink or source) from its negotiated
-    Format position, falling back to channelVolumes length, then stereo."""
+    """Channel keys for any node (sink or source).
+
+    audio.position FIRST, because that is what the node's PORTS are
+    called -- what pw-dump, pw-link, the desktop and any capture we open
+    on this node will match against by name. The negotiated Format can
+    carry a different vocabulary for the same channels: the M62 in its
+    ten-channel mode has ports AUX0..AUX9 while its Format still repeats
+    the firmware's surround fiction FL..SL. Both lists describe the same
+    channels in the same ORDER, so the graph we publish is unaffected --
+    filtersN is the Nth channel either way -- but everything that
+    matches by NAME breaks, and the window then labels a card with
+    channels it does not have. Format is the fallback, then the channel
+    count, then stereo.
+    """
+    dump = dump if dump is not None else pw_dump()
+    pos = _parse_position((node_props(name, dump) or {}).get(
+        "audio.position"))
+    if pos:
+        return _dedup_channels(pos)
     params, _ = node_params(name, dump)
     pos, nch = None, None
     if params:
@@ -339,12 +378,20 @@ def _node_channels(name, dump=None):
                else ["Ch%d" % (i + 1) for i in range(nch)]
     else:
         keys = ["FL", "FR"]
+    return _dedup_channels(keys)
+
+
+def _dedup_channels(keys):
+    """A channel name repeated in a map still has to address one
+    channel each, so the second one wears a suffix."""
     seen, out = {}, []
     for k in keys:
         if k in seen:
-            seen[k] += 1; out.append("%s.%d" % (k, seen[k]))
+            seen[k] += 1
+            out.append("%s.%d" % (k, seen[k]))
         else:
-            seen[k] = 0; out.append(k)
+            seen[k] = 0
+            out.append(k)
     return out
 
 
@@ -750,7 +797,35 @@ class PipeWireBackend(AudioBackend):
                                 stderr=subprocess.DEVNULL)
         return StreamHandle(proc)
 
-    def monitor_capture(self, sink, channels, rate=48000):
+    @staticmethod
+    def monitor_cmd(sink, channels, rate=48000, positions=None):
+        """The pw-record command line for a monitor tap.
+
+        The channel MAP is stated, not left to be guessed. Asking for a
+        count alone lets PipeWire pick the default positions for that
+        count and matrix the monitor onto them, so the order of the
+        columns we read is the STREAM's, not the node's -- while the
+        caller labels those columns with the node's own channel names
+        and applies one EQ chain per column. On a stereo card the two
+        agree by luck; on a ten-channel node they part, and both the
+        bars and the filtering land on the wrong channels. Naming the
+        node's own positions makes the tap a pass-through.
+        """
+        pos = list(positions or [])
+        cmd = ["pw-record", "--target", str(sink),
+               "-P", "{ stream.capture.sink = true,"
+                     " node.name = per-device-eq-meter,"
+                     " node.dont-reconnect = true,"
+                     " application.name = \"Per-Device EQ\" }",
+               "--format", "f32", "--rate", str(int(rate)),
+               "--channels", str(int(channels))]
+        if len(pos) == int(channels):
+            cmd += ["--channel-map", ",".join(pos)]
+        cmd.append("-")
+        return cmd
+
+    def monitor_capture(self, sink, channels, rate=48000,
+                        positions=None):
         """Spawn pw-record on a sink's monitor (PRE-EQ tap in the in-node
         topology) streaming raw interleaved f32 to stdout. Returns the Popen;
         the caller owns its lifetime and reads .stdout.
@@ -774,12 +849,7 @@ class PipeWireBackend(AudioBackend):
         invisible to the app -- the meter kept dancing to another
         device's music (field catch). With the flag the tap dies with
         its pipe; the GUI notices the dead worker and re-arms."""
-        cmd = ["pw-record", "--target", str(sink),
-               "-P", "{ stream.capture.sink = true, node.name = per-device-eq-meter,"
-                     " node.dont-reconnect = true,"
-                     " application.name = \"Per-Device EQ\" }",
-               "--format", "f32", "--rate", str(int(rate)),
-               "--channels", str(int(channels)), "-"]
+        cmd = self.monitor_cmd(sink, channels, rate, positions)
         return StreamHandle(subprocess.Popen(
             cmd, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL))

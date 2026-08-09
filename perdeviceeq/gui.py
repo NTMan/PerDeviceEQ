@@ -1406,9 +1406,12 @@ class EqWindow(Adw.ApplicationWindow):
         prof = eq.profile_slots(
             {k: self._slot_to_dict(k) for k in self.ch_keys},
             getattr(self, "ch_map", None))
-        body["channels"] = {k: d for k, d in prof.items()
-                            if (d or {}).get("bands")}
-        body["ch_keys"] = list(body["channels"])
+        full = {k: d for k, d in prof.items() if (d or {}).get("bands")}
+        order = eq.keep_channel_order(
+            full, (p or {}).get("ch_keys")
+            or list(((p or {}).get("channels") or {})))
+        body["channels"] = {k: full[k] for k in order}
+        body["ch_keys"] = order
         if self.floor_off:
             body["floor_off"] = True
         if self.floor_hz is not None:
@@ -2418,7 +2421,7 @@ class EqWindow(Adw.ApplicationWindow):
             self._bal = [self._Ballistics() for _ in chains]
             self._sess_samples = 0
         if restart:
-            self._meter.start(self.node)
+            self._meter.start(self.node, list(self.sink_keys))
             self._meter_node = self.node
             self._dead_frames = []
             self._meter_relinks = 0

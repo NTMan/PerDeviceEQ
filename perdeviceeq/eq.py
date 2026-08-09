@@ -234,6 +234,25 @@ def profile_slots(slots, ch_map):
     return out
 
 
+def keep_channel_order(channels, stored_keys):
+    """The profile's channel ORDER, kept.
+
+    The editor assembles a body by folding its tabs, and the tabs are in
+    the SINK's order -- so re-pairing a channel onto a later output
+    silently rewrites the profile's key order. That is not cosmetic:
+    resolve_slots falls back to POSITION when no name matches, first
+    profile channel to first sink channel, so a reordered profile
+    reassigns every output. Pairing must not be able to do that; a
+    profile's order is its own.
+
+    Returns the folded keys in the stored order, with anything new
+    appended in the order the fold produced it.
+    """
+    have = list(channels or [])
+    out = [k for k in (stored_keys or []) if k in have]
+    return out + [k for k in have if k not in out]
+
+
 def paired_tabs(ch_map, sink_keys):
     """The sink channels that have a TAB: the ones some profile channel
     feeds.

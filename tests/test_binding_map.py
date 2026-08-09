@@ -180,10 +180,28 @@ def test_a_pin_whose_channel_is_gone_is_forgotten(store):
     assert store.pins_for(NODE) == {}
 
 
-def test_a_pin_whose_target_is_gone_is_forgotten(store):
+def test_a_pin_outlives_a_profile_that_lacks_its_channel(store):
+    """The routing is a fact about the CARD. A profile that has no
+    channel of that name cannot use the pin, but it must not destroy
+    it -- selecting No EQ, which has no channels at all, once wiped
+    every routing choice on the card off the disk (field report)."""
     store.pin_channel(NODE, "AUX0", "SL")
-    store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1"])
-    assert store.pins_for(NODE) == {}
+    m = store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1"])
+    assert m["AUX0"] == "FL"                  # unusable: resolver answers
+    assert store.pins_for(NODE) == {"AUX0": "SL"}
+    m = store.reconcile_map(NODE, ["SL"], ["AUX0", "AUX1"])
+    assert m["AUX0"] == "SL"                  # the profile is back
+
+
+def test_no_eq_does_not_wipe_the_routing(store):
+    """His sequence: AUX6 paired to FL by hand, then No EQ, then any
+    profile again -- the pair has to still be there."""
+    store.pin_channel(NODE, "AUX6", "FL")
+    sink = ["AUX%d" % i for i in range(10)]
+    store.reconcile_map(NODE, [], sink)                    # No EQ
+    assert store.pins_for(NODE) == {"AUX6": "FL"}
+    m = store.reconcile_map(NODE, ["FL", "FR"], sink)
+    assert m["AUX6"] == "FL"
 
 
 def test_unpinning_returns_the_channel_to_the_resolver(store):

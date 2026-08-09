@@ -390,10 +390,13 @@ class ProfileStore:
 
         A sink can change width under one identity -- the same card in
         another mode -- and a profile can be swapped for one with different
-        channels. Only a PINNED entry survives that, and only while its sink
-        channel and its target both still exist; everything else is answered
-        again by resolve_slots. Pins that no longer apply are forgotten here,
-        so a stale choice cannot outlive the thing it was about.
+        channels. A PINNED entry survives both: the routing is a fact
+        about the CARD, not about whichever profile is loaded, so a pin
+        outlives a profile that does not have the channel it names and
+        comes back into force when one that does is selected. Only a pin
+        whose SINK CHANNEL is gone is forgotten -- that one really is
+        about a thing that no longer exists. Everything unpinned is
+        answered again by resolve_slots.
 
         The effective map is written back because the hook reads it: at login
         it applies graphs with no sink to ask, and the map is the only record
@@ -405,11 +408,17 @@ class ProfileStore:
         auto = resolve_slots(prof_keys, sink)
         out, keep = {}, {}
         for i, ch in enumerate(sink):
-            if ch in pinned and (pinned[ch] is None or pinned[ch] in have):
-                out[ch] = pinned[ch]
-                keep[ch] = pinned[ch]
-            else:
+            if ch not in pinned:
                 out[ch] = auto[i]
+                continue
+            # the pin lives as long as its SINK CHANNEL does. Whether
+            # the profile in front of the card happens to own a channel
+            # of that name decides only whether the pin is USABLE right
+            # now: No EQ owns none at all, and selecting it once wiped
+            # every routing choice on the card off the disk.
+            keep[ch] = pinned[ch]
+            usable = pinned[ch] is None or pinned[ch] in have
+            out[ch] = pinned[ch] if usable else auto[i]
         if keep != pinned:
             self.pins[node] = keep
             if not keep:
