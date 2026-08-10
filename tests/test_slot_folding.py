@@ -218,3 +218,17 @@ def test_the_target_vocabulary_leads_with_the_stereo_pair():
         assert name in eq.TARGETS
     # no sink ever calls a channel this, and no target is a bus number
     assert not any(t.startswith("AUX") for t in eq.TARGETS)
+
+
+def test_a_target_is_removable_only_while_it_is_empty():
+    """The rule behind the measurement window's x, as one expression.
+    In the main window an x costs nothing -- the bands stay and the
+    route plays dry. There a tab IS a target, so removing it takes its
+    takes with it, and a measurement is the one thing in that window
+    nobody can make again by clicking."""
+    def empty(takes, bands):        # what _target_is_empty decides
+        return not takes and not bands
+    assert empty([], [])
+    assert not empty(["take"], [])
+    assert not empty([], [{"f": 100}])
+    assert not empty(["take"], [{"f": 100}])

@@ -408,6 +408,12 @@ class MeasureWindow(Adw.Window):
         group.add_action(pair)
         self.insert_action_group("measure", group)
         row.append(self._add_btn)
+        self._del_btn = Gtk.Button()
+        self._del_btn.set_icon_name("window-close-symbolic")
+        self._del_btn.add_css_class("flat")
+        self._del_btn.set_valign(Gtk.Align.CENTER)
+        self._del_btn.connect("clicked", lambda _b: self._del_pair())
+        row.append(self._del_btn)
         self._dress_tabs()
         col.append(row)
 
@@ -2706,6 +2712,74 @@ class MeasureWindow(Adw.Window):
             "Choose the output a target plays on -- a target already "
             "here MOVES to it" if free else
             "Every output channel already carries a target")
+        rm = getattr(self, "_del_btn", None)
+        if rm is None:
+            return
+        ch = self._selected_ch
+        empty = (0 <= ch < len(self.ch_keys)
+                 and self._target_is_empty(ch))
+        rm.set_sensitive(empty)
+        rm.set_tooltip_text(
+            "Remove this target" if empty else
+            "This target has measurements -- delete its takes first")
+
+    def _target_is_empty(self, ch):
+        """Nothing has been measured or typed on this target.
+
+        Takes and bands both count: a target carries the takes of this
+        sitting and whatever curve the main window has on it, and
+        neither is something a stray click should be able to erase."""
+        if self.session is not None and self.session.takes_of(ch):
+            return False
+        key = self.ch_keys[ch] if 0 <= ch < len(self.ch_keys) else None
+        p = self.parent.store.get(self.edit_pid) if self.edit_pid else {}
+        band = (((p or {}).get("channels") or {}).get(key) or {})
+        return not (band.get("bands") or [])
+
+    def _del_pair(self):
+        """Remove the target in view -- the way back from a wrong Add.
+
+        Only while it is EMPTY. In the main window an x costs nothing:
+        the bands stay in the profile and the route merely plays dry.
+        Here a tab IS a target, so removing it would take its takes
+        with it, and a measurement is the one thing in this window
+        nobody can make again by clicking. So the button goes dead
+        instead, and says why."""
+        ch = self._selected_ch
+        if not (0 <= ch < len(self.ch_keys)) or not self._target_is_empty(ch):
+            return
+        target = self.ch_keys[ch]
+        store = self.parent.store
+        if self.edit_pid:
+            p = store.get(self.edit_pid) or {}
+            keys = [k for k in (p.get("ch_keys")
+                                or list((p.get("channels") or {})))
+                    if k != target]
+            chans = {k: v for k, v in (p.get("channels") or {}).items()
+                     if k != target}
+            body = dict(p)
+            body["channels"] = chans
+            body["ch_keys"] = keys
+            store.save_user(body)
+        try:
+            cur = store.reconcile_map(
+                self.sink_node, list(self.ch_keys),
+                self._pw_output_channels(self.sink_node))
+        except Exception:
+            cur = {}
+        for out, val in list(cur.items()):
+            if val == target:
+                store.pin_channel(self.sink_node, out, None)
+        p = store.get(self.edit_pid) if self.edit_pid else {}
+        self.ch_keys = (list((p or {}).get("ch_keys")
+                             or list(((p or {}).get("channels") or {})))
+                        or ["FL", "FR"])
+        self.n_ch = len(self.ch_keys)
+        self._selected_ch = min(ch, self.n_ch - 1)
+        self._recompute_mic()
+        self._rebuild_map_slots()
+        self._rebuild_session()
+        self._refresh_all()
 
     def _add_pair(self, value):
         """A pair declares its target: the profile gains that side,
