@@ -526,3 +526,24 @@ def test_a_calibration_row_speaks_for_a_column_not_a_position():
     assert pairs([2], ["row"]) == [(2, "row")]
     assert pairs([0, 1], ["a", "b"]) == [(0, "a"), (1, "b")]
     assert pairs([], []) == []
+
+
+def test_a_column_wears_the_name_the_card_gives_it():
+    """His ports read capture_AUX0..capture_AUX15 and the picker was
+    offering Column 0..15 -- a numbering invented while the width was
+    still clamped to two and there was nothing real to read. The rule
+    as one expression, so a name in the picker matches pw-top."""
+    def labels(names, n):              # what _mic_labels now decides
+        if len(names) == n and n > 2:
+            return names
+        if n == 1:
+            return ["Mono"]
+        if n == 2:
+            return names if len(names) == 2 else ["L", "R"]
+        return ["Column %d" % i for i in range(n)]
+    aux = ["AUX%d" % i for i in range(16)]
+    assert labels(aux, 16)[2] == "AUX2"
+    assert labels([], 16)[2] == "Column 2"        # a card with no names
+    assert labels([], 2) == ["L", "R"]
+    assert labels(["FL", "FR"], 2) == ["FL", "FR"]
+    assert labels([], 1) == ["Mono"]

@@ -2381,13 +2381,26 @@ class MeasureWindow(Adw.Window):
         return max(1, n)
 
     def _mic_labels(self):
-        """A capture column is named by its NUMBER once there can be
-        more than a pair of them. L and R survive for a two-column rig,
-        where they are what everyone calls them."""
+        """A capture column wears the name the CARD gives it.
+
+        His ports read capture_AUX0..capture_AUX15 and the picker was
+        offering Column 0..Column 15 -- a numbering I invented while
+        the width was still clamped to two and there was nothing real
+        to read. The source has carried its channel names in the
+        heartbeat's snapshot since the width became honest, so the
+        column is called what the card calls it, and a name in the
+        picker matches a name in pw-top.
+
+        Mono and L/R survive for a rig that has no names of its own,
+        because that is what everyone calls those."""
+        src = self._selected_source() or {}
+        names = list(src.get("channels") or [])
+        if len(names) == self.mic_ch and self.mic_ch > 2:
+            return names
         if self.mic_ch == 1:
             return ["Mono"]
         if self.mic_ch == 2:
-            return ["L", "R"]
+            return names if len(names) == 2 else ["L", "R"]
         return ["Column %d" % i for i in range(self.mic_ch)]
 
     def _default_mic_of(self):
