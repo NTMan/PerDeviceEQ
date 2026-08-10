@@ -259,7 +259,6 @@ class MeasureWindow(Adw.Window):
             (self.edit_prof or {}).get("name") or self.sink_desc)
 
         self._build_mic_controls(b.get_object("source_row"),
-                                 b.get_object("chan_row"),
                                  b.get_object("mic_group"))
 
         ring_host = b.get_object("ring_host")
@@ -346,7 +345,7 @@ class MeasureWindow(Adw.Window):
         # the fold -- only the take rows tuck away
         self._page["card"].append(fa)
 
-    def _build_mic_controls(self, source_row, chan_row, mic_group):
+    def _build_mic_controls(self, source_row, mic_group):
         # the row IS the picker (AdwComboRow); the popup shows
         # the full name, the row ellipsizes the selected one --
         # the ellipsis cap stays so a monster ALSA description
@@ -358,10 +357,6 @@ class MeasureWindow(Adw.Window):
         self.mic_picker.refresh(self.sources)
         self.source_dd.set_sensitive(bool(self.sources))
         self._tame_scroll(self.source_dd)
-        self.chan_dd = chan_row
-        self.chan_dd.set_model(Gtk.StringList.new(["Mono", "Stereo"]))
-        self.chan_dd.connect("notify::selected", self._on_chan_changed)
-        self._tame_scroll(self.chan_dd)
         self.mic_group = mic_group
         self._recompute_mic()
         self._rebuild_cal_row()
@@ -2231,64 +2226,17 @@ class MeasureWindow(Adw.Window):
     def _recompute_mic(self):
         self.mic_ch = self._mic_channels()
         self.mic_of = self._default_mic_of()
-        self._sync_chan_dd()
-
-    def _sync_chan_dd(self):
-        if not getattr(self, "chan_dd", None):
-            return
-        self.chan_dd.handler_block_by_func(self._on_chan_changed)
-        self.chan_dd.set_selected(1 if self.mic_ch >= 2 else 0)
-        self.chan_dd.handler_unblock_by_func(self._on_chan_changed)
-
-    def _on_chan_changed(self, *_):
-        self.mic_ch = 2 if self.chan_dd.get_selected() == 1 else 1
-        self.mic_of = self._default_mic_of()
-        self.cal = {k: v for k, v in self.cal.items() if k < self.mic_ch}
-        self._rebuild_cal_row()
-        self._rebuild_map_slots()
-        self._sync_cal_labels()
-        # a hand said how many capsules this rig has: that is worth
-        # remembering even when the rig has nothing else on file
-        self._persist_mic(by_hand=True)
-        self._rebuild_session()
-        # the pair's remembered level lands the moment both
-        # ends are known: the restore branch in
-        # _refresh_volume was honest but unreachable -- the
-        # session is built in the constructor now, so the
-        # display always showed session._v_cur, seeded from
-        # the fader widget's hardcoded birth value; the pair
-        # memory (which held the hand's own 42 all along) was
-        # never consulted. Before the session exists this
-        # paints the fader, and the session then reads its
-        # start level from that very widget; with a session
-        # alive (a mid-life pair change) the level is set
-        # directly.
-        rv = self.memory.volume_for(self.sink_node,
-                                    self._source_name())
-        debug.mic_trace("level rv=%r src=%r session=%s "
-                        "spin=%.0f"
-                        % (rv, self._source_name(),
-                           self.session is not None,
-                           self.vol_spin.get_value()))
-        if rv is not None and self.session is not None:
-            self.session.set_level(rv)
-        self._refresh_volume()
-        # the field's stale verdict: the pult judged BEFORE the
-        # mic was born (constructor order), the prefill then
-        # bound the canonical node, and nobody re-judged -- the
-        # "mic not resolved" text and the locked buttons
-        # outlived their own truth until the next graph event.
-        # The law: the court sits again after every move of the
-        # rig -- prefill, profile restore, user pick, cal alike.
-        self._update_pult()
 
     def _mic_channels(self):
         src = self._selected_source()
         if not src:
             return 2
-        prof = self.mic_store.match(src["name"])
-        if prof and prof.get("channels") in (1, 2):
-            return prof["channels"]     # the user pinned it for this rig
+        # No stored override. It existed because a card could enumerate
+        # a width it did not capture, and a hand could correct it -- but
+        # the correction was a COUNT, and a count cannot say which wire
+        # carries what. The per-target column picker says it exactly,
+        # and a stale stored 2 was what kept his sixteen-column
+        # interface showing L and R.
         try:
             n = len(pw_backend.backend().input_channels(
                 src.get("node") or src["name"]))
@@ -2936,10 +2884,8 @@ class MeasureWindow(Adw.Window):
         it cannot be wrong about a rebuilt session."""
         have = bool(self.sources or self.mic_picker.core.node)
         self.source_dd.set_sensitive(have)
-        self.chan_dd.set_sensitive(True)
         self._refresh_gain()
-        for row in (self.source_dd, self.chan_dd):
-            row.set_tooltip_text(None)
+        self.source_dd.set_tooltip_text(None)
 
     def _update_pult(self):
         """The pult is the shared gone lock (field verdict): a
@@ -3398,7 +3344,7 @@ class MeasureWindow(Adw.Window):
         body = {"name": src["desc"], "node_match": src["name"],
                 "serial": ((existing or {}).get("serial", "")
                            or measure_prefs.serial_from_cal(cal.values())),
-                "cal": cal, "channels": self.mic_ch}
+                "cal": cal}
         if existing:
             body["id"] = existing["id"]
         pid = self.mic_store.save(body)

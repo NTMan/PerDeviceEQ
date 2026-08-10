@@ -41,12 +41,11 @@ def _atomic_write(path, obj):
 def worth_saving(cal, existing, by_hand=False):
     """Is there anything about this rig worth writing down?
 
-    A remembered rig, or a calibration, obviously. And a HAND:
-    choosing the capsule count is a statement about the rig even
-    when nothing else has been said about it yet, and refusing to
-    save it was a real bug -- Mono was picked on a jack that had no
-    profile, nothing was written, and the next opening read the
-    channel count off the graph and answered Stereo.
+    A remembered rig, or a calibration, obviously. And a HAND: an
+    act on this rig is a statement about it even when nothing else
+    has been said yet -- today that act is taking a calibration off,
+    and refusing to record it let the next opening read the file
+    back and hand it straight to the rig again.
 
     Everything else is a handler firing during load, which must not
     mint a profile for every rig that is merely selected."""
@@ -99,10 +98,15 @@ def serial_from_cal(paths):
 
 class MicProfileStore:
     """Reusable measurement-mic profiles, keyed by a stable id. A profile
-    is a plain dict: {id, name, node_match, serial, cal, channels}, where
-    cal maps a capture-channel index (as a string) to a cal-file path and
-    channels is the rig's capsule count (1 or 2, or None if unset -- some
-    mono mics enumerate as stereo). Stored as one JSON file, {id: body}."""
+    is a plain dict: {id, name, node_match, serial, cal}, where cal
+    maps a capture-channel index (as a string) to a cal-file path.
+
+    A `channels` field used to sit beside it -- the rig's capsule count,
+    pinned by hand because a card can enumerate a width it does not
+    capture. It is gone: a COUNT cannot say which wire carries what,
+    the per-target column picker says exactly that, and a stale stored
+    2 was what kept a sixteen-column interface offering L and R.
+    """
 
     def __init__(self):
         self.profiles = {}
@@ -124,17 +128,14 @@ class MicProfileStore:
     def _sane(pid, body):
         cal = body.get("cal") or {}
         cal = {str(k): str(v) for k, v in cal.items() if v}
-        ch = body.get("channels")
-        ch = ch if ch in (1, 2) else None
         return {"id": pid, "name": body.get("name") or pid,
                 "node_match": body.get("node_match") or "",
-                "serial": body.get("serial") or "", "cal": cal,
-                "channels": ch}
+                "serial": body.get("serial") or "", "cal": cal}
 
     @staticmethod
     def _body(p):
         return {k: p[k] for k in ("name", "node_match", "serial",
-                                  "cal", "channels")}
+                                  "cal")}
 
     def get(self, pid):
         return self.profiles.get(pid)
@@ -171,9 +172,9 @@ class MicProfileStore:
         the bare NODE answers for any of that card's jacks: it was
         written before jacks were part of a rig's name, and it means
         "this card" -- refusing it would silently drop a rig's
-        calibration and its capsule count the first time the list
-        learned about ports. The next save writes the identity in
-        full, so each jack ends up with its own rig, which is what
+        calibration the first time the list learned about ports. The
+        next save writes the identity in full, so each jack ends up
+        with its own rig, which is what
         they physically are.
 
         A profile that names a JACK never answers for a different

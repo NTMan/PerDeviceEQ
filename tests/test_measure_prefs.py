@@ -103,23 +103,19 @@ def test_measure_memory_ignores_junk(paths):
     assert mp.MeasureMemory().mic_for("x") == "m"
 
 
-def test_mic_profile_channels_roundtrip(paths):
+def test_a_rig_no_longer_stores_a_capsule_count(paths):
+    """The count is gone and does not come back on a reload. It was a
+    hand's correction for a card that enumerates a width it does not
+    capture -- but a COUNT cannot say which wire carries what, the
+    per-target column picker says exactly that, and a stale stored 2
+    was what kept a sixteen-column interface offering L and R."""
     s = mp.MicProfileStore()
     pid = s.save({"name": "Umik", "node_match": "umik.0",
                   "cal": {"0": "/c/umik.txt"}, "channels": 1})
-    assert s.get(pid)["channels"] == 1
+    assert "channels" not in s.get(pid)
     s2 = mp.MicProfileStore()                    # reload from disk
-    assert s2.get(pid)["channels"] == 1
-
-
-def test_mic_profile_channels_defaults_none(paths):
-    s = mp.MicProfileStore()
-    pid = s.save({"name": "Ears", "node_match": "ears.0",
-                  "cal": {"0": "/c/l.txt", "1": "/c/r.txt"}})
-    assert s.get(pid)["channels"] is None      # unset -> auto
-    pid2 = s.save({"name": "Bad", "node_match": "bad.0",
-                   "cal": {}, "channels": 5})   # invalid -> None
-    assert s.get(pid2)["channels"] is None
+    assert "channels" not in s2.get(pid)
+    assert s2.get(pid)["cal"] == {"0": "/c/umik.txt"}
 
 
 def test_serial_from_cal_reads_the_unit_identity():
@@ -234,7 +230,7 @@ def test_a_rig_named_before_jacks_answers_for_its_card(paths):
     """The list learned about ports and every identity gained a
     jack. A profile written before that names the bare NODE and
     means "this card": refusing it would silently drop the rig's
-    calibration and its capsule count the first time the app was
+    calibration the first time the app was
     updated. A profile that names a jack answers for that jack
     only."""
     s = mp.MicProfileStore()
@@ -256,7 +252,7 @@ def test_a_rig_named_before_jacks_answers_for_its_card(paths):
 
 
 def test_a_hand_alone_is_worth_a_rig_profile():
-    """Choosing the capsule count says something about the rig even
+    """An act of a hand says something about the rig even
     when nothing else is on file yet. Refusing to save it was a real
     bug: Mono was picked on a jack with no profile, nothing was
     written, and the next opening read the channel count off the
