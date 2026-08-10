@@ -395,6 +395,45 @@ def _dedup_channels(keys):
     return out
 
 
+def monitor_channels(name, dump=None):
+    """The channel names the node's MONITOR PORTS carry, in port order.
+
+    A third vocabulary, and the only one that matters for LINKING: the
+    M62 in its ten-channel mode has audio.position AUX0..AUX9, a
+    negotiated Format of FL..SL, and ports called monitor_FL..monitor_SL.
+    A capture asks for a channel map and PipeWire matches it against the
+    PORTS, so a map from any other list matches nothing and the columns
+    arrive wherever the fallback puts them -- which is what left the
+    level meter reading channels 7 and 8 while the music played on 1
+    and 2. Empty when the node or its ports cannot be read; the caller
+    then states no map at all.
+    """
+    dump = dump if dump is not None else pw_dump()
+    nid = None
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("node.name") == name:
+            nid = o["id"]
+            break
+    if nid is None:
+        return []
+    rows = []
+    for o in dump:
+        if "Port" not in (o.get("type") or ""):
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if str(p.get("node.id")) != str(nid):
+            continue
+        if (p.get("port.direction") or "") != "out":
+            continue
+        ch = p.get("audio.channel")
+        if ch:
+            rows.append((int(p.get("port.id") or 0), str(ch)))
+    return [c for _i, c in sorted(rows)]
+
+
 def sink_channels(name, dump=None):
     return _node_channels(name, dump)
 
@@ -716,6 +755,10 @@ class PipeWireBackend(AudioBackend):
         """Channel positions of an output device."""
         return sink_channels(device)
 
+    def monitor_positions(self, device):
+        """What a capture on this node's monitor must ask for."""
+        return monitor_channels(device)
+
     def input_channels(self, device):
         """Channel positions of an input device."""
         return source_channels(device)
@@ -812,7 +855,14 @@ class PipeWireBackend(AudioBackend):
         node's own positions makes the tap a pass-through.
         """
         pos = list(positions or [])
-        cmd = ["pw-record", "--target", str(sink),
+        # --raw, or pw-record writes a 24-byte .snd header first and the
+        # reader eats it as audio. Six float32 samples of offset rotate
+        # every channel by six: on a ten-channel node the music showed up
+        # on rows 7 and 8 while it played on 1 and 2, and on stereo six
+        # samples are exactly three frames, so the rotation is zero and
+        # nobody noticed for as long as this code has existed. The
+        # measurement capture in this same file always passed it.
+        cmd = ["pw-record", "--raw", "--target", str(sink),
                "-P", "{ stream.capture.sink = true,"
                      " node.name = per-device-eq-meter,"
                      " node.dont-reconnect = true,"

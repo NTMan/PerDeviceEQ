@@ -2421,7 +2421,10 @@ class EqWindow(Adw.ApplicationWindow):
             self._bal = [self._Ballistics() for _ in chains]
             self._sess_samples = 0
         if restart:
-            self._meter.start(self.node, list(self.sink_keys))
+            # the tap is matched against the node's PORTS, whose names
+            # are their own list -- not the positions the tabs wear
+            pos = pw_backend.backend().monitor_positions(self.node)
+            self._meter.start(self.node, pos or list(self.sink_keys))
             self._meter_node = self.node
             self._dead_frames = []
             self._meter_relinks = 0

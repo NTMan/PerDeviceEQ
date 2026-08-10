@@ -432,3 +432,33 @@ def test_a_repeated_channel_name_still_addresses_one_channel_each():
     d = _m62_dump()
     d[0]["info"]["props"]["audio.position"] = "[ MONO, MONO ]"
     assert pw._node_channels("m62.direct", d) == ["MONO", "MONO.1"]
+
+
+def _m62_ports_dump():
+    """The same node with its ports: audio.position says AUX, the ports
+    say FL..SL. Linking matches the PORTS."""
+    d = _m62_dump()
+    names = ["FL", "FR", "FC", "LFE", "RL", "RR", "FLC", "FRC", "RC", "SL"]
+    for i, ch in enumerate(names):
+        for direction in ("in", "out"):
+            d.append({"id": 200 + i * 2 + (direction == "out"),
+                      "type": "PipeWire:Interface:Port",
+                      "info": {"props": {
+                          "node.id": "137", "port.direction": direction,
+                          "audio.channel": ch, "port.id": str(i)}}})
+    return d
+
+
+def test_a_tap_asks_for_the_names_the_ports_carry():
+    from perdeviceeq import pw_backend as pw
+    d = _m62_ports_dump()
+    assert pw.monitor_channels("m62.direct", d) == [
+        "FL", "FR", "FC", "LFE", "RL", "RR", "FLC", "FRC", "RC", "SL"]
+    # ...which is NOT what the tabs wear, and that is the whole point
+    assert pw._node_channels("m62.direct", d)[0] == "AUX0"
+
+
+def test_no_ports_means_no_map_rather_than_a_wrong_one():
+    from perdeviceeq import pw_backend as pw
+    assert pw.monitor_channels("m62.direct", _m62_dump()) == []
+    assert pw.monitor_channels("nope", _m62_ports_dump()) == []

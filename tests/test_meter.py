@@ -213,3 +213,12 @@ def test_the_monitor_tap_states_the_channel_map():
     # a map that does not match the count is no map at all
     assert "--channel-map" not in B.monitor_cmd("s", 10, 48000, ["FL"])
     assert "--channel-map" not in B.monitor_cmd("s", 2, 48000, None)
+
+
+def test_the_monitor_tap_reads_raw():
+    """Without --raw, pw-record writes a 24-byte .snd header that the
+    reader takes for audio: six float32 samples of offset, which rotate
+    a ten-channel capture by six and a stereo one by none."""
+    from perdeviceeq.pw_backend import PipeWireBackend as B
+    assert "--raw" in B.monitor_cmd("s", 2, 48000, None)
+    assert "--raw" in B.monitor_cmd("s", 10, 48000, None)
