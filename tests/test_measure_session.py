@@ -940,3 +940,42 @@ def test_a_deaf_take_widens_nothing(monkeypatch):
     # and with nothing but the deaf take there is no mean at all
     ses._takes = {0: [(deaf, None)]}
     assert ses.average_and_spread(0) == (None, None)
+
+
+# ---- the sweep is aimed through the pairing -------------------------------
+
+def test_a_sweep_is_aimed_at_the_paired_output():
+    """A target names a side of a transducer; a sink channel names a
+    route. Which route carries which side is the binding's answer, and
+    the sweep has to follow it -- on a card whose outputs are called
+    AUX0..AUX9 the ring's own position is not an output index."""
+    cfg = ms.SessionConfig(sink="s", source="m", channels=1,
+                           play_map=(6, 7))
+    ses = ms.MeasureSession.__new__(ms.MeasureSession)
+    ses.cfg = cfg
+    ses.sink_layout = ["AUX%d" % i for i in range(10)]
+    assert ses._channel_map(0) == "AUX6"
+    assert ses._channel_map(1) == "AUX7"
+
+
+def test_without_a_pairing_the_old_index_for_index_stands():
+    cfg = ms.SessionConfig(sink="s", source="m", channels=1)
+    ses = ms.MeasureSession.__new__(ms.MeasureSession)
+    ses.cfg = cfg
+    ses.sink_layout = ["FL", "FR"]
+    assert ses._channel_map(0) == "FL"
+    assert ses._channel_map(1) == "FR"
+
+
+def test_an_unpaired_target_has_no_output_to_aim_at():
+    """None would play the plain mono sweep into EVERY channel, and the
+    curve that came back would look like a measurement while being a
+    mixture -- so the map says nothing and take() refuses."""
+    cfg = ms.SessionConfig(sink="s", source="m", channels=1,
+                           play_map=(0, None))
+    ses = ms.MeasureSession.__new__(ms.MeasureSession)
+    ses.cfg = cfg
+    ses.sink_layout = ["FL", "FR"]
+    assert ses._channel_map(0) == "FL"
+    assert ses._channel_map(1) is None
+    assert ses._sink_index(1) is None

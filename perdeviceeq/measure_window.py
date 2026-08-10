@@ -198,11 +198,17 @@ class MeasureWindow(Adw.Window):
         # sources are read a few lines below, _sink_present later.
         self._pw = pw_backend.backend()
         self._pw_unsub = None
-        try:
-            self.ch_keys = pw_backend.backend(). \
-                output_channels(sink_node) or ["FL", "FR"]
-        except Exception:
-            self.ch_keys = ["FL", "FR"]
+        # The ring is TARGETS -- the sides of the transducer this
+        # profile describes -- not the channels of whatever card is
+        # selected. It used to be the sink's channels, which is how a
+        # ten-channel card put AUX0 in a take's passport and how a
+        # two-channel one left ten speakers on the ring behind it.
+        # A profile that has none yet starts at the stereo pair; more
+        # are added as pairs.
+        prof = self.edit_prof or {}
+        self.ch_keys = (list(prof.get("ch_keys")
+                             or list((prof.get("channels") or {})))
+                        or ["FL", "FR"])
         self.n_ch = len(self.ch_keys)
 
         self._pw.update()
@@ -2266,6 +2272,36 @@ class MeasureWindow(Adw.Window):
         self._ensure_session(arm=False, quiet=True)
         self._refresh_all()
 
+    def _play_map(self):
+        """Which sink channel each target sweeps through.
+
+        The binding answers it -- the same pairing the main window
+        edits -- so a target moved onto another output is measured
+        there too, instead of the ring's own position being taken for
+        an output index. None per target where nothing is paired, and
+        None for the whole map with no live sink, which leaves the
+        session on its old index-for-index behaviour."""
+        node = self.sink_node
+        if not node:
+            return None
+        try:
+            sink_keys = self._pw_output_channels(node)
+            cmap = self.parent.store.reconcile_map(
+                node, list(self.ch_keys), sink_keys)
+        except Exception as e:
+            debug.log("play map: %s" % e)
+            return None
+        if not sink_keys:
+            return None
+        out = []
+        for key in self.ch_keys:
+            out.append(next((i for i, s in enumerate(sink_keys)
+                             if cmap.get(s) == key), None))
+        return tuple(out)
+
+    def _pw_output_channels(self, node):
+        return pw_backend.backend().output_channels(node) or []
+
     def _assert_entry_route(self):
         """Put the card on the jack this rig IS, right before the
         sweep. The identity carries the jack now, so there is
@@ -2955,6 +2991,7 @@ class MeasureWindow(Adw.Window):
                 source=pw_backend.entry_node(mic),
                 channels=self.mic_ch, auto_level=hunt,
                 mute_others=True, device=self.sink_desc,
+                play_map=self._play_map(),
                 start_volume=(None if hunt else
                               self.vol_spin.get_value()
                               / 100.0))

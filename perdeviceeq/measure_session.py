@@ -850,6 +850,13 @@ class SessionConfig:
     auto_level: bool = False
     raw_capture_dump: bool = False  # also forced on by DEBUG_RAW_ENV
     start_volume: float = None      # applied on enter when not auto_level
+    # One SINK CHANNEL INDEX per profile channel, or None for a channel
+    # that is paired with no output. The caller owns the pairing -- a
+    # profile channel names a side of a transducer and a sink channel
+    # names a route, and which route carries which side is the
+    # binding's business, not the session's. None for the whole thing
+    # keeps the old behaviour: the Nth channel sweeps the Nth output.
+    play_map: tuple = None
 
 
 @dataclass
@@ -1267,15 +1274,32 @@ class MeasureSession:
             return sum(arr) / len(arr)
         return pick(cv), pick(sv)
 
-    def _channel_map(self, channel):
-        """The target speaker's position for pw-play --channel-map, e.g.
-        'FL'. A mono sweep tagged with that single position plays only that
-        speaker (PipeWire routes FL->FL, no up-mix). None for a mono sink
-        or an out-of-range index -- just play the plain mono sweep."""
-        n = len(self.sink_layout)
-        if n <= 1 or not 0 <= channel < n:
+    def _sink_index(self, channel):
+        """The sink channel a profile channel sweeps through: the
+        pairing when there is one, the same index otherwise."""
+        pm = self.cfg.play_map
+        if pm is None:
+            return channel
+        if not 0 <= channel < len(pm):
             return None
-        return self.sink_layout[channel].split(".")[0]
+        return pm[channel]
+
+    def _channel_map(self, channel):
+        """The position for pw-play --channel-map, e.g. 'FL'. A mono
+        sweep tagged with one position plays only that speaker, because
+        PipeWire routes it by NAME.
+
+        The name is read from the SINK'S OWN layout rather than from
+        the profile: a card that calls its outputs AUX0..AUX9 matches
+        nothing when handed 'FL', and a sweep that matches nothing is
+        spread over every channel instead of one. None for a mono sink
+        or an index outside the layout -- then the plain mono sweep is
+        the honest thing to play."""
+        n = len(self.sink_layout)
+        idx = self._sink_index(channel)
+        if idx is None or n <= 1 or not 0 <= idx < n:
+            return None
+        return self.sink_layout[idx].split(".")[0]
 
     def take(self, channel, analyze=None):
         """One sweep played and captured, analyzed on capture column
@@ -1287,6 +1311,12 @@ class MeasureSession:
         if not 0 <= a < cfg.channels:
             raise RefusalError("capture column %d out of range for a "
                                "%d-channel capture" % (a, cfg.channels))
+        if cfg.play_map is not None and self._sink_index(channel) is None:
+            # a sweep with no output to aim at would be played as plain
+            # mono into EVERY channel, and the curve that came back
+            # would look like a measurement while being a mixture
+            raise RefusalError("channel %d is paired with no output; "
+                               "pair it before measuring" % channel)
         if self.wav is None:
             raise MeasureError("session not entered (use `with session:`)")
         # Names are identity, ids are addresses, and PipeWire
