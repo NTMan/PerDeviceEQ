@@ -7,12 +7,13 @@
   arrangements of the same seven blocks, the upstream-blessed way to
   do adaptive layouts instead of reparenting by hand:
 
-    narrow  one clamped column inside one page scroller: profile name +
-            mic + calibration, the ring (the spatial channel selector),
-            the status line, the pult, the selected channel's
+    narrow  one clamped column inside one page scroller: the rig
+            (output and mic with their faders, the calibration
+            library), the measurement group (tabs, capture column,
+            its calibration, the transport), the selected channel's
             takes, the EQ-range strip. Everything scrolls as one.
 
-    wide    two columns: the left (mic, ring, status, pult)
+    wide    two columns: the left (rig, measurement group)
             is pinned with no scroll of its own; the right (takes +
             EQ range) carries the single scroller, its bar at the
             window edge.
@@ -28,11 +29,12 @@
   <object class="AdwToolbarView" id="content">
     <child type="top">
       <object class="AdwHeaderBar" id="header_bar">
-        <child type="title">
-          <object class="GtkDropDown" id="sink_dd">
-            <property name="tooltip-text" translatable="yes">The output the sweep plays into; switching parks this sitting and continues it there</property>
+        <property name="title-widget">
+          <object class="GtkEditableLabel" id="name_row">
+            <property name="valign">center</property>
+            <property name="max-width-chars">28</property>
           </object>
-        </child>
+        </property>
       </object>
     </child>
     <child type="top">
@@ -161,8 +163,14 @@
         <child type="mic">
           <object class="AdwPreferencesGroup" id="mic_group">
             <child>
-              <object class="AdwEntryRow" id="name_row">
-                <property name="title" translatable="yes">Profile name</property>
+              <object class="AdwComboRow" id="sink_row">
+                <property name="title" translatable="yes">Output</property>
+                <property name="subtitle" translatable="yes">Where the sweep is played</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesRow" id="vol_host">
+                <property name="activatable">false</property>
               </object>
             </child>
             <child>
@@ -171,50 +179,16 @@
                 <property name="subtitle" translatable="yes">Input the sweep is captured on</property>
               </object>
             </child>
+            <child>
+              <object class="AdwPreferencesRow" id="gain_host">
+                <property name="activatable">false</property>
+              </object>
+            </child>
           </object>
         </child>
         <child type="ring">
-          <object class="GtkBox">
-            <style>
-              <class name="card"/>
-            </style>
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">vertical</property>
-                <property name="spacing">6</property>
-                <property name="margin-top">12</property>
-                <property name="margin-bottom">12</property>
-                <property name="margin-start">12</property>
-                <property name="margin-end">12</property>
-                <property name="hexpand">true</property>
-                <child>
-                  <object class="GtkBox" id="ring_host">
-                    <property name="hexpand">true</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkBox" id="status_line">
-                    <property name="spacing">12</property>
-                    <child>
-                      <object class="GtkBox" id="status_lead"/>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="status">
-                        <property name="label" translatable="yes">Click a speaker to measure</property>
-                        <property name="wrap">true</property>
-                        <property name="max-width-chars">46</property>
-                        <property name="justify">center</property>
-                        <property name="halign">center</property>
-                        <property name="hexpand">true</property>
-                        <style>
-                          <class name="dim-label"/>
-                        </style>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-              </object>
-            </child>
+          <object class="GtkBox" id="ring_host">
+            <property name="hexpand">true</property>
           </object>
         </child>
         <child type="channel">

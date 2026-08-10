@@ -276,3 +276,55 @@ def test_only_the_application_window_has_an_action_map():
                 "%s(%s) calls self.add_action but inherits no action "
                 "map -- insert_action_group with a prefix of its own"
                 % (cls.name, ", ".join(sorted(bases))))
+
+
+def test_no_window_attribute_is_used_before_it_is_set():
+    """An attribute set in ONE method only must be set there before it
+    is read, or the first call raises AttributeError -- and no test
+    reaches a window constructor, so it is read out of the source.
+
+    "One method only" is the whole precision. An attribute the
+    constructor's helpers also set may well exist by the time a later
+    method reads it, and flagging that is noise; an attribute nothing
+    else ever writes cannot.
+
+    This complements the audit that asks whether an attribute is ever
+    assigned at all. Both were needed on the same day: the first caught
+    a block deleted with the code that created the faders, the second
+    an add() written one line above the widget it added."""
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent / "perdeviceeq"
+    faults = []
+    for path in sorted(root.glob("*window*.py")) + [root / "gui.py"]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for cls in [n for n in ast.walk(tree)
+                    if isinstance(n, ast.ClassDef)]:
+            methods = {n.name: n for n in cls.body
+                       if isinstance(n, ast.FunctionDef)}
+            where = {}
+            for name, fn in methods.items():
+                for n in ast.walk(fn):
+                    if (isinstance(n, ast.Attribute)
+                            and isinstance(n.value, ast.Name)
+                            and n.value.id == "self"
+                            and isinstance(n.ctx, ast.Store)):
+                        where.setdefault(n.attr, set()).add(name)
+            for name, fn in methods.items():
+                stores, loads = {}, {}
+                for n in ast.walk(fn):
+                    if not (isinstance(n, ast.Attribute)
+                            and isinstance(n.value, ast.Name)
+                            and n.value.id == "self"):
+                        continue
+                    d = stores if isinstance(n.ctx, ast.Store) else loads
+                    d.setdefault(n.attr, n.lineno)
+                for attr, line in stores.items():
+                    if len(where.get(attr, ())) != 1 or attr in methods:
+                        continue
+                    seen = loads.get(attr)
+                    if seen is not None and seen < line:
+                        faults.append(
+                            "%s.%s.%s: self.%s read at line %d, set at %d"
+                            % (path.name, cls.name, name, attr, seen, line))
+    assert not faults, "; ".join(faults)

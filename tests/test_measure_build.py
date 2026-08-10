@@ -514,3 +514,15 @@ def test_a_column_is_named_by_its_number_once_there_are_many():
     assert labels(1) == ["Mono"]
     assert labels(2) == ["L", "R"]            # what everyone calls them
     assert labels(4)[2] == "Column 2"
+
+
+def test_a_calibration_row_speaks_for_a_column_not_a_position():
+    """One row is drawn now -- the column the tab in view reads -- so
+    pairing rows with columns by their POSITION in the list would read
+    column 0's calibration for a row about column 2, and write it back
+    there. The rule as one expression."""
+    def pairs(cal_cols, cal_rows):        # what _sync_cal_labels walks
+        return list(zip(cal_cols, cal_rows))
+    assert pairs([2], ["row"]) == [(2, "row")]
+    assert pairs([0, 1], ["a", "b"]) == [(0, "a"), (1, "b")]
+    assert pairs([], []) == []

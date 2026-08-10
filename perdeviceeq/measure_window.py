@@ -270,21 +270,34 @@ class MeasureWindow(Adw.Window):
         # any other route without losing the sitting.
         self.gone_banner = b.get_object("gone_banner")
         self.mic_banner = b.get_object("mic_banner")
-        self.sink_dd = b.get_object("sink_dd")
+        # the output picker sits in the CONTENT now, above its own
+        # fader, and the header carries the profile's name instead --
+        # a control belongs beside the thing it moves
+        self.sink_dd = b.get_object("sink_row")
         self.picker = NodePicker(self.sink_dd, self._on_sink_pick,
                                  ellipsis=34)
         self._tame_scroll(self.sink_dd)
         self.picker.select(self.sink_node, self.sink_desc)
         self._refresh_sinks_from(self._pw)
-        self.center = b.get_object("status")
         self.name_row = b.get_object("name_row")
         self.name_row.set_text(
             (self.edit_prof or {}).get("name") or self.sink_desc)
+        # the header used to be the output picker; the picker moved to
+        # its fader, so the header says WHICH PROFILE this is -- edited
+        # below, shown above
+        # the name is edited IN the header, not in a row that repeats
+        # it: one field, in the place the eye already reads for "which
+        # profile is this". A GtkEditableLabel is a Gtk.Editable, so
+        # get_text and set_text read the same as the row's did.
 
         self._build_mic_controls(b.get_object("source_row"),
                                  b.get_object("mic_group"))
 
+        # the slot itself, with no wrapper of its own: an extra box
+        # with 12 of margin made this card narrower than the rig card
+        # beside it, and two cards on one page must share an edge
         ring_host = b.get_object("ring_host")
+        ring_host.set_orientation(Gtk.Orientation.VERTICAL)
         ring_host.set_spacing(12)
         ring_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                            spacing=6)
@@ -302,26 +315,35 @@ class MeasureWindow(Adw.Window):
             "best version.")
         self.ready_hint.set_visible(False)
         ring_col.append(self.ready_hint)
-        self.vol_spin.set_valign(Gtk.Align.START)
-        ring_host.append(self.vol_spin)  # pinned to the left edge
         ring_host.append(ring_col)
-        # the sweep leaves on the left and comes back on the right:
-        # the input gain sits where the signal returns, not beside
-        # the output fader, where two identical sliders would read
-        # as a louder/quieter pair -- which they are not
-        self.gain_spin.set_valign(Gtk.Align.START)
-        ring_host.append(self.gain_spin)
-        lead = b.get_object("status_lead")
-        # the size group matches the bin's WIDTH to the fader,
-        # but a Box hands a child only its natural width -- and
-        # hexpand is NOT the tool (expand flags propagate up:
-        # the bin would start expanding too and drag the whole
-        # status line off both axes, field-proven). Homogeneous
-        # hands the lone child the bin's full width without
-        # touching expand, and center-halign lands the button
-        # on the fader's trough axis.
-        lead.set_homogeneous(True)
-        lead.append(self.relevel_btn)
+        # Each fader under the picker it belongs to: the output level
+        # below the output, the input gain below the input. They used
+        # to flank the ring, and the reason they were kept apart --
+        # two identical sliders side by side read as a louder/quieter
+        # pair -- is answered better by neighbourhood than by
+        # distance. Each one now sits beside the thing it moves.
+        # each fader is a ROW of the group, not a box after it: a
+        # preferences group puts a plain widget below the whole list,
+        # which is how both sliders ended up at the bottom together
+        # instead of each under its own picker (field).
+        vbox = Gtk.Box(spacing=6)
+        for side in ("start", "end"):
+            getattr(vbox, "set_margin_" + side)(12)
+        vbox.set_margin_top(6)
+        vbox.set_margin_bottom(6)
+        vbox.append(self.vol_spin)
+        vbox.append(self.relevel_btn)
+        b.get_object("vol_host").set_child(vbox)
+        gbox = Gtk.Box(spacing=6)
+        for side in ("start", "end"):
+            getattr(gbox, "set_margin_" + side)(12)
+        gbox.set_margin_top(6)
+        gbox.set_margin_bottom(6)
+        gbox.append(self.gain_spin)
+        b.get_object("gain_host").set_child(gbox)
+        # the lead bin stays: it kept the status line clear of the
+        # fader column, and with the faders gone from the sides it is
+        # simply empty
         # The architect's word on the walk: auto-level rides
         # SECOND, right after the fader -- the two speak the
         # same language. The widget keeps its settled home
@@ -348,9 +370,6 @@ class MeasureWindow(Adw.Window):
         _tab(self.relevel_btn,
              back_to=lambda: self.vol_spin.grab_focus(),
              fwd_to=lambda: False)
-        sg = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
-        sg.add_widget(self.vol_spin)
-        sg.add_widget(lead)
         self._rebuild_map_slots()
 
         _t = time.monotonic()
@@ -406,18 +425,36 @@ class MeasureWindow(Adw.Window):
         three tones, and the transport standing still while the row
         above it changes shape.
         """
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        # ONE GROUP, the way the rig card above is one group. Loose
+        # widgets on a page and a boxed list with its own margins do
+        # not line up, and nothing says what belongs to what. Every
+        # control that acts on a target lives in a ROW of this group
+        # now -- the tabs with their add and remove, the transport
+        # with its play and stop, the capture column, that column's
+        # calibration -- and the group carries the title.
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         col.set_hexpand(True)
+        # no title: the whole window is the measurement, so a word
+        # saying so only costs a line
+        self._measure_grp = Adw.PreferencesGroup()
+        col.append(self._measure_grp)
 
         # the same arrangement as the main window's tab row: the tabs
         # lead, the two controls sit together at the END, remove before
-        # add. Two rows that do the same job should not have to be read
-        # twice.
+        # add. Here they ride the group's header, which is where a
+        # preferences group puts what acts on its rows.
         row = Gtk.Box(spacing=6)
+        for side in ("start", "end"):
+            getattr(row, "set_margin_" + side)(12)
+        row.set_margin_top(6)
+        row.set_margin_bottom(6)
         bar = Gtk.Box(spacing=0)
         bar.set_valign(Gtk.Align.CENTER)
         self.tabs = chantabs.ChannelTabs(bar, self._on_tab_pick)
         row.append(bar)
+        # beside the tabs, at the end of their row -- where the main
+        # window has always kept them. In the group's header they read
+        # as acting on the whole card rather than on the tabs
         pair_box = Gtk.Box(spacing=6, hexpand=True,
                            valign=Gtk.Align.CENTER,
                            halign=Gtk.Align.END)
@@ -448,18 +485,19 @@ class MeasureWindow(Adw.Window):
         pair_box.append(self._del_btn)      # remove, then add
         pair_box.append(self._add_btn)
         self._dress_tabs()
-        col.append(row)
+        self._tab_row = Adw.PreferencesRow()
+        self._tab_row.set_activatable(False)
+        self._tab_row.set_child(row)
+        self._measure_grp.add(self._tab_row)
 
         # the capture row belongs UNDER the tabs, his call and his
         # reason: the column is bound to the target that plays the
         # sweep, so it reads downwards -- choose the target, then say
-        # what captures it
-        self._center_grid = Gtk.Grid()
-        self._center_grid.set_halign(Gtk.Align.CENTER)
-        self._center_grid.set_row_spacing(6)
-        self._center_grid.set_column_spacing(10)
-        self._center_grid.set_column_homogeneous(True)
-        col.append(self._center_grid)
+        # what captures it, then what corrects it. ONE column, the
+        # selected tab's: a picker per target laid side by side asked
+        # the eye to match a column to a tab by position, which is
+        # what the tabs are for.
+        self._cap_rows = []          # the rows below the tabs
 
         self.play_btn = self._pult_btn(
             "media-playback-start-symbolic",
@@ -468,6 +506,25 @@ class MeasureWindow(Adw.Window):
             "media-playback-stop-symbolic", "Stop the sweep",
             self._on_stop)
         self.stop_btn.set_sensitive(False)
+        # The transport goes at the BOTTOM, centred, with the status
+        # line under it. Everything above is settings, touched once and
+        # left; this is the thing a hand comes back to, so it sits
+        # where the hand ends up. It was a row of the group for a
+        # while, which put the status in a subtitle -- a sentence the
+        # window needs to say does not belong in the small print of a
+        # control.
+        pult = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                       spacing=6)
+        pult.set_halign(Gtk.Align.CENTER)
+        pult.append(self.play_btn)
+        pult.append(self.stop_btn)
+        col.append(pult)
+        self.center = Gtk.Label(xalign=0.5)
+        self.center.add_css_class("dim-label")
+        self.center.set_wrap(True)
+        self.center.set_max_width_chars(46)
+        self.center.set_justify(Gtk.Justification.CENTER)
+        col.append(self.center)
 
         # The faders and auto-level were born inside the ring's method
         # and outlive it: the fader is the sweep's level, auto-level
@@ -478,12 +535,11 @@ class MeasureWindow(Adw.Window):
         adj = Gtk.Adjustment(lower=0, upper=100, step_increment=1,
                              page_increment=5)
         self.vol_spin = Gtk.Scale(
-            orientation=Gtk.Orientation.VERTICAL, adjustment=adj)
-        self.vol_spin.set_inverted(True)      # up is louder
+            orientation=Gtk.Orientation.HORIZONTAL, adjustment=adj)
         self.vol_spin.set_draw_value(True)
-        self.vol_spin.set_value_pos(Gtk.PositionType.BOTTOM)
+        self.vol_spin.set_value_pos(Gtk.PositionType.RIGHT)
         self.vol_spin.set_digits(0)
-        self.vol_spin.set_size_request(-1, 220)
+        self.vol_spin.set_hexpand(True)
         self.vol_spin.set_tooltip_text(
             "Sweep playback level (%). Auto-level sets it; drag to "
             "override if it misses.")
@@ -492,12 +548,11 @@ class MeasureWindow(Adw.Window):
         gadj = Gtk.Adjustment(lower=0, upper=100, step_increment=1,
                               page_increment=5)
         self.gain_spin = Gtk.Scale(
-            orientation=Gtk.Orientation.VERTICAL, adjustment=gadj)
-        self.gain_spin.set_inverted(True)     # up is more gain
+            orientation=Gtk.Orientation.HORIZONTAL, adjustment=gadj)
         self.gain_spin.set_draw_value(True)
-        self.gain_spin.set_value_pos(Gtk.PositionType.BOTTOM)
+        self.gain_spin.set_value_pos(Gtk.PositionType.RIGHT)
         self.gain_spin.set_digits(0)
-        self.gain_spin.set_size_request(-1, 220)
+        self.gain_spin.set_hexpand(True)
         self.gain_spin.connect("value-changed", self._on_gain_edited)
         self._tame_scroll(self.gain_spin)
         self._gain_guard = False
@@ -1110,7 +1165,12 @@ class MeasureWindow(Adw.Window):
         fingerprint the profile's rig block records. Unset says
         plainly that the capture channel runs raw."""
         labels = self._mic_labels()
-        for i, row in enumerate(getattr(self, "cal_rows", [])):
+        # the COLUMN, not the row's position: there is one row now
+        # and it speaks for whichever column the tab in view reads --
+        # column 2 on his loopback. Enumerating would have read the
+        # calibration of column 0 and written it back there too.
+        for i, row in zip(getattr(self, "cal_cols", []),
+                          getattr(self, "cal_rows", [])):
             path = self.cal.get(i)
             btn = self.cal_btns[i]
             if not path:
@@ -2411,19 +2471,25 @@ class MeasureWindow(Adw.Window):
 
     def _rebuild_cal_row(self):
         self._install_badge_css()
+        grp = getattr(self, "cal_group", None)
+        if grp is None:
+            return
         for row in getattr(self, "cal_rows", []):
-            self.mic_group.remove(row)
+            parent = row.get_parent()
+            if parent is not None:
+                grp.remove(row)
         self.cal_rows = []
+        self.cal_cols = []
         self.cal_btns = {}
         self.cal_badges = {}
         self.cal_clears = {}
         labels = self._mic_labels()
-        # only the columns a target actually reads get a calibration
-        # row: a sixteen-column interface would otherwise grow sixteen
-        # rows, fifteen of them about wires nothing is measured on
-        used = sorted({min(v, self.mic_ch - 1)
-                       for v in (self.mic_of or {0: 0}).values()}) \
-            if self.mic_ch > 2 else list(range(self.mic_ch))
+        # ONE column: the one the tab in view reads. A row per column
+        # asked which of sixteen belonged to the target on screen; the
+        # answer is directly above it now.
+        ch = self._selected_ch
+        used = [min(self.mic_of.get(ch, 0), self.mic_ch - 1)] \
+            if 0 <= ch < self.n_ch else []
         for i in used:
             row = Adw.ActionRow()
             row.set_title("%s calibration" % labels[i])
@@ -2450,9 +2516,21 @@ class MeasureWindow(Adw.Window):
             btn.connect("clicked", self._make_cal_cb(i))
             row.add_suffix(btn)
             row.set_activatable_widget(btn)
-            self.mic_group.add(row)
+            grp.add(row)
             self.cal_rows.append(row)
+            self.cal_cols.append(i)
             self.cal_btns[i] = btn
+        self._ensure_cal_manage_row()
+        self._refresh_cal_manage()
+        self._sync_cal_labels()
+
+    def _ensure_cal_manage_row(self):
+        """The recorded-calibration library, in the RIG's card.
+
+        It was under the capture column for a while, which read as if
+        it belonged to the target being measured. It does not: it is
+        every calibration this app has ever recorded, and it belongs
+        beside the microphone."""
         if not hasattr(self, "cal_manage_row"):
             r = Adw.ActionRow()
             r.set_title("Recorded calibrations")
@@ -2463,57 +2541,55 @@ class MeasureWindow(Adw.Window):
             r.add_suffix(b)
             r.set_activatable_widget(b)
             self.cal_manage_row = r
-        else:
-            self.mic_group.remove(self.cal_manage_row)
-        self.mic_group.add(self.cal_manage_row)
-        self._refresh_cal_manage()
-        self._sync_cal_labels()
+            self.mic_group.add(r)
 
     def _rebuild_map_slots(self):
-        g = self._center_grid
-        child = g.get_first_child()
-        while child:
-            nxt = child.get_next_sibling()
-            g.remove(child)
-            child = nxt
-        for b in (self.play_btn, self.stop_btn):
-            parent = b.get_parent()
-            if parent is not None:
-                parent.remove(b)
+        """The capture rows for the tab in view: which column carries
+        this target, and the calibration of that column under it --
+        rows of the SAME group the tabs live in, so one alignment
+        holds for all of them."""
+        grp = getattr(self, "_measure_grp", None)
+        if grp is None:
+            return
+        for row in getattr(self, "_cap_rows", []):
+            grp.remove(row)
+        self._cap_rows = []
         self.map_dds = {}
-        labels = self._mic_labels()
-        if self.mic_ch > 1 and self.n_ch:
-            # ONE PICKER PER TARGET, and every column on offer. It used
-            # to appear only for a two-target profile on a two-column
-            # rig, listing L and R -- so a card that returns the sweep
-            # on column 2 could not be measured at all. The row sits
-            # under the tabs because a column is bound to the target
-            # that plays the sweep (his call, his reason).
-            for k in range(self.n_ch):
-                col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                              spacing=3)
-                col.set_halign(Gtk.Align.CENTER)
-                col.append(Gtk.Image.new_from_icon_name(
-                    "audio-input-microphone-symbolic"))
-                dd = Gtk.DropDown.new_from_strings(labels)
-                dd.set_selected(min(self.mic_of.get(k, 0),
-                                    self.mic_ch - 1))
-                dd.set_tooltip_text(
-                    "Which capture column carries %s"
-                    % _speaker_name(self.ch_keys[k]))
-                dd.connect("notify::selected", self._make_map_cb(k))
-                col.append(dd)
-                g.attach(col, k, 0, 1, 1)
-                self.map_dds[k] = dd
-        # the transport is its own row under the pickers and stands
-        # still whatever the row above it does -- the field verdict
-        # that shaped the old centre grid, kept
-        pult = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                       spacing=6)
-        pult.set_halign(Gtk.Align.CENTER)
-        pult.append(self.play_btn)
-        pult.append(self.stop_btn)
-        g.attach(pult, 0, 1, max(1, self.n_ch), 1)
+        ch = self._selected_ch
+        if self.mic_ch > 1 and 0 <= ch < self.n_ch:
+            row = Adw.ComboRow()
+            row.set_title("Capture column")
+            row.set_subtitle("Where %s comes back"
+                             % _speaker_name(self.ch_keys[ch]))
+            row.set_model(Gtk.StringList.new(self._mic_labels()))
+            row.set_selected(min(self.mic_of.get(ch, 0),
+                                 self.mic_ch - 1))
+            row.connect("notify::selected", self._make_map_cb(ch))
+            self._tame_scroll(row)
+            grp.add(row)
+            self._cap_rows.append(row)
+            self.map_dds[ch] = row
+            self.cal_group = grp
+            self._rebuild_cal_row()
+            self._cap_rows.extend(self.cal_rows)
+        self._dress_act_row()
+
+    def _say(self, text):
+        """What the window has to say, on its own line under the
+        transport -- where a sentence can be read."""
+        if getattr(self, "center", None) is not None:
+            self.center.set_text(text or "")
+
+    def _dress_act_row(self):
+        """The play button names its target: a triangle alone leaves
+        the person to remember which tab it obeys."""
+        btn = getattr(self, "play_btn", None)
+        if btn is None:
+            return
+        ch = self._selected_ch
+        btn.set_tooltip_text(
+            "Measure %s" % _speaker_name(self.ch_keys[ch])
+            if 0 <= ch < len(self.ch_keys) else "Measure")
 
     def _make_map_cb(self, k):
         def cb(dd, _p):
@@ -2894,6 +2970,9 @@ class MeasureWindow(Adw.Window):
         self._selected_ch = ch
         if self.tabs is not None and 0 <= ch < len(self.ch_keys):
             self.tabs.select(self.ch_keys[ch])
+        # the capture row and its calibration belong to the tab in
+        # view, so they are redrawn with it
+        self._rebuild_map_slots()
         self._rebuild_page()
         self._update_pult()
 
@@ -3054,8 +3133,7 @@ class MeasureWindow(Adw.Window):
                 miss = "mic not resolved -- re-pick the mic"
             debug.mic_trace("pult %r core=%r"
                          % (miss, self.mic_picker.core.node))
-            if self.center.get_text() != miss:
-                self.center.set_text(miss)
+            self._say(miss)
             self._pult_missed = True
         elif not self._busy and getattr(self, "_pult_missed",
                                         False):
@@ -3064,7 +3142,7 @@ class MeasureWindow(Adw.Window):
             # its own truth -- the live passes moved the
             # buttons but never erased the text, and the field
             # judged the window by the words
-            self.center.set_text("Click a speaker to measure")
+            self._say("Ready")
             self._pult_missed = False
         self.play_btn.set_sensitive(not self._busy and live)
         if getattr(self, "relevel_btn", None) is not None:
@@ -3168,7 +3246,7 @@ class MeasureWindow(Adw.Window):
         self._busy = True
         self._set_row_sensitive(False)
         self._update_pult()
-        self.center.set_text(
+        self._say(
             "Measuring the level on %s\u2026" % self.ch_keys[ch]
             if level_only else
             "Measuring %s\u2026" % self.ch_keys[ch])
@@ -3233,13 +3311,13 @@ class MeasureWindow(Adw.Window):
         GLib.idle_add(self._measure_done, ch, result)
 
     def _post_status(self, text):
-        GLib.idle_add(self.center.set_text, text)
+        GLib.idle_add(self._say, text)
 
     def _measure_done(self, ch, result):
         self._busy = False
         self._set_row_sensitive(True)
         self._update_pult()
-        self.center.set_text("Click a speaker to measure")
+        self._say("Ready")
         err = result["error"]
         if isinstance(err, ms.MeasureCancelled):
             self._refresh_all()              # Stop: quiet, nothing stored
