@@ -679,6 +679,18 @@ def _dedup_channels(keys):
     return out
 
 
+def playback_channels(name, dump=None):
+    """The channel names a sink's PLAYBACK PORTS carry, in port order.
+
+    What a sweep must be aimed with. pw-play routes a mono stream by
+    NAME, and the name it matches against is the port's -- so on a card
+    whose ports are called FL..SL, asking for AUX0 matches nothing and
+    the sweep is spread over every channel instead of one. That is the
+    monitor tap's lesson from the other end: labels come from
+    audio.position, routing comes from the ports."""
+    return _port_channels(name, "in", dump)
+
+
 def monitor_channels(name, dump=None):
     """The channel names the node's MONITOR PORTS carry, in port order.
 
@@ -692,6 +704,11 @@ def monitor_channels(name, dump=None):
     and 2. Empty when the node or its ports cannot be read; the caller
     then states no map at all.
     """
+    return _port_channels(name, "out", dump)
+
+
+def _port_channels(name, direction, dump=None):
+    """A node's port channel names in port order, one direction."""
     dump = dump if dump is not None else pw_dump()
     nid = None
     for o in dump:
@@ -710,7 +727,7 @@ def monitor_channels(name, dump=None):
         p = (o.get("info") or {}).get("props") or {}
         if str(p.get("node.id")) != str(nid):
             continue
-        if (p.get("port.direction") or "") != "out":
+        if (p.get("port.direction") or "") != direction:
             continue
         ch = p.get("audio.channel")
         if ch:

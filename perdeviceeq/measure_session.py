@@ -121,7 +121,7 @@ from . import debug
 from scipy.stats import chi2
 
 from . import measure_core as mc
-from .pw_backend import sink_channels
+from .pw_backend import playback_channels, sink_channels
 from . import pw_backend
 
 METADATA_NAME = "per-device-eq"          # same object the app + WP hook use
@@ -744,6 +744,18 @@ def verify_capture(source, cap):
     return {"verified": True, "source": node_ident(source)}
 
 
+def _aim_layout(name, dump=None):
+    """The names a sweep can be aimed with, in channel order.
+
+    The ports first, because that is what pw-play matches against; the
+    position list only as a fallback for a node with no readable ports.
+    Getting this backwards spread every sweep over the whole card: the
+    M62 answers AUX0..AUX9 for audio.position while its ports are
+    called FL..SL, so a sweep tagged AUX0 matched nothing at all."""
+    return (playback_channels(name, dump)
+            or sink_channels(name, dump))
+
+
 def run_take(sink, source, wav_path, wav_duration_s, channels, rate,
              verify, raw_dump_path=None, cancel=None, channel_map=None):
     """One sweep: start capture, play the wav, collect exactly enough
@@ -1142,8 +1154,9 @@ class MeasureSession:
         # ports, and a passport must not be ambiguous about it
         self.source_ident["route"] = pw_backend.active_input_route(
             self.source_ident["name"], dump)
-        self.sink_layout = sink_channels(self.sink_ident["name"],
-                                         dump)
+        # the ports, not audio.position: a sweep is aimed by NAME
+        # and the name has to be one the sink's ports answer to
+        self.sink_layout = _aim_layout(self.sink_ident["name"], dump)
 
         v0, raw0, muted = sink_volume_state(dump, self.sink["id"])
         if muted:
@@ -1349,8 +1362,9 @@ class MeasureSession:
         # what the card's input gain IS at this sweep -- the window
         # sets it before calling in, and the session only witnesses
         self._gain_now = pw_backend.gain_of_node(self.source)
-        self.sink_layout = sink_channels(self.sink_ident["name"],
-                                         dump)
+        # the ports, not audio.position: a sweep is aimed by NAME
+        # and the name has to be one the sink's ports answer to
+        self.sink_layout = _aim_layout(self.sink_ident["name"], dump)
         self._pending = None                # a new sweep supersedes it
         self._cancel.clear()                # fresh; cancel() sets it to abort
         raw_path = (os.path.join(self.outdir,

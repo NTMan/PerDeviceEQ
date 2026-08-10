@@ -678,3 +678,28 @@ def test_the_switch_says_what_to_watch_for():
         pw.list_sinks(_m62_with_outputs(2), default=""))
     hit = pw.find_port_entry(after, want)
     assert hit is not None and hit["desc"] == "Direct M62"
+
+
+def test_a_sweep_is_aimed_with_the_port_names():
+    """Labels come from audio.position, routing comes from the PORTS.
+    The M62 answers AUX0..AUX9 for its position list while its ports
+    are called FL..SL, so a sweep tagged AUX0 matched no port at all
+    and was spread over the whole card instead of one channel."""
+    from perdeviceeq import pw_backend as pw
+    from perdeviceeq import measure_session as ms
+    d = _m62_ports_dump()
+    d.append({"id": 137, "type": "PipeWire:Interface:Node",
+              "info": {"props": {"node.name": "m62.sink",
+                                 "media.class": "Audio/Sink",
+                                 "device.id": 346,
+                                 "card.profile.device": 0}}})
+    # _m62_ports_dump already gives node 137 its ports, both ways
+    assert pw.playback_channels("m62.sink", d)[:3] == ["FL", "FR", "FC"]
+    assert ms._aim_layout("m62.sink", d)[:3] == ["FL", "FR", "FC"]
+    # the label list is the other one, and stays that way
+    assert pw._node_channels("m62.direct", d)[0] == "AUX0"
+
+
+def test_without_ports_the_position_list_still_answers():
+    from perdeviceeq import measure_session as ms
+    assert ms._aim_layout("m62.direct", _m62_dump())[0] == "AUX0"
