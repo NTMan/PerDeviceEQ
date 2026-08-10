@@ -30,14 +30,14 @@ Deferred to a later increment: dragging band handles on the graph, GtkColumnView
 for the band table, per-row sparklines, the online AutoEQ catalog.
 """
 
-import json, math, os, sys, threading
+import json, math, os, sys, threading, time
 
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
-from . import (__version__, chantabs, config, eq, pw_backend,
+from . import (__version__, chantabs, config, debug, eq, pw_backend,
                integration)
 from .picker import NodePicker
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
@@ -121,7 +121,9 @@ class EqWindow(Adw.ApplicationWindow):
         self.set_default_size(640, 820)
         self.set_size_request(620, 560)  # floor: the taste table
 
+        _born = time.monotonic()
         self.store = ProfileStore()
+        debug.timing("ProfileStore", _born)
         self.favorites = set(_load_favorites())
         self.node = None
         self.live = False
@@ -237,7 +239,9 @@ class EqWindow(Adw.ApplicationWindow):
         self.taste_button.set_valign(Gtk.Align.CENTER)
         self.taste_button.set_always_show_arrow(True)
         self.taste_button.add_css_class("flat")
+        _t = time.monotonic()
         self.taste_button.set_popover(self._build_taste_popover())
+        debug.timing("_build_taste_popover", _t)
         self.taste_card.add_header(self.taste_button)
         tbody = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                         spacing=12)
@@ -258,10 +262,16 @@ class EqWindow(Adw.ApplicationWindow):
         b.get_object("taste_card_slot").append(self.taste_card)
 
         self._install_css()
+        _t = time.monotonic()
         self._build_header_buttons()
+        debug.timing("_build_header_buttons", _t)
+        _t = time.monotonic()
         self._build_graph()
+        debug.timing("_build_graph", _t)
         self._build_preamp()
+        _t = time.monotonic()
         self._build_bands_area()
+        debug.timing("_build_bands_area", _t)
         self._wire_picker_actions(b)
         self._install_shortcuts(app)
 
@@ -271,7 +281,9 @@ class EqWindow(Adw.ApplicationWindow):
         self.follow_btn.connect("toggled", self._on_follow_toggled)
 
         self.picker = NodePicker(self.device_dd, self._on_sink_pick)
+        _t = time.monotonic()
         self._init_devices()
+        debug.timing("_init_devices", _t)
         self.current_pid = self.store.binding_for(self.node) or CLEAN_ID
         # apply=True primes the session metadata key for the startup device.
         # Before the app starts, EQ is applied by the WP hook from its own
@@ -279,8 +291,13 @@ class EqWindow(Adw.ApplicationWindow):
         # non-existent key emits no change event, so the first Bypass would
         # silently do nothing. Publishing the (identical) graph here is
         # inaudible and keeps the hook and the GUI in sync from turn one.
+        _t = time.monotonic()
         self._load_profile(self.current_pid, apply=True)
+        debug.timing("_load_profile", _t)
+        _t = time.monotonic()
         self._populate_picker()
+        debug.timing("_populate_picker", _t)
+        debug.timing("EqWindow total", _born)
         if self.live:
             self._pw_unsub = self._pw.subscribe(self._on_pw_state)
             self._pw.start()

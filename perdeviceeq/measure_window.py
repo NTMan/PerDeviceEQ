@@ -171,7 +171,13 @@ class MeasureWindow(Adw.Window):
         self.n_ch = len(self.ch_keys)
 
         _t = time.monotonic()
-        self._pw.update()
+        # only when there is nothing to read yet. The heartbeat pulls
+        # on its own schedule and holds the result, so a second dump
+        # here bought freshness measured in one tick and cost 159 ms
+        # of the 316 this window took to open -- half of it, for a
+        # list the next tick would have corrected anyway.
+        if getattr(self._pw, "last_dump", None) is None:
+            self._pw.update()
         debug.timing("pw.update (a dump)", _t)
         self.sources = pw_backend.list_capture_entries_from(
             self._pw.sources)

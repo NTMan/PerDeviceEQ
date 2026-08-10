@@ -735,3 +735,12 @@ def test_a_source_entry_carries_its_channels_too():
                if s["name"] == "m62.source")
     assert src["channels"] == pw._node_channels("m62.source", d)
     assert src["channels"], "a source always has channels"
+
+
+def test_the_heartbeat_hands_its_dump_over():
+    """The window opens on the picture the heartbeat already paid for.
+    Pulling a second one bought freshness worth one tick and cost half
+    the window's opening time."""
+    from perdeviceeq import audio_backend as ab
+    assert hasattr(ab.AudioBackend, "last_dump")
+    assert ab.AudioBackend.last_dump is None, "born empty, filled by a pull"
