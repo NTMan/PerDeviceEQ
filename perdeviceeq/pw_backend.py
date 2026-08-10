@@ -115,13 +115,14 @@ def list_sources(dump=None):
             sources.append({"id": o["id"], "name": name,
                             "desc": p.get("node.description") or name,
                             "prio": p.get("priority.session") or 0,
-                            "routes": input_routes(name, dump),
+                            "routes": card_input_ports(name, dump),
                             "gain": gain_of_node(o)})
     sources.sort(key=lambda s: -(s["prio"] or 0))
     return sources
 
-def input_routes(node_name, dump=None):
-    """The card ports a capture node can be switched between.
+def card_input_ports(node_name, dump=None):
+    """EVERY input port of the card behind a node, not just the ones
+    the loaded profile exposes.
 
     GNOME lists a card's Microphone, Line In and S/PDIF as separate
     entries in its input list. PipeWire has ONE node for the card's
@@ -131,11 +132,19 @@ def input_routes(node_name, dump=None):
     sat in line in, and nothing in the window could say so or move
     it.
 
-    Returns one entry per input route of THIS node's card device --
-    {index, device_id, card_device, name, description, available,
-    active} -- or an empty list when there is no card behind the
-    node, which is the honest answer for a virtual source: it has
-    no ports to choose from."""
+    A port the loaded profile cannot reach is still real: the M62
+    keeps Mic 1, Mic 2 and Aux stereo in behind its Default profile
+    while Direct is loaded, and refusing to name them is how this
+    app came to offer fewer inputs than the desktop does. Each entry
+    carries `reachable` -- whether choosing it costs a profile
+    change -- and `profiles`, the profiles that carry it. The caller
+    decides what that costs, because switching profile replaces the
+    card's OUTPUTS too.
+
+    Returns {index, device_id, card_device, name, description,
+    available, profiles, reachable, active}, or an empty list when
+    there is no card behind the node, which is the honest answer for
+    a virtual source: it has no ports to choose from."""
     dump = dump if dump is not None else pw_dump()
     props = None
     for o in dump:
@@ -172,18 +181,97 @@ def input_routes(node_name, dump=None):
     for r in params.get("EnumRoute") or []:
         if r.get("direction") != "Input":
             continue
-        if card_dev not in (r.get("devices") or []):
-            continue
+        devs = list(r.get("devices") or [])
         idx = r.get("index")
         out.append({
             "index": idx,
             "device_id": dev_id,
-            "card_device": card_dev,
+            "card_device": devs[0] if devs else card_dev,
             "name": r.get("name"),
             "description": r.get("description") or r.get("name"),
             "available": r.get("available") != "no",
-            "active": any(a.get("index") == idx for a in active)})
+            "profiles": list(r.get("profiles") or []),
+            "reachable": card_dev in devs,
+            "active": (card_dev in devs
+                       and any(a.get("index") == idx for a in active))})
     return out
+
+
+def input_routes(node_name, dump=None):
+    """The input ports THIS node can be switched between without
+    touching the card's profile -- the list the picker has always
+    built its rows from."""
+    return [r for r in card_input_ports(node_name, dump)
+            if r["reachable"]]
+
+
+def _profile_devices(classes):
+    """The card devices a profile's classes name, by media class.
+
+    pw-dump writes them as a count followed by entries shaped
+    ['Audio/Source', n, 'card.profile.devices', [7, 8, 9]] -- walked
+    rather than indexed, since the count sits in front and a future
+    key could sit between."""
+    out = {}
+    for item in (classes or []):
+        if not isinstance(item, list) or not item:
+            continue
+        cls = item[0]
+        if not isinstance(cls, str):
+            continue
+        for i, k in enumerate(item):
+            if k == "card.profile.devices" and i + 1 < len(item):
+                v = item[i + 1]
+                if isinstance(v, list):
+                    out.setdefault(cls, []).extend(v)
+    return out
+
+
+def card_profiles(node_name, dump=None):
+    """The profiles the card behind a node can be switched between:
+    {index, description, active, sources, sinks} where sources and
+    sinks are the card devices that profile provides. Empty when
+    there is no card behind the node."""
+    dump = dump if dump is not None else pw_dump()
+    dev_id = None
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("node.name") == node_name:
+            dev_id = p.get("device.id")
+            break
+    if dev_id is None:
+        return []
+    for o in dump:
+        if (o.get("type") != "PipeWire:Interface:Device"
+                or o.get("id") != dev_id):
+            continue
+        params = (o.get("info") or {}).get("params") or {}
+        cur = (params.get("Profile") or [{}])[0].get("index")
+        out = []
+        for pr in params.get("EnumProfile") or []:
+            devs = _profile_devices(pr.get("classes"))
+            out.append({"index": pr.get("index"),
+                        "device_id": dev_id,
+                        "description": (pr.get("description")
+                                        or pr.get("name")),
+                        "active": pr.get("index") == cur,
+                        "sources": devs.get("Audio/Source") or [],
+                        "sinks": devs.get("Audio/Sink") or []})
+        return out
+    return []
+
+
+def set_card_profile(device_id, index):
+    """Switch the card to another profile, kept the way GNOME keeps
+    it. This REPLACES the card's nodes -- inputs and outputs both --
+    so a caller measuring on one of them has to be told first."""
+    r = _run(["pw-cli", "set-param", str(device_id), "Profile",
+              "{ index: %d, save: true }" % int(index)])
+    if r.returncode != 0:
+        raise RuntimeError("pw-cli set-param Profile failed: %s"
+                           % ((r.stderr or r.stdout) or "").strip())
 
 
 ENTRY_SEP = "#"
@@ -200,6 +288,33 @@ def entry_key(node, route=None):
     if not route:
         return node
     return "%s%s%d" % (node, ENTRY_SEP, int(route["index"]))
+
+
+CARD_ENTRY = "card:"
+
+
+def card_entry_key(device_id, index):
+    """The identity of a port that has no node yet: the CARD and the
+    port, since the node it will speak for does not exist until the
+    card is switched to the profile that carries it."""
+    return "%s%d%s%d" % (CARD_ENTRY, int(device_id), ENTRY_SEP,
+                         int(index))
+
+
+def is_card_entry(key):
+    return str(key or "").startswith(CARD_ENTRY)
+
+
+def card_entry_target(key):
+    """(device id, route index) from such a key, (None, None) from
+    anything else."""
+    head, idx = split_entry(key)
+    if idx is None or not is_card_entry(head):
+        return None, None
+    try:
+        return int(str(head)[len(CARD_ENTRY):]), idx
+    except ValueError:
+        return None, None
 
 
 def split_entry(key):
@@ -220,13 +335,36 @@ def entry_node(key):
 def list_capture_entries_from(sources):
     """The same expansion over a source list already pulled by the
     heartbeat -- the window never runs a dump of its own."""
-    out = []
+    out, doors, seen = [], [], set()
     for s in sources or []:
-        routes = s.get("routes") or []
+        routes = [r for r in (s.get("routes") or [])
+                  if r.get("reachable", True)]
+        for r in (s.get("routes") or []):
+            # a port the loaded profile does not carry: listed, so
+            # the app offers what the desktop offers, and marked
+            # with what choosing it costs. It speaks for no node
+            # until the card is switched, which is what its key
+            # says -- the card, not a node.
+            if r.get("reachable", True):
+                continue
+            ident = (r.get("device_id"), r.get("index"))
+            if ident in seen:
+                continue
+            seen.add(ident)
+            e = dict(s)
+            e["name"] = card_entry_key(r["device_id"], r["index"])
+            e["node"] = None
+            e["route"] = r
+            e["gain"] = None
+            e["prio"] = -1
+            e["desc"] = ("%s - %s (switches the card)"
+                         % (r["description"], s["desc"]))
+            doors.append(e)
         if len(routes) < 2:
             e = dict(s)
             e["node"] = s["name"]
             e["route"] = routes[0] if routes else None
+            e["routes"] = routes
             out.append(e)
             continue
         for r in routes:
@@ -234,9 +372,10 @@ def list_capture_entries_from(sources):
             e["name"] = entry_key(s["name"], r)
             e["node"] = s["name"]
             e["route"] = r
+            e["routes"] = routes
             e["desc"] = "%s - %s" % (r["description"], s["desc"])
             out.append(e)
-    return out
+    return out + doors
 
 
 def list_capture_entries(dump=None):

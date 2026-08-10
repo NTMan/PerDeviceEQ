@@ -213,6 +213,7 @@ class MeasureWindow(Adw.Window):
         self.mic_of = {}            # sink channel -> analyzed mic ch
         self.session = None         # created on first measure
         self._entered = False
+        self._pending_port = None   # a port awaiting its profile
         self._busy = False
         self._loud_ack = False
         self._canvas_ids = {}       # (ch, live rec.id) -> canvas id
@@ -2040,6 +2041,7 @@ class MeasureWindow(Adw.Window):
         prev = [s["name"] for s in self.sources]
         self.sources = pw_backend.list_capture_entries_from(sources)
         self.mic_picker.refresh(self.sources)
+        self._adopt_pending_port()
         self._lock_baked_rows()
         if [s["name"] for s in self.sources] != prev:
             self._refresh_all()
@@ -2086,13 +2088,72 @@ class MeasureWindow(Adw.Window):
     def _on_mic_pick(self, node, desc):
         """A deliberate re-pick from the mic picker: the pick IS
         the exit from the gone state (field doctrine: only the
-        user or the rig's return moves the mic)."""
+        user or the rig's return moves the mic).
+
+        A row for a port behind another profile speaks for no node
+        yet, so it is a DOOR rather than a choice: switch the card
+        and veto the pick, and the port arrives as an ordinary row
+        when the graph settles. Nothing here handles the output
+        going away with it -- an output that leaves is an output
+        that leaves, whether a profile switch or a pulled cable
+        took it, and the window already has one banner and one
+        heartbeat for that."""
+        if pw_backend.is_card_entry(node):
+            return self._switch_card_for(node)
         if self._mic_gone:
             self._mic_gone = False
             self.mic_banner.set_revealed(False)
             self._update_pult()
         self._apply_entry_route()
         self._adopt_selected_source()
+
+    def _switch_card_for(self, key):
+        """Put the card on the profile that carries this port, then
+        let the ordinary refresh find it. Returns False so the
+        picker rolls its selection back: the row that was chosen is
+        about to stop existing, and the row that replaces it is a
+        different one."""
+        dev, idx = pw_backend.card_entry_target(key)
+        port = next((r for s in self.sources
+                     for r in [s.get("route")]
+                     if r and r.get("device_id") == dev
+                     and r.get("index") == idx), None)
+        prof = (port or {}).get("profiles") or []
+        if not prof:
+            return False
+        self._pending_port = (dev, port.get("card_device"))
+        target = prof[0]
+
+        def work():
+            try:
+                pw_backend.set_card_profile(dev, target)
+            except Exception as e:
+                debug.log("card profile: %s" % e)
+
+        pw_backend.in_thread(work)
+        debug.mic_trace("card %s -> profile %s for port %s"
+                        % (dev, target, idx))
+        return False
+
+    def _adopt_pending_port(self):
+        """After a profile switch the port arrives as an ordinary
+        row; select it once, then forget it. One shot on purpose --
+        a port that never arrives must not keep moving the
+        selection under the person's hand."""
+        want = getattr(self, "_pending_port", None)
+        if not want:
+            return
+        dev, card_dev = want
+        hit = next((s for s in self.sources
+                    if (s.get("route") or {}).get("device_id") == dev
+                    and (s.get("route") or {}).get("card_device")
+                    == card_dev
+                    and s.get("node")), None)
+        if hit is None:
+            return
+        self._pending_port = None
+        self.mic_picker.select(hit["name"], hit["desc"])
+        self._on_mic_pick(hit["name"], hit["desc"])
 
     def _apply_entry_route(self):
         """A row names a jack, so choosing it moves the card there

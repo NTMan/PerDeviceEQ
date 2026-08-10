@@ -299,8 +299,11 @@ def test_the_ports_ride_the_same_dump_as_the_sources():
     d = _card_dump()
     src = {s["name"]: s for s in pwb.list_sources(d)}
     analog = src["alsa_input.usb-0d8c-00.analog-stereo"]
-    assert [r["description"] for r in analog["routes"]] == [
-        "Microphone", "Line In"]
+    # every port the card has rides along now, each saying whether
+    # reaching it costs a profile change
+    got = {r["description"]: r["reachable"] for r in analog["routes"]}
+    assert got == {"Microphone": True, "Line In": True,
+                   "Digital Input": False}
     assert src["virtual-thing"]["routes"] == []
 
 
@@ -462,3 +465,109 @@ def test_no_ports_means_no_map_rather_than_a_wrong_one():
     from perdeviceeq import pw_backend as pw
     assert pw.monitor_channels("m62.direct", _m62_dump()) == []
     assert pw.monitor_channels("nope", _m62_ports_dump()) == []
+
+
+# ---- ports the current profile cannot reach ------------------------------
+
+def _m62_card_dump():
+    """His M62 as pw-dump really shows it: the Direct profile is
+    loaded, and Mic 1, Mic 2 and Aux stereo in sit in Default."""
+    classes = lambda src, snk: [2,
+                                ["Audio/Source", len(src),
+                                 "card.profile.devices", list(src)],
+                                ["Audio/Sink", len(snk),
+                                 "card.profile.devices", list(snk)]]
+    return [
+        {"id": 346, "type": "PipeWire:Interface:Device",
+         "info": {"props": {"device.name": "alsa_card.usb-Topping_M62-00"},
+                  "params": {
+                      "Profile": [{"index": 2,
+                                   "description": "Direct M62"}],
+                      "EnumProfile": [
+                          {"index": 0, "description": "Off",
+                           "classes": [0]},
+                          {"index": 1, "description": "Default",
+                           "classes": classes([7, 8, 9],
+                                              [2, 3, 4, 5, 6])},
+                          {"index": 2, "description": "Direct M62",
+                           "classes": classes([1], [0])},
+                          {"index": 3, "description": "Pro Audio",
+                           "classes": classes([11], [10])}],
+                      "Route": [{"index": 1, "device": 1,
+                                 "direction": "Input"}],
+                      "EnumRoute": [
+                          {"index": 1, "direction": "Input",
+                           "description": "Direct M62",
+                           "devices": [1], "profiles": [2]},
+                          {"index": 7, "direction": "Input",
+                           "description": "Aux stereo in",
+                           "devices": [7], "profiles": [1]},
+                          {"index": 8, "direction": "Input",
+                           "description": "Mic 2",
+                           "devices": [8], "profiles": [1]},
+                          {"index": 9, "direction": "Input",
+                           "description": "Mic 1",
+                           "devices": [9], "profiles": [1]}]}}},
+        {"id": 177, "type": "PipeWire:Interface:Node",
+         "info": {"props": {
+             "node.name": "m62.source", "media.class": "Audio/Source",
+             "node.description": "Direct M62",
+             "device.id": 346, "card.profile.device": 1}}}]
+
+
+def test_every_input_port_is_named_even_behind_another_profile():
+    from perdeviceeq import pw_backend as pw
+    rs = pw.card_input_ports("m62.source", _m62_card_dump())
+    got = {r["description"]: r for r in rs}
+    assert set(got) == {"Direct M62", "Aux stereo in", "Mic 2", "Mic 1"}
+    assert got["Direct M62"]["reachable"] and got["Direct M62"]["active"]
+    for name in ("Mic 1", "Mic 2", "Aux stereo in"):
+        assert not got[name]["reachable"]
+        assert got[name]["profiles"] == [1]      # Default carries them
+        assert not got[name]["active"]
+
+
+def test_the_row_list_still_offers_only_what_is_reachable():
+    """Deliberately unchanged for now: a row's key carries the node it
+    speaks for, and a port behind another profile has no node yet."""
+    from perdeviceeq import pw_backend as pw
+    d = _m62_card_dump()
+    src = {"name": "m62.source", "desc": "Direct M62", "prio": 0,
+           "routes": pw.input_routes("m62.source", d)}
+    assert len(pw.card_input_ports("m62.source", d)) == 4
+    rows = pw.list_capture_entries_from([src])
+    assert len(rows) == 1
+    assert rows[0]["node"] == "m62.source"
+
+
+def test_the_profiles_and_what_each_one_would_give():
+    from perdeviceeq import pw_backend as pw
+    ps = {p["description"]: p for p
+          in pw.card_profiles("m62.source", _m62_card_dump())}
+    assert ps["Direct M62"]["active"] is True
+    assert ps["Direct M62"]["sources"] == [1]
+    assert ps["Direct M62"]["sinks"] == [0]
+    # the cost of reaching Mic 1: five sinks where there was one
+    assert ps["Default"]["sources"] == [7, 8, 9]
+    assert ps["Default"]["sinks"] == [2, 3, 4, 5, 6]
+    assert ps["Off"]["sources"] == [] and ps["Off"]["sinks"] == []
+
+
+def test_a_port_behind_another_profile_gets_a_row_of_its_own():
+    """It is listed, because the desktop lists it, and its row says
+    what choosing it costs. It speaks for no node until the card is
+    switched -- which is what its key names: the card, not a node."""
+    from perdeviceeq import pw_backend as pw
+    d = _m62_card_dump()
+    rows = pw.list_capture_entries_from(pw.list_sources(d))
+    doors = [r for r in rows if r["node"] is None]
+    assert [r["route"]["description"] for r in doors] == [
+        "Aux stereo in", "Mic 2", "Mic 1"]
+    assert all("switches the card" in r["desc"] for r in doors)
+    dev, idx = pw.card_entry_target(doors[-1]["name"])
+    assert (dev, idx) == (346, 9)                 # Mic 1
+    assert pw.is_card_entry(doors[-1]["name"])
+    # and a real row is still a real row
+    real = [r for r in rows if r["node"]]
+    assert [r["node"] for r in real] == ["m62.source"]
+    assert pw.card_entry_target(real[0]["name"]) == (None, None)
