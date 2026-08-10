@@ -703,3 +703,35 @@ def test_a_sweep_is_aimed_with_the_port_names():
 def test_without_ports_the_position_list_still_answers():
     from perdeviceeq import measure_session as ms
     assert ms._aim_layout("m62.direct", _m62_dump())[0] == "AUX0"
+
+
+def test_a_sink_entry_carries_its_channels():
+    """The window must never run a subprocess to learn them. Asking
+    pw_backend directly costs a pw-dump, and the tab row and the Add
+    menu ask at open and on every refresh -- which is what made the
+    measurement window take a visible moment to appear. The dump is
+    already in hand where the list is built, so the channels ride
+    along, the way the ports already do."""
+    from perdeviceeq import pw_backend as pw
+    d = _m62_with_outputs(2)
+    sink = next(s for s in pw.list_sinks(d, default="")
+                if s["name"] == "m62.sink.0")
+    # the same answer the direct reader gives, from the same dump --
+    # that is the whole point, not any particular list
+    assert sink["channels"] == pw._node_channels("m62.sink.0", d)
+    assert sink["channels"], "a sink always has channels"
+    assert sink["routes"], "the ports ride along too"
+
+
+def test_a_source_entry_carries_its_channels_too():
+    """The sink side learned this and the source side had not, so
+    _mic_channels -- called from the prefill, from the rig selection
+    and from every pair change -- paid a pw-dump subprocess each time.
+    Removing the stored capsule count was right; replacing it with a
+    trip outside was not."""
+    from perdeviceeq import pw_backend as pw
+    d = _m62_card_dump()
+    src = next(s for s in pw.list_sources(d)
+               if s["name"] == "m62.source")
+    assert src["channels"] == pw._node_channels("m62.source", d)
+    assert src["channels"], "a source always has channels"

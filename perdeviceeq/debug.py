@@ -8,6 +8,7 @@ when off.
 
 import os
 import sys
+import time
 
 
 def log(*a):
@@ -31,6 +32,19 @@ def sweep_trace(*a):
     reasoning; with this set, every take prints what it asked for."""
     if os.environ.get("PDEQ_TRACE_SWEEP"):
         print("sweep-trace:", *a, file=sys.stderr)
+
+
+def timing(label, t0):
+    """How long a phase took, PDEQ_TRACE_TIME=1.
+
+    A window that opens with a visible pause has to be MEASURED, not
+    reasoned about: two rounds went on removing subprocesses that were
+    real costs and not the one he was feeling. Wrap a phase, read the
+    milliseconds, argue afterwards."""
+    if os.environ.get("PDEQ_TRACE_TIME"):
+        print("time: %-30s %6.0f ms"
+              % (label, 1000.0 * (time.monotonic() - t0)),
+              file=sys.stderr)
 
 
 def vol_trace(*a):

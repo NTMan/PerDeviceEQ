@@ -19,6 +19,7 @@ import math
 import os
 import re
 import threading
+import time
 
 import numpy as np
 
@@ -149,6 +150,7 @@ class MeasureWindow(Adw.Window):
         # alone. Restored on any close.
         parent.set_sensitive(False)
 
+        _born = time.monotonic()
         self.mic_store = measure_prefs.MicProfileStore()
         self.memory = measure_prefs.MeasureMemory()
         # The backend handle is born before anything asks it:
@@ -168,7 +170,9 @@ class MeasureWindow(Adw.Window):
                         or ["FL", "FR"])
         self.n_ch = len(self.ch_keys)
 
+        _t = time.monotonic()
         self._pw.update()
+        debug.timing("pw.update (a dump)", _t)
         self.sources = pw_backend.list_capture_entries_from(
             self._pw.sources)
         self.cal = {}               # mic capture-channel idx -> cal
@@ -202,13 +206,24 @@ class MeasureWindow(Adw.Window):
         self._selected_ch = 0        # target the row has selected
         self.tabs = None             # the shared channel row
 
+        _t = time.monotonic()
         self._build_ui()
+        debug.timing("_build_ui", _t)
         self._select_channel(0)
         self.connect("close-request", self._on_close)
+        _t = time.monotonic()
         self._prefill_from_memory()
+        debug.timing("_prefill_from_memory", _t)
+        _t = time.monotonic()
         self._select_profile_rig()
+        debug.timing("_select_profile_rig", _t)
+        _t = time.monotonic()
         self._ensure_session(arm=False, quiet=True)
+        debug.timing("_ensure_session", _t)
+        _t = time.monotonic()
         self._refresh_all()
+        debug.timing("_refresh_all", _t)
+        debug.timing("MeasureWindow total", _born)
         self._pw_unsub = self._pw.subscribe(self._on_pw_state)
         self._pw.start()
         # Birth reconcile: PWState notifies on CHANGE only, so a
@@ -225,7 +240,9 @@ class MeasureWindow(Adw.Window):
 
     # ---- layout -----------------------------------------------------------
     def _build_ui(self):
+        _t = time.monotonic()
         b = Gtk.Builder.new_from_file(_ui_path())
+        debug.timing("Gtk.Builder (the .ui)", _t)
         self.set_content(b.get_object("content"))
         # ---- adaptive layout. Adw.MultiLayoutView owns both
         # arrangements declaratively (narrow single column / wide two
@@ -330,8 +347,12 @@ class MeasureWindow(Adw.Window):
         sg.add_widget(lead)
         self._rebuild_map_slots()
 
+        _t = time.monotonic()
         b.get_object("channel_host").append(self._build_page())
+        debug.timing("_build_page", _t)
+        _t = time.monotonic()
         fa = self._build_fit_area()
+        debug.timing("_build_fit_area", _t)
         # The walk needs no hand now. The ring was a Gtk.Fixed, where
         # "next" is undefined, so every neighbour was named by hand --
         # fader, auto-level, into the ring, back out, then the takes
@@ -2215,7 +2236,19 @@ class MeasureWindow(Adw.Window):
         return tuple(out)
 
     def _pw_output_channels(self, node):
-        return pw_backend.backend().output_channels(node) or []
+        """The sink's channels, off the heartbeat's own snapshot.
+
+        Asking pw_backend directly costs a pw-dump SUBPROCESS, and this
+        is called from the tab row and the Add menu -- at window open
+        and again on every refresh. That is what made the window take a
+        visible moment to appear. The rule this window already learned
+        once, when switching a route froze it long enough for the shell
+        to offer Force Quit: anything that shells out rides the
+        heartbeat's dump or goes off the main loop."""
+        for s in (self._pw.sinks or []):
+            if s.get("name") == node:
+                return list(s.get("channels") or [])
+        return []
 
     def _assert_entry_route(self):
         """Put the card on the jack this rig IS, right before the
@@ -2249,11 +2282,18 @@ class MeasureWindow(Adw.Window):
         # carries what. The per-target column picker says it exactly,
         # and a stale stored 2 was what kept his sixteen-column
         # interface showing L and R.
-        try:
-            n = len(pw_backend.backend().input_channels(
-                src.get("node") or src["name"]))
-        except Exception:
-            n = 2
+        # off the heartbeat's snapshot: this is called from the
+        # prefill, from the rig selection and from every pair change,
+        # and asking pw_backend costs a pw-dump SUBPROCESS each time.
+        # Removing the stored count was right; replacing it with a
+        # trip outside was not.
+        n = len(src.get("channels") or [])
+        if not n:
+            try:
+                n = len(pw_backend.backend().input_channels(
+                    src.get("node") or src["name"]))
+            except Exception:
+                n = 2
         # NO clamp to two. "A measurement rig is 1- or 2-channel" was
         # true of a USB dongle and false of an interface: his loopback
         # comes back on COLUMN 2 of a sixteen-column source, and with
@@ -3050,6 +3090,7 @@ class MeasureWindow(Adw.Window):
             # ONLY behind its own button (level_only runs),
             # and its whole job is to move the fader.
             hunt = bool(getattr(self, "_level_only", False))
+            _t = time.monotonic()
             cfg = ms.SessionConfig(
                 sink=self.sink_node,
                 source=pw_backend.entry_node(mic),
@@ -3066,7 +3107,9 @@ class MeasureWindow(Adw.Window):
                 # precondition, now FRESH) waits for arming
                 self.session = ms.MeasureSession(
                     cfg, resolve=(self._sink_present()
-                                  and self._source_present()))
+                                  and self._source_present()),
+                    dump=getattr(self._pw, "last_dump", None))
+                debug.timing("  session construct", _t)
             except ms.RefusalError as e:
                 self.session = None
                 if not quiet:

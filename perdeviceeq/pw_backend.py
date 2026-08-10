@@ -93,6 +93,11 @@ def list_sinks(dump=None, default=None):
                           "desc": p.get("node.description") or name,
                           "prio": p.get("priority.session") or 0,
                           "routes": card_output_ports(name, dump),
+                          # the channel list rides along: the dump is
+                          # already in hand here, and a window that
+                          # asks for it separately pays a pw-dump
+                          # SUBPROCESS on the main loop every time
+                          "channels": _node_channels(name, dump),
                           "default": name == default})
     sinks.sort(key=lambda s: -(s["prio"] or 0))
     return sinks
@@ -180,6 +185,10 @@ def list_sources(dump=None):
                             "desc": p.get("node.description") or name,
                             "prio": p.get("priority.session") or 0,
                             "routes": card_input_ports(name, dump),
+                            # as on the sink side: the dump is in hand
+                            # here, and a window that asks separately
+                            # pays a subprocess on the main loop
+                            "channels": _node_channels(name, dump),
                             "gain": gain_of_node(o)})
     sources.sort(key=lambda s: -(s["prio"] or 0))
     return sources
@@ -1069,6 +1078,10 @@ class PipeWireBackend(AudioBackend):
     def _pull(self, dump=None):
         if dump is None:
             dump = pw_dump()
+        # kept, not thrown away: a window that needs the graph a
+        # moment later would otherwise spawn pw-dump again, on the
+        # main loop, for a picture this one already holds
+        self.last_dump = dump
         default = default_sink_from_dump(dump)
         if default is None:
             default = default_sink_name()

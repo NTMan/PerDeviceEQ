@@ -1598,12 +1598,14 @@ class EqWindow(Adw.ApplicationWindow):
             self.floor_hz = p.get("floor_hz")
             self._sync_floor_btn()
 
+            # off the heartbeat's snapshot, not a fresh pw-dump: this
+            # runs on every profile load, and a subprocess on the main
+            # loop is what this app already paid for once
             dev = []
             if self.live and self.node:
-                try:
-                    dev = pw_backend.backend().output_channels(self.node)
-                except Exception:
-                    dev = []
+                dev = next((list(s.get("channels") or [])
+                            for s in (self.sinks or [])
+                            if s.get("name") == self.node), [])
             pch = list(p.get("ch_keys") or list((p.get("channels") or {}).keys()))
             self.sink_keys = dev or pch or ["FL", "FR"]
             self._sync_map(widen=False)

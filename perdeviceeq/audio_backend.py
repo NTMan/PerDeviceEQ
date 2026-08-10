@@ -217,6 +217,8 @@ class AudioBackend(ABC):
         not rebuild every picker."""
         return self._ingest(self._pull())
 
+    last_dump = None        # the graph picture the last pull paid for
+
     def _ingest(self, snap):
         self.sinks = snap.get("sinks", [])
         self.sources = snap.get("sources", [])

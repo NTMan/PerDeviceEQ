@@ -979,3 +979,15 @@ def test_an_unpaired_target_has_no_output_to_aim_at():
     assert ses._channel_map(0) == "FL"
     assert ses._channel_map(1) is None
     assert ses._sink_index(1) is None
+
+
+def test_a_session_can_be_handed_the_graph_it_needs():
+    """Building a session resolved used to spawn pw-dump from the
+    constructor -- at every window open and again at every change of
+    rig or pairing, on the main loop, between the click and the window.
+    The caller usually holds that picture already."""
+    import inspect
+    sig = inspect.signature(ms.MeasureSession.__init__)
+    assert "dump" in sig.parameters
+    src = inspect.getsource(ms.MeasureSession.__init__)
+    assert "dump if dump is not None else pw_dump()" in src

@@ -1035,7 +1035,7 @@ class MeasureSession:
     texts as `notes`.
     """
 
-    def __init__(self, cfg, resolve=True):
+    def __init__(self, cfg, resolve=True, dump=None):
         if cfg.channels < 1:
             raise RefusalError("channels must be >= 1")
         tools = ["pw-dump", "pw-metadata", "pw-play", "pw-record"]
@@ -1067,7 +1067,11 @@ class MeasureSession:
         self.foreign = []
         self._resolved = False
         if resolve:
-            self._resolve(pw_dump())
+            # the caller's graph picture when it has one: a session is
+            # built at every window open and again at every change of
+            # rig or pairing, and each pw-dump here was a subprocess on
+            # the main loop between the click and the window
+            self._resolve(dump if dump is not None else pw_dump())
 
         self.sweep = mc.generate_sweep(cfg.samples, cfg.fs, cfg.f_start,
                                        cfg.f_end)
