@@ -380,21 +380,28 @@ class MeasureWindow(Adw.Window):
         above it changes shape.
         """
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        col.set_halign(Gtk.Align.CENTER)
+        col.set_hexpand(True)
 
+        # the same arrangement as the main window's tab row: the tabs
+        # lead, the two controls sit together at the END, remove before
+        # add. Two rows that do the same job should not have to be read
+        # twice.
         row = Gtk.Box(spacing=6)
-        row.set_halign(Gtk.Align.CENTER)
         bar = Gtk.Box(spacing=0)
+        bar.set_valign(Gtk.Align.CENTER)
         self.tabs = chantabs.ChannelTabs(bar, self._on_tab_pick)
         row.append(bar)
+        pair_box = Gtk.Box(spacing=6, hexpand=True,
+                           valign=Gtk.Align.CENTER,
+                           halign=Gtk.Align.END)
+        row.append(pair_box)
         # the same door the main window has, and for the same reason:
         # a profile with no targets has nowhere to type and nothing to
         # sweep, so the way in must be here too -- this window is where
         # New lands
-        self._add_btn = Gtk.MenuButton()
-        self._add_btn.set_icon_name("list-add-symbolic")
+        self._add_btn = Gtk.MenuButton(icon_name="list-add-symbolic",
+                                       valign=Gtk.Align.CENTER)
         self._add_btn.add_css_class("flat")
-        self._add_btn.set_valign(Gtk.Align.CENTER)
         # The action lives on THIS window, under a prefix of its own.
         # Not "win.": that is the main window's map, whose pair-add
         # edits the MAIN window's profile -- and an Adw.Window is not
@@ -407,13 +414,12 @@ class MeasureWindow(Adw.Window):
         group = Gio.SimpleActionGroup()
         group.add_action(pair)
         self.insert_action_group("measure", group)
-        row.append(self._add_btn)
-        self._del_btn = Gtk.Button()
-        self._del_btn.set_icon_name("window-close-symbolic")
+        self._del_btn = Gtk.Button(icon_name="window-close-symbolic",
+                                   valign=Gtk.Align.CENTER)
         self._del_btn.add_css_class("flat")
-        self._del_btn.set_valign(Gtk.Align.CENTER)
         self._del_btn.connect("clicked", lambda _b: self._del_pair())
-        row.append(self._del_btn)
+        pair_box.append(self._del_btn)      # remove, then add
+        pair_box.append(self._add_btn)
         self._dress_tabs()
         col.append(row)
 
