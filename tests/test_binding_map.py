@@ -242,3 +242,33 @@ def test_two_channels_still_take_a_pin_as_an_extra_route(store):
     store.pin_channel(NODE, "AUX2", "FL")
     m = store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
     assert m == {"AUX0": "FL", "AUX1": "FR", "AUX2": "FL"}
+
+
+def test_moving_a_target_leaves_its_old_output_behind(store):
+    """What the measurement window does when a target already has an
+    output: it MOVES, it does not gain a second route. The main window
+    adds one -- many-to-one is deliberate on a card that sums its buses
+    -- but a sweep goes somewhere singular, and while the old route
+    stood the resolver kept answering with it and the tab kept showing
+    it (field)."""
+    sink = ["AUX%d" % i for i in range(8)]
+    m = store.reconcile_map(NODE, ["FL", "FR"], sink)
+    assert m["AUX0"] == "FL"                     # the resolver's guess
+
+    def move(target, to):                        # what _add_pair does
+        # the CURRENT MAP, not the pins: AUX0 carries FL because the
+        # resolver GUESSED it, and a guess left standing answers again
+        cur = store.reconcile_map(NODE, ["FL", "FR"], sink)
+        for ch, val in list(cur.items()):
+            if val == target and ch != to:
+                store.pin_channel(NODE, ch, None)
+        store.pin_channel(NODE, to, target)
+
+    move("FL", "AUX6")
+    m = store.reconcile_map(NODE, ["FL", "FR"], sink)
+    assert m["AUX6"] == "FL"
+    assert m["AUX0"] is None                     # not a second route
+    assert m["AUX1"] == "FR"                     # the other side stands
+    move("FL", "AUX7")
+    m = store.reconcile_map(NODE, ["FL", "FR"], sink)
+    assert m["AUX7"] == "FL" and m["AUX6"] is None

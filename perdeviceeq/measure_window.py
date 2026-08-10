@@ -2755,8 +2755,9 @@ class MeasureWindow(Adw.Window):
         btn.set_menu_model(menu if free else None)
         btn.set_sensitive(bool(free))
         btn.set_tooltip_text(
-            "Add a target and the output it plays on"
-            if free else "Every output channel already has a tab")
+            "Choose the output a target plays on -- a target already "
+            "here MOVES to it" if free else
+            "Every output channel already carries a target")
 
     def _add_pair(self, value):
         """A pair declares its target: the profile gains that side,
@@ -2777,6 +2778,26 @@ class MeasureWindow(Adw.Window):
             body["channels"] = chans
             body["ch_keys"] = keys + [target]
             store.save_user(body)
+        # HERE A TARGET MEASURES THROUGH ONE OUTPUT. The main window
+        # adds a route -- many-to-one is deliberate on a card that sums
+        # its buses -- but a sweep goes somewhere, singular, so
+        # choosing an output for a target that already has one MOVES
+        # it. Without this the pick simply added a second route, the
+        # resolver kept answering with the first, and the tab went on
+        # showing the old output while the hand had said another.
+        # the CURRENT MAP, not the pins: an output can carry a target
+        # because the resolver guessed it, and a guess left standing
+        # answers again the moment it is asked -- so the old output has
+        # to be pinned to nothing, not merely left unpinned
+        try:
+            cur = store.reconcile_map(
+                self.sink_node, list(self.ch_keys),
+                self._pw_output_channels(self.sink_node))
+        except Exception:
+            cur = {}
+        for ch, val in list(cur.items()):
+            if val == target and ch != sink_ch:
+                store.pin_channel(self.sink_node, ch, None)
         store.pin_channel(self.sink_node, sink_ch, target)
         p = store.get(pid) or {}
         self.ch_keys = (list(p.get("ch_keys")
