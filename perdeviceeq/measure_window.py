@@ -25,22 +25,22 @@ import numpy as np
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import (Gtk, GLib, Gdk, GObject, Adw,
+from gi.repository import (Gtk, GLib, Gdk, Gio, GObject, Adw,
                            Pango)                    # noqa: E402
 
 from . import config, measure_build       # noqa: E402
 from . import curve_view as cv                      # noqa: E402
 from . import curve_export                          # noqa: E402
 from . import pw_backend
-from . import focus                                  # noqa: E402
+from . import chantabs                               # noqa: E402
+from . import eq                                     # noqa: E402
 from . import debug
 from .picker import NodePicker                       # noqa: E402
 from . import measure_core as mc                    # noqa: E402
 from . import measure_session as ms                 # noqa: E402
 from . import measure_prefs                         # noqa: E402
 
-RING = 280
-SPEAKER = 56
+
 CLEAN_TARGET = 3            # clean takes per channel before "all clean"
 
 # Where each channel sits on the ring, as a compass angle from the front
@@ -48,11 +48,6 @@ CLEAN_TARGET = 3            # clean takes per channel before "all clean"
 # speaker is drawn where it physically belongs the way GNOME's speaker
 # test lays them out, instead of being spread evenly in channel order.
 # LFE has no direction; park it at the bottom. Screen angle = this - 90.
-CHAN_ANGLE = {
-    "FC": 0, "FL": -30, "FR": 30, "FLC": -15, "FRC": 15,
-    "SL": -90, "SR": 90, "RL": -150, "RR": 150,
-    "RC": 180, "LFE": 180,
-}
 FIT_BANDS = 12
 FIT_FLO = 20.0
 FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
@@ -109,44 +104,6 @@ def _ui_path():
     raise FileNotFoundError(
         "measurement design not found; looked in:\n  "
         + "\n  ".join(config.MEASURE_UI_FILE_CANDIDATES))
-
-
-_CSS_INSTALLED = False
-
-
-def _ensure_css():
-    """Install the ring's style classes once: the count bubble and its
-    status colours, and the error outline. Named libadwaita colours so it
-    tracks the theme; load path mirrors the main window's."""
-    global _CSS_INSTALLED
-    if _CSS_INSTALLED:
-        return
-    data = """
-    .measure-count {
-        background-color: alpha(@window_fg_color, 0.12);
-        border-radius: 9999px;
-        padding: 0 5px;
-        margin-top: 1px;
-    }
-    .measure-count.done { background-color: @success_bg_color;
-                          color: @success_fg_color; }
-    .measure-count.warn { background-color: @warning_bg_color;
-                          color: @warning_fg_color; }
-    .measure-count.bad  { background-color: @error_bg_color;
-                          color: @error_fg_color; }
-    button.measure-error { box-shadow: inset 0 0 0 2px @error_color; }
-    button.speaker-on { box-shadow: 0 0 0 2px @window_fg_color; }
-    """
-    css = Gtk.CssProvider()
-    if hasattr(css, "load_from_string"):
-        css.load_from_string(data)
-    else:
-        css.load_from_data(data.encode())
-    disp = Gdk.Display.get_default()
-    if disp is not None:
-        Gtk.StyleContext.add_provider_for_display(
-            disp, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    _CSS_INSTALLED = True
 
 
 def _node_identity(node):
@@ -242,9 +199,8 @@ class MeasureWindow(Adw.Window):
         except Exception:
             pass
         self._page = None            # selected channel's page widgets
-        self._selected_ch = 0        # channel the ring has selected
-        self._speakers = {}         # ch index -> Gtk.Button
-        self._speaker_counts = {}   # ch index -> Gtk.Label (# takes)
+        self._selected_ch = 0        # target the row has selected
+        self.tabs = None             # the shared channel row
 
         self._build_ui()
         self._select_channel(0)
@@ -269,7 +225,6 @@ class MeasureWindow(Adw.Window):
 
     # ---- layout -----------------------------------------------------------
     def _build_ui(self):
-        _ensure_css()
         b = Gtk.Builder.new_from_file(_ui_path())
         self.set_content(b.get_object("content"))
         # ---- adaptive layout. Adw.MultiLayoutView owns both
@@ -307,10 +262,6 @@ class MeasureWindow(Adw.Window):
                                  b.get_object("chan_row"),
                                  b.get_object("mic_group"))
 
-        self.map_left_slot = Gtk.Box()
-        self.map_left_slot.set_valign(Gtk.Align.CENTER)
-        self.map_right_slot = Gtk.Box()
-        self.map_right_slot.set_valign(Gtk.Align.CENTER)
         ring_host = b.get_object("ring_host")
         ring_host.set_spacing(12)
         ring_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
@@ -319,7 +270,7 @@ class MeasureWindow(Adw.Window):
         # the status line below shares that axis (its lead bin
         # is size-grouped with the fader)
         ring_col.set_hexpand(True)
-        ring_col.append(self._build_ring())
+        ring_col.append(self._build_measure_col())
         self.ready_hint = Gtk.Label(xalign=0.5)
         self.ready_hint.add_css_class("success")
         self.ready_hint.set_wrap(True)
@@ -353,11 +304,8 @@ class MeasureWindow(Adw.Window):
         # SECOND, right after the fader -- the two speak the
         # same language. The widget keeps its settled home
         # under the fader; the jump is focus-only: Tab off the
-        # fader lands on auto-level, Tab off auto-level enters
-        # the ring, the ring's backward exit returns here, and
-        # its FORWARD exit hands the fit area -- without that
-        # neighbor GTK fell back to positional sort and looped
-        # play -> auto-level (field-caught).
+        # fader lands on auto-level, and from there the natural
+        # order takes over.
 
         def _tab(kv, back_to, fwd_to):
             def on_key(_c, keyval, _code, state):
@@ -377,8 +325,7 @@ class MeasureWindow(Adw.Window):
              fwd_to=lambda: self.relevel_btn.grab_focus())
         _tab(self.relevel_btn,
              back_to=lambda: self.vol_spin.grab_focus(),
-             fwd_to=lambda: self.ring.child_focus(
-                 Gtk.DirectionType.TAB_FORWARD))
+             fwd_to=lambda: False)
         sg = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
         sg.add_widget(self.vol_spin)
         sg.add_widget(lead)
@@ -386,14 +333,12 @@ class MeasureWindow(Adw.Window):
 
         b.get_object("channel_host").append(self._build_page())
         fa = self._build_fit_area()
-        # the ring's forward exit hands the whole takes card,
-        # not the fit area past it: the walk enters the takes
-        # top-down (a row, its delete, the next row) and reaches
-        # the fit area last, inside the same card. The first aim
-        # skipped every take -- field-caught, second lesson of
-        # the same neighbor.
-        self.ring.set_focus_neighbors(prev=self.relevel_btn,
-                                      nxt=self._page["card"])
+        # The walk needs no hand now. The ring was a Gtk.Fixed, where
+        # "next" is undefined, so every neighbour was named by hand --
+        # fader, auto-level, into the ring, back out, then the takes
+        # card. A ROW is already an order: the tabs walk left to right
+        # and hand on to what follows them. His question, and he was
+        # right to ask it.
         for side in ("start", "end", "bottom"):
             getattr(fa, "set_margin_" + side)(12)
         fa.set_margin_top(6)
@@ -421,95 +366,81 @@ class MeasureWindow(Adw.Window):
         self._recompute_mic()
         self._rebuild_cal_row()
 
-    def _build_ring(self):
-        self.ring = focus.OrderedFixed()
-        self.ring.set_size_request(RING, RING)
-        self.ring.set_halign(Gtk.Align.CENTER)
-        disc = Gtk.DrawingArea()
-        disc.update_property(
-            [Gtk.AccessibleProperty.LABEL],
-            ["Speaker ring: measured channels around the "
-             "listening position"])
-        disc.set_content_width(RING)
-        disc.set_content_height(RING)
-        disc.set_draw_func(self._draw_disc)
-        self._disc = disc
-        self.ring.put(disc, 0, 0)
+    def _build_measure_col(self):
+        """The measurement column: the tabs, the capture row under
+        them, then the transport.
 
-        cx = cy = RING / 2.0
-        r = RING / 2.0 - SPEAKER / 2.0 - 6
-        for i, key in enumerate(self.ch_keys):
-            if self.n_ch == 2:                      # familiar L / R split
-                ang = math.pi if i == 0 else 0.0
-            elif key in CHAN_ANGLE:                 # its real position
-                ang = math.radians(CHAN_ANGLE[key] - 90)
-            else:                                   # unknown: spread it
-                ang = math.pi + (2 * math.pi * i / max(1, self.n_ch))
-            x = cx + r * math.cos(ang) - SPEAKER / 2.0
-            y = cy + r * math.sin(ang) - SPEAKER / 2.0
-            spk = Gtk.ToggleButton()
-            spk.set_size_request(SPEAKER, SPEAKER)
-            spk.add_css_class("circular")
-            body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-            body.set_valign(Gtk.Align.CENTER)
-            body.append(Gtk.Image.new_from_icon_name(
-                "audio-volume-high-symbolic"))
-            count = Gtk.Label()
-            count.add_css_class("caption")
-            count.add_css_class("measure-count")
-            count.set_visible(False)
-            body.append(count)
-            spk.set_child(body)
-            spk.connect("clicked", self._make_speaker_cb(i))
-            spk.set_tooltip_text(_speaker_name(key))
-            self.ring.put(spk, int(x), int(y))
-            self._speakers[i] = spk
-            self._speaker_counts[i] = count
+        This was a RING -- a disc with a speaker per channel placed by
+        compass angle. It went for a reason that killed the idea rather
+        than the drawing: a target is the normalisation of a physical
+        channel, and half the cards in this app answer AUX0..AUX9,
+        which has no place in space at all. A bus number cannot be
+        drawn around a listener. And the ring's own count of tabs came
+        from the CARD, so a two-channel profile on a ten-channel card
+        showed ten speakers -- his first and best argument against it,
+        which no amount of geometry answered.
 
-        center_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                             spacing=6)
-        # A fixed-height stage with the grid glued to its BOTTOM:
-        # the transport is the last grid row in every capsule
-        # mode, so play and stop stand still relative to the disc
-        # while the mic map row appears ABOVE them (field verdict:
-        # the pult must not jump between mono and stereo).
-        center_box.set_size_request(RING - 2 * SPEAKER, 96)
-        center_box.set_halign(Gtk.Align.CENTER)
-        # The mics live INSIDE the ring now, where the volume used
-        # to sit: capsule-to-speaker mapping is spatial information,
-        # so it belongs in the spatial widget.
-        # the invisible grid made visible to the code: two
-        # column axes shared by the mic icons, the capsule
-        # pickers and the transport -- nothing floats between
-        # the columns
+        What the ring did carry and this keeps: the count bubble in
+        three tones, and the transport standing still while the row
+        above it changes shape.
+        """
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        col.set_halign(Gtk.Align.CENTER)
+
+        row = Gtk.Box(spacing=6)
+        row.set_halign(Gtk.Align.CENTER)
+        bar = Gtk.Box(spacing=0)
+        self.tabs = chantabs.ChannelTabs(bar, self._on_tab_pick)
+        row.append(bar)
+        # the same door the main window has, and for the same reason:
+        # a profile with no targets has nowhere to type and nothing to
+        # sweep, so the way in must be here too -- this window is where
+        # New lands
+        self._add_btn = Gtk.MenuButton()
+        self._add_btn.set_icon_name("list-add-symbolic")
+        self._add_btn.add_css_class("flat")
+        self._add_btn.set_valign(Gtk.Align.CENTER)
+        # The action lives on THIS window, under a prefix of its own.
+        # Not "win.": that is the main window's map, whose pair-add
+        # edits the MAIN window's profile -- and an Adw.Window is not
+        # an ApplicationWindow, so it has no action map to add to. A
+        # group inserted here gives one.
+        pair = Gio.SimpleAction.new("pair-add",
+                                    GLib.VariantType.new("s"))
+        pair.connect("activate",
+                     lambda _a, p: self._add_pair(p.get_string()))
+        group = Gio.SimpleActionGroup()
+        group.add_action(pair)
+        self.insert_action_group("measure", group)
+        row.append(self._add_btn)
+        self._dress_tabs()
+        col.append(row)
+
+        # the capture row belongs UNDER the tabs, his call and his
+        # reason: the column is bound to the target that plays the
+        # sweep, so it reads downwards -- choose the target, then say
+        # what captures it
         self._center_grid = Gtk.Grid()
         self._center_grid.set_halign(Gtk.Align.CENTER)
         self._center_grid.set_row_spacing(6)
         self._center_grid.set_column_spacing(10)
         self._center_grid.set_column_homogeneous(True)
-        self._center_grid.set_vexpand(True)
-        self._center_grid.set_valign(Gtk.Align.END)
+        col.append(self._center_grid)
+
         self.play_btn = self._pult_btn(
             "media-playback-start-symbolic",
             "Measure the selected channel", self._on_play)
         self.stop_btn = self._pult_btn(
-            "media-playback-stop-symbolic", "Stop the sweep", self._on_stop)
+            "media-playback-stop-symbolic", "Stop the sweep",
+            self._on_stop)
         self.stop_btn.set_sensitive(False)
-        center_box.append(self._center_grid)
-        self.ring.put(center_box, SPEAKER, int(RING / 2 - 56))
-        # Tab walks the pult grammar, not the geometry: the
-        # speakers first (the targets you set up), then the
-        # center -- capsule map, then transport. GTK sorts Tab
-        # by position, which put the mics before the speakers;
-        # the grammar is groups, and it survives surround
-        # (field verdict from the keyboard walk).
-        self.ring.set_focus_order(
-            [self._speakers[i]
-             for i in sorted(self._speakers)] + [center_box])
 
-        # The volume is a fader now, on the ring's left; auto-level
-        # sits under it -- the two speak the same language, and the
-        # ring keeps only play and stop.
+        # The faders and auto-level were born inside the ring's method
+        # and outlive it: the fader is the sweep's level, auto-level
+        # speaks the same language, and the input gain sits where the
+        # signal returns. Their vertical shape is the ring's last
+        # inheritance -- they become horizontal rows under their own
+        # pickers when the picker layout is settled.
         adj = Gtk.Adjustment(lower=0, upper=100, step_increment=1,
                              page_increment=5)
         self.vol_spin = Gtk.Scale(
@@ -518,7 +449,7 @@ class MeasureWindow(Adw.Window):
         self.vol_spin.set_draw_value(True)
         self.vol_spin.set_value_pos(Gtk.PositionType.BOTTOM)
         self.vol_spin.set_digits(0)
-        self.vol_spin.set_size_request(-1, RING)
+        self.vol_spin.set_size_request(-1, 220)
         self.vol_spin.set_tooltip_text(
             "Sweep playback level (%). Auto-level sets it; drag to "
             "override if it misses.")
@@ -532,7 +463,7 @@ class MeasureWindow(Adw.Window):
         self.gain_spin.set_draw_value(True)
         self.gain_spin.set_value_pos(Gtk.PositionType.BOTTOM)
         self.gain_spin.set_digits(0)
-        self.gain_spin.set_size_request(-1, RING)
+        self.gain_spin.set_size_request(-1, 220)
         self.gain_spin.connect("value-changed", self._on_gain_edited)
         self._tame_scroll(self.gain_spin)
         self._gain_guard = False
@@ -543,7 +474,7 @@ class MeasureWindow(Adw.Window):
             "Measure the playback level now (probe sweeps only)",
             self._on_relevel)
         self.relevel_btn.set_halign(Gtk.Align.CENTER)
-        return self.ring
+        return col
 
     def _pult_btn(self, icon, tip, cb):
         b = Gtk.Button()
@@ -1085,11 +1016,6 @@ class MeasureWindow(Adw.Window):
         self._update_range_label()
 
     # ---- drawing ----------------------------------------------------------
-    def _draw_disc(self, _area, cr, w, h, *_):
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.16)
-        cr.arc(w / 2.0, h / 2.0, min(w, h) / 2.0 - 1, 0, 2 * math.pi)
-        cr.fill()
-
     # ---- prefill / refresh ------------------------------------------------
     def _prefill_from_memory(self):
         pid = self.memory.mic_for(self.sink_node)
@@ -1333,27 +1259,18 @@ class MeasureWindow(Adw.Window):
 
     def _refresh_all(self):
         ready = self.session is not None
+        self._dress_tabs()
         self._refresh_cal_manage()
         for i in range(self.n_ch):
             n = self._clean_count(i)
             if n < CLEAN_TARGET:
                 ready = False
-            spk = self._speakers[i]
-            spk.remove_css_class("suggested-action")   # legacy
             status = self._channel_status(i)
-            if status == "bad":
-                spk.add_css_class("measure-error")
-            else:
-                spk.remove_css_class("measure-error")
             total = len(self.session.takes_of(i)) if self.session else 0
-            lbl = self._speaker_counts.get(i)
-            if lbl is not None:
-                lbl.set_text(str(total))
-                lbl.set_visible(total > 0)
-                for cls in ("done", "warn", "bad"):
-                    lbl.remove_css_class(cls)
-                if status:
-                    lbl.add_css_class(status)
+            if self.tabs is not None and i < len(self.ch_keys):
+                self.tabs.set_status(self.ch_keys[i],
+                                     str(total) if total else None,
+                                     status)
         self._spread_driver = (self.session.spread_driver()
                                if self.session else None)
         self._rebuild_page()
@@ -2377,12 +2294,29 @@ class MeasureWindow(Adw.Window):
                 src.get("node") or src["name"]))
         except Exception:
             n = 2
-        return max(1, min(2, n))        # a measurement rig is 1- or 2-ch
+        # NO clamp to two. "A measurement rig is 1- or 2-channel" was
+        # true of a USB dongle and false of an interface: his loopback
+        # comes back on COLUMN 2 of a sixteen-column source, and with
+        # the old clamp the window could only ever analyse 0 or 1 --
+        # so it recorded digital silence and called it a take. A
+        # column is a wire; there can be as many as the card has.
+        return max(1, n)
 
     def _mic_labels(self):
-        return ["L", "R"] if self.mic_ch >= 2 else ["Mono"]
+        """A capture column is named by its NUMBER once there can be
+        more than a pair of them. L and R survive for a two-column rig,
+        where they are what everyone calls them."""
+        if self.mic_ch == 1:
+            return ["Mono"]
+        if self.mic_ch == 2:
+            return ["L", "R"]
+        return ["Column %d" % i for i in range(self.mic_ch)]
 
     def _default_mic_of(self):
+        """Which capture column each target starts on. A guess only:
+        the right side on column 1 when there is one, everything else
+        on 0 -- and on a wide card the hand names it, which is what the
+        row under the tabs is for."""
         m = {}
         for k, key in enumerate(self.ch_keys):
             right = self.mic_ch >= 2 and key.upper().endswith("R")
@@ -2478,7 +2412,13 @@ class MeasureWindow(Adw.Window):
         self.cal_badges = {}
         self.cal_clears = {}
         labels = self._mic_labels()
-        for i in range(self.mic_ch):
+        # only the columns a target actually reads get a calibration
+        # row: a sixteen-column interface would otherwise grow sixteen
+        # rows, fifteen of them about wires nothing is measured on
+        used = sorted({min(v, self.mic_ch - 1)
+                       for v in (self.mic_of or {0: 0}).values()}) \
+            if self.mic_ch > 2 else list(range(self.mic_ch))
+        for i in used:
             row = Adw.ActionRow()
             row.set_title("%s calibration" % labels[i])
             badge = Gtk.Label()
@@ -2530,50 +2470,44 @@ class MeasureWindow(Adw.Window):
             nxt = child.get_next_sibling()
             g.remove(child)
             child = nxt
-        for slot in (self.map_left_slot, self.map_right_slot):
-            child = slot.get_first_child()
-            while child:
-                nxt = child.get_next_sibling()
-                slot.remove(child)
-                child = nxt
         for b in (self.play_btn, self.stop_btn):
             parent = b.get_parent()
             if parent is not None:
                 parent.remove(b)
         self.map_dds = {}
-        if self.n_ch == 2 and self.mic_ch == 2:
-            for k, slot in ((0, self.map_left_slot),
-                            (1, self.map_right_slot)):
+        labels = self._mic_labels()
+        if self.mic_ch > 1 and self.n_ch:
+            # ONE PICKER PER TARGET, and every column on offer. It used
+            # to appear only for a two-target profile on a two-column
+            # rig, listing L and R -- so a card that returns the sweep
+            # on column 2 could not be measured at all. The row sits
+            # under the tabs because a column is bound to the target
+            # that plays the sweep (his call, his reason).
+            for k in range(self.n_ch):
                 col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
                               spacing=3)
-                dd = Gtk.DropDown.new_from_strings(["L", "R"])
-                dd.set_selected(self.mic_of.get(k, k))
-                dd.set_tooltip_text("Which mic capsule captures %s"
-                                    % _speaker_name(self.ch_keys[k]))
-                dd.connect("notify::selected", self._make_map_cb(k))
-                icon = Gtk.Image.new_from_icon_name(
-                    "audio-input-microphone-symbolic")
                 col.set_halign(Gtk.Align.CENTER)
-                col.append(icon)            # picker under the mic:
-                col.append(dd)              # a column fits the ring
-                slot.append(col)
-                slot.set_halign(Gtk.Align.CENTER)
+                col.append(Gtk.Image.new_from_icon_name(
+                    "audio-input-microphone-symbolic"))
+                dd = Gtk.DropDown.new_from_strings(labels)
+                dd.set_selected(min(self.mic_of.get(k, 0),
+                                    self.mic_ch - 1))
+                dd.set_tooltip_text(
+                    "Which capture column carries %s"
+                    % _speaker_name(self.ch_keys[k]))
+                dd.connect("notify::selected", self._make_map_cb(k))
+                col.append(dd)
+                g.attach(col, k, 0, 1, 1)
                 self.map_dds[k] = dd
-            g.attach(self.map_left_slot, 0, 0, 1, 1)
-            g.attach(self.map_right_slot, 1, 0, 1, 1)
-            self.play_btn.set_halign(Gtk.Align.CENTER)
-            self.stop_btn.set_halign(Gtk.Align.CENTER)
-            g.attach(self.play_btn, 0, 1, 1, 1)
-            g.attach(self.stop_btn, 1, 1, 1, 1)
-        else:
-            # no column axes to honor: the transport rides as
-            # a centered pair, exactly as before
-            pult = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                           spacing=6)
-            pult.set_halign(Gtk.Align.CENTER)
-            pult.append(self.play_btn)
-            pult.append(self.stop_btn)
-            g.attach(pult, 0, 0, 1, 1)
+        # the transport is its own row under the pickers and stands
+        # still whatever the row above it does -- the field verdict
+        # that shaped the old centre grid, kept
+        pult = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
+                       spacing=6)
+        pult.set_halign(Gtk.Align.CENTER)
+        pult.append(self.play_btn)
+        pult.append(self.stop_btn)
+        g.attach(pult, 0, 1, max(1, self.n_ch), 1)
 
     def _make_map_cb(self, k):
         def cb(dd, _p):
@@ -2760,19 +2694,111 @@ class MeasureWindow(Adw.Window):
         return cb
 
     # ---- measurement ------------------------------------------------------
-    def _make_speaker_cb(self, ch):
-        def cb(_btn):
-            self._select_channel(ch)
-        return cb
+    def _dress_tabs(self):
+        """Draw one tab per TARGET, with the sink channel it plays
+        through in small type. The ring built its speakers in the same
+        breath as itself and never had to be told again; a row has to
+        be, because the target list moves with the profile."""
+        if getattr(self, "tabs", None) is None:
+            return
+        keys = list(self.ch_keys)
+        pm = self._play_map()
+        sink = []
+        try:
+            sink = self._pw_output_channels(self.sink_node)
+        except Exception:
+            sink = []
+        mate = {}
+        for i, key in enumerate(keys):
+            idx = pm[i] if (pm and i < len(pm)) else None
+            if idx is not None and 0 <= idx < len(sink):
+                mate[key] = sink[idx]
+        self._dress_add_button()
+        got = self.tabs.rebuild(keys, mate,
+                                keys[self._selected_ch]
+                                if 0 <= self._selected_ch < len(keys)
+                                else None)
+        if got in keys:
+            self._selected_ch = keys.index(got)
+
+    def _dress_add_button(self):
+        """Offer every target for every free output. The first level is
+        the profile's own channels followed by the rest of the target
+        vocabulary, because a profile with none has to be able to gain
+        its first."""
+        btn = getattr(self, "_add_btn", None)
+        if btn is None:
+            return
+        try:
+            sink = self._pw_output_channels(self.sink_node)
+        except Exception:
+            sink = []
+        cmap = {}
+        if sink:
+            try:
+                cmap = self.parent.store.reconcile_map(
+                    self.sink_node, list(self.ch_keys), sink)
+            except Exception:
+                cmap = {}
+        free = [c for c in sink if not cmap.get(c)]
+        have = list(self.ch_keys)
+        menu = Gio.Menu()
+        for target in have + [t for t in eq.TARGETS if t not in have]:
+            sub = Gio.Menu()
+            for ch in free:
+                item = Gio.MenuItem.new(ch, None)
+                item.set_action_and_target_value(
+                    "measure.pair-add",
+                    GLib.Variant("s", "%s|%s" % (target, ch)))
+                sub.append_item(item)
+            menu.append_submenu(target, sub)
+        btn.set_menu_model(menu if free else None)
+        btn.set_sensitive(bool(free))
+        btn.set_tooltip_text(
+            "Add a target and the output it plays on"
+            if free else "Every output channel already has a tab")
+
+    def _add_pair(self, value):
+        """A pair declares its target: the profile gains that side,
+        empty, and the output is pinned to it. Same rule as the main
+        window -- choosing FL for an output says this profile has an
+        FL side played there."""
+        target, _, sink_ch = (value or "").partition("|")
+        if not (target and sink_ch and self.sink_node):
+            return
+        store = self.parent.store
+        pid = self._ensure_pid()
+        p = store.get(pid) or {}
+        keys = list(p.get("ch_keys") or list((p.get("channels") or {})))
+        if target not in keys:
+            chans = dict(p.get("channels") or {})
+            chans.setdefault(target, {"bands": []})
+            body = dict(p)
+            body["channels"] = chans
+            body["ch_keys"] = keys + [target]
+            store.save_user(body)
+        store.pin_channel(self.sink_node, sink_ch, target)
+        p = store.get(pid) or {}
+        self.ch_keys = (list(p.get("ch_keys")
+                             or list((p.get("channels") or {})))
+                        or ["FL", "FR"])
+        self.n_ch = len(self.ch_keys)
+        self._recompute_mic()
+        self._rebuild_map_slots()
+        self._rebuild_session()
+        self._refresh_all()
+
+    def _on_tab_pick(self, key):
+        """A hand chose a target. The window's currency is the index
+        into ch_keys; the row speaks names, so this is the one place
+        the two meet."""
+        if key in self.ch_keys:
+            self._select_channel(self.ch_keys.index(key))
 
     def _select_channel(self, ch):
         self._selected_ch = ch
-        for i, spk in self._speakers.items():
-            spk.set_active(i == ch)
-            if i == ch:                      # plus a hard outline
-                spk.add_css_class("speaker-on")
-            else:
-                spk.remove_css_class("speaker-on")
+        if self.tabs is not None and 0 <= ch < len(self.ch_keys):
+            self.tabs.select(self.ch_keys[ch])
         self._rebuild_page()
         self._update_pult()
 
@@ -3044,7 +3070,7 @@ class MeasureWindow(Adw.Window):
                            if getattr(self, "_gain_ok", False)
                            else None)
         self._busy = True
-        self._set_ring_sensitive(False)
+        self._set_row_sensitive(False)
         self._update_pult()
         self.center.set_text(
             "Measuring the level on %s\u2026" % self.ch_keys[ch]
@@ -3115,7 +3141,7 @@ class MeasureWindow(Adw.Window):
 
     def _measure_done(self, ch, result):
         self._busy = False
-        self._set_ring_sensitive(True)
+        self._set_row_sensitive(True)
         self._update_pult()
         self.center.set_text("Click a speaker to measure")
         err = result["error"]
@@ -3138,9 +3164,9 @@ class MeasureWindow(Adw.Window):
         self._refresh_all()
         return False
 
-    def _set_ring_sensitive(self, on):
-        for spk in self._speakers.values():
-            spk.set_sensitive(on)
+    def _set_row_sensitive(self, on):
+        if self.tabs is not None:
+            self.tabs.set_sensitive(on)
 
     # ---- the incremental contract ------------------------------------
     def _ensure_pid(self):

@@ -37,7 +37,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
-from . import __version__, config, eq, pw_backend, integration
+from . import (__version__, chantabs, config, eq, pw_backend,
+               integration)
 from .picker import NodePicker
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
                      load_ui_state, save_ui_state,
@@ -144,7 +145,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.cur_ch = self.ch_keys[0]
         self.preamp = 0.0
         self.bands = self.slots[self.cur_ch]["bands"]   # alias: current slot
-        self._chan_buttons = {}
+        self.tabs = None            # the shared channel row
 
         # tier-2 live meter (engine created lazily: scipy is optional)
         self._meter = None
@@ -1453,9 +1454,8 @@ class EqWindow(Adw.ApplicationWindow):
             # disagrees with it removes a tab the person did not point
             # at. _loading is on here, so the toggle does not bounce
             # back through _make_chan_cb.
-            btn = (getattr(self, "_chan_buttons", None) or {}).get(ch)
-            if btn is not None and not btn.get_active():
-                btn.set_active(True)
+            if getattr(self, "tabs", None) is not None:
+                self.tabs.select(ch)
             slot = self._slot(ch)
             self.bands = slot["bands"]               # alias: edits mutate the slot
             self.preamp_spin.set_value(self.preamp)
@@ -1487,33 +1487,13 @@ class EqWindow(Adw.ApplicationWindow):
         """Rebuild the channel tab bar: one tab per channel the output
         has, FL | FR | ... -- there is no second mode to switch to, so
         the row carries the tabs and nothing else."""
-        self._clear_box(self.channel_bar)
-        self._chan_buttons = {}
         self._build_pair_controls()
-        keys = list(self.ch_keys)
         show_meters = pw_backend.backend().meter_available()
-        first = None
-        for k in keys:
-            btn = Gtk.ToggleButton(label=k)
-            if first is None:
-                first = btn
-            else:
-                btn.set_group(first)
-            btn.set_active(k == self.cur_ch)
-            if len(keys) == 1:
-                btn.set_can_target(False)   # a lone tab is not a control
-            btn.connect("toggled", self._make_chan_cb(k))
-            self.channel_bar.append(btn)
-            self._chan_buttons[k] = btn
+        if getattr(self, "tabs", None) is None:
+            self.tabs = chantabs.ChannelTabs(self.channel_bar,
+                                             self._on_tab_pick)
         self._dress_tabs()
         self._dress_pair_controls()
-        # a lone segment needs no linked dress: the style groups
-        # siblings, and one child is costume (the CI floor called
-        # it). The dress follows the POPULATION of the row.
-        if len(keys) > 1:
-            self.channel_bar.add_css_class("linked")
-        else:
-            self.channel_bar.remove_css_class("linked")
         self.channel_row.set_visible(len(self.sink_keys) > 1)
         self._rebuild_meter_rows(show_meters)
 
@@ -1575,12 +1555,10 @@ class EqWindow(Adw.ApplicationWindow):
         cr.rectangle(zero - 0.5, 0, 1, h)
         cr.fill()
 
-    def _make_chan_cb(self, key):
-        """Factory: switch the edited channel to `ch`."""
-        def cb(btn):
-            if btn.get_active() and not self._loading:
-                self._load_slot(key)     # view change only; nothing to re-apply
-        return cb
+    def _on_tab_pick(self, key):
+        """A hand chose a tab: a view change only, nothing to re-apply."""
+        if not self._loading:
+            self._load_slot(key)
 
     # ---- profile load / edit ----------------------------------------------
     def _display_name(self, p):
@@ -1889,25 +1867,20 @@ class EqWindow(Adw.ApplicationWindow):
             "The last tab stays -- choose No EQ to play dry")
 
     def _dress_tabs(self):
-        """Write each tab's label: its own SINK name, and under it in
-        small type the profile channel that feeds it when the two
-        differ. That happens whenever a profile is mapped onto a card
-        of other names, and on every tab but one when a single-channel
-        profile spreads over the whole sink -- both of which change
-        what is heard while saying nothing on screen."""
+        """Redraw the row: one tab per SINK channel, with the profile
+        channel that feeds it in small type when the two names differ.
+        Which name leads is not a setting -- the KEY leads, and this
+        window's keys are sink channels because it edits what an OUTPUT
+        plays. The measurement window's keys are targets, so the same
+        widget reads the other way round there without a branch."""
+        if getattr(self, "tabs", None) is None:
+            return
         cmap = getattr(self, "ch_map", None) or {}
-        for k, btn in (getattr(self, "_chan_buttons", None) or {}).items():
-            lbl = btn.get_child()
-            if not hasattr(lbl, "set_markup"):
-                continue
-            src = cmap.get(k)
-            if src and src != k:
-                lbl.set_markup("%s\n<small>%s</small>"
-                               % (GLib.markup_escape_text(k),
-                                  GLib.markup_escape_text(src)))
-                lbl.set_justify(Gtk.Justification.CENTER)
-            else:
-                lbl.set_text(k)
+        got = self.tabs.rebuild(list(self.ch_keys),
+                                {k: cmap.get(k) for k in self.ch_keys},
+                                self.cur_ch)
+        if got is not None and got != self.cur_ch:
+            self.cur_ch = got
 
     def _sync_map(self, widen=True):
         """Recompute which profile channel feeds each tab.

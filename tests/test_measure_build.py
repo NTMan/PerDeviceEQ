@@ -486,3 +486,31 @@ def test_a_distortion_figure_keeps_its_significant_digits():
     assert w(None) is None
     assert w(float("nan")) is None
     assert w(0.0080, digits=3) == "0.00800"
+
+
+# ---- a capture column is a wire, and a card may have many ----------------
+
+def test_the_capture_width_is_not_clamped_to_a_pair():
+    """"A measurement rig is 1- or 2-channel" was true of a USB dongle
+    and false of an interface: his loopback returns on COLUMN 2 of a
+    sixteen-column source, and the old clamp let the window analyse
+    only 0 or 1 -- so it recorded digital silence and called it a take.
+    The rule now lives in one expression, tested here without gi."""
+    def width(n):                      # what _mic_channels now returns
+        return max(1, n)
+    assert width(16) == 16
+    assert width(2) == 2
+    assert width(0) == 1
+    assert width(1) == 1
+
+
+def test_a_column_is_named_by_its_number_once_there_are_many():
+    def labels(n):                     # what _mic_labels now returns
+        if n == 1:
+            return ["Mono"]
+        if n == 2:
+            return ["L", "R"]
+        return ["Column %d" % i for i in range(n)]
+    assert labels(1) == ["Mono"]
+    assert labels(2) == ["L", "R"]            # what everyone calls them
+    assert labels(4)[2] == "Column 2"

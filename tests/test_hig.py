@@ -68,8 +68,8 @@ def test_h8_labels_dress_from_the_type_scale():
                 "props": {"css": list(css)}, "children": []}
     for good in ((), ("heading",), ("caption", "dim-label"),
                  ("title-2",), ("error", "caption"),
-                 ("measure-count", "caption"),
-                 ("measure-count", "done"),
+                 ("chantab-count", "caption"),
+                 ("chantab-count", "done"),
                  ("title",), ("subtitle",), ("dimmed", "title"),
                  ("body", "description", "dimmed"), ("h4",),
                  ("bottom",)):
@@ -248,3 +248,31 @@ def test_h10_needs_a_population():
                   "to be sure of the mass outlier too"),
     ]}
     assert hig.lint({"class": "W", "children": [lb]}) == []
+
+
+def test_only_the_application_window_has_an_action_map():
+    """Adw.Window is not an ApplicationWindow and implements no
+    Gio.ActionMap, so self.add_action() on the measurement window is an
+    AttributeError at construction -- which no test reaches, because
+    none of them builds a window. Read from the source instead: the
+    class that calls add_action must be the one that inherits a map."""
+    import ast
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent / "perdeviceeq"
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for cls in [n for n in ast.walk(tree)
+                    if isinstance(n, ast.ClassDef)]:
+            bases = {ast.unparse(b) for b in cls.bases}
+            if "Adw.ApplicationWindow" in bases:
+                continue
+            calls = [n for n in ast.walk(cls)
+                     if isinstance(n, ast.Call)
+                     and isinstance(n.func, ast.Attribute)
+                     and n.func.attr == "add_action"
+                     and isinstance(n.func.value, ast.Name)
+                     and n.func.value.id == "self"]
+            assert not calls, (
+                "%s(%s) calls self.add_action but inherits no action "
+                "map -- insert_action_group with a prefix of its own"
+                % (cls.name, ", ".join(sorted(bases))))
