@@ -173,9 +173,9 @@
             </child>
             <child>
               <object class="AdwComboRow" id="chan_row">
-                <property name="title" translatable="yes">Capsules</property>
-                <property name="subtitle" translatable="yes">How many capsules actually capture -- enumeration can lie</property>
-                <property name="tooltip-text" translatable="yes">A UMIK-1, for one, enumerates as stereo around a single capsule</property>
+                <property name="title" translatable="yes">Capture columns</property>
+                <property name="subtitle" translatable="yes">How many columns actually carry signal -- enumeration can lie</property>
+                <property name="tooltip-text" translatable="yes">A column is a wire, not a microphone: a card can present one pair of inputs as two mono columns or as one stereo pair, and a UMIK-1 enumerates as stereo around a single capsule</property>
               </object>
             </child>
           </object>

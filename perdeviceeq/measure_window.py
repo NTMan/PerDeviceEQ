@@ -2056,7 +2056,7 @@ class MeasureWindow(Adw.Window):
         """The rig is never substituted: a vanished mic keeps
         the selection, the banner names the state, the pult
         locks, measuring waits. On the rig's return the mic
-        state re-derives and an unarmed session rebuilds
+        state re-derives and the session rebuilds
         against it."""
         node = pw_backend.entry_node(self.mic_picker.core.node)
         gone = bool(node) and not any(
@@ -2144,7 +2144,7 @@ class MeasureWindow(Adw.Window):
         self._rebuild_map_slots()
         self._sync_cal_labels()
         self._persist_mic()
-        self._reset_unarmed_session()
+        self._rebuild_session()
         # the pair's remembered level lands the moment both
         # ends are known: the restore branch in
         # _refresh_volume was honest but unreachable -- the
@@ -2176,14 +2176,29 @@ class MeasureWindow(Adw.Window):
         # rig -- prefill, profile restore, user pick, cal alike.
         self._update_pult()
 
-    def _reset_unarmed_session(self):
-        """The mic or its capsule count changed before anything was
-        measured: the session's cfg is baked at construction, so
-        rebuild it (and re-adopt the stored takes) instead of
-        measuring with a stale source. An armed session is locked --
-        exactly the old behavior."""
-        if self.session is None or self._entered:
+    def _rebuild_session(self):
+        """The input or the capture width changed: the session's cfg
+        is baked at construction, so rebuild it and re-adopt the
+        stored takes rather than measure with a stale one.
+
+        An ENTERED session is torn down first, the same __exit__ the
+        window's own close and retarget already use. It used to be
+        locked instead, and the lock could not do the job it was
+        given: it never protected a profile from mixed rigs (close
+        the window, reopen, and any mic measures into the same
+        takes), while it did stop a person who had just swept the
+        wrong jack from moving to the right one. It also never
+        lifted -- _entered is set by the first sweep and cleared by
+        nothing, so a sweep cancelled with Stop, or a take deleted,
+        left the row dead with nothing recorded."""
+        if self.session is None:
             return
+        if self._entered:
+            try:
+                self.session.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._entered = False
         self.session = None
         self._canvas_ids = {}
         self._canvas_session = None
@@ -2230,7 +2245,7 @@ class MeasureWindow(Adw.Window):
         # a hand said how many capsules this rig has: that is worth
         # remembering even when the rig has nothing else on file
         self._persist_mic(by_hand=True)
-        self._reset_unarmed_session()
+        self._rebuild_session()
         # the pair's remembered level lands the moment both
         # ends are known: the restore branch in
         # _refresh_volume was honest but unreachable -- the
@@ -2764,26 +2779,32 @@ class MeasureWindow(Adw.Window):
         pw_backend.in_thread(work)
 
     def _lock_baked_rows(self):
-        """The rig and its capsule count are baked into the
-        session's config when it is built, and an ARMED session
-        cannot be rebuilt -- _reset_unarmed_session says so and
-        returns. The window went on offering both anyway: choose
-        Stereo after the first sweep and it believed two capsules
-        while the session captured one, which surfaced much later,
-        and cryptically, as "capture column 1 out of range for a
-        1-channel capture" the moment the second speaker was
-        clicked. A control that cannot be honoured must not be
-        offered."""
-        armed = self.session is not None and self._entered
+        """Nothing is locked here any more; the name is kept because
+        the row refresh still runs through it.
+
+        Both rows used to go dead the moment a sweep had run, on the
+        grounds that the session bakes the input and the capture
+        width into its config. The config really is baked -- but the
+        session can be rebuilt, which is what the window already
+        does when the OUTPUT changes, and the lock could not do the
+        job it was given. It never kept a profile to one rig: close
+        the window, reopen it, and any input measures into the same
+        takes. It never lifted either, since _entered is set by the
+        first sweep and cleared by nothing, so a sweep cancelled
+        with Stop -- or a take deleted straight after -- left the
+        rows dead with nothing recorded. And it stood in the way of
+        the one case that matters: sweeping the wrong jack and
+        wanting the right one.
+
+        What survives is the bounds check in measure_session.take(),
+        which is an array bound rather than a policy: one line, and
+        it cannot be wrong about a rebuilt session."""
         have = bool(self.sources or self.mic_picker.core.node)
-        note = ("Locked for this sitting: the session was built "
-                "around this rig and capsule count when the first "
-                "sweep ran. Reopen the window to change them.")
-        self.source_dd.set_sensitive(have and not armed)
-        self.chan_dd.set_sensitive(not armed)
+        self.source_dd.set_sensitive(have)
+        self.chan_dd.set_sensitive(True)
         self._refresh_gain()
         for row in (self.source_dd, self.chan_dd):
-            row.set_tooltip_text(note if armed else None)
+            row.set_tooltip_text(None)
 
     def _update_pult(self):
         """The pult is the shared gone lock (field verdict): a
