@@ -222,3 +222,14 @@ def test_the_monitor_tap_reads_raw():
     from perdeviceeq.pw_backend import PipeWireBackend as B
     assert "--raw" in B.monitor_cmd("s", 2, 48000, None)
     assert "--raw" in B.monitor_cmd("s", 10, 48000, None)
+
+
+def test_the_debug_log_exists_because_six_callers_assume_it():
+    """It did not, and every caller sat inside an `except` -- so a
+    warning about a failed volume write raised AttributeError inside
+    its own handler instead of printing."""
+    from perdeviceeq import debug
+    assert callable(getattr(debug, "log", None))
+    assert callable(getattr(debug, "sweep_trace", None))
+    debug.log("court")          # must not raise
+    debug.sweep_trace("court")

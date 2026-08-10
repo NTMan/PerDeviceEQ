@@ -1197,6 +1197,15 @@ class PipeWireBackend(AudioBackend):
         if channel_map:
             cmd += ["--channel-map", channel_map]
         cmd.append(wav_path)
+        # the sweep is aimed by NAME, and a name the sink does not have
+        # matches nothing and spreads the sweep over every channel --
+        # so what was asked for goes in the log. A whole evening went
+        # on reasoning about which channel a sweep reached; one line
+        # here answers it.
+        from . import debug
+        debug.sweep_trace("node %s channel-map=%s"
+                          % (device, channel_map
+                             or "(none, plain mono)"))
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True)
         return StreamHandle(proc)

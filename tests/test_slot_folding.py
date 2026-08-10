@@ -94,9 +94,11 @@ def test_a_deleted_pair_is_pinned_and_survives_a_reconcile(tmp_path,
     m = st.reconcile_map("n", ["FL"], sink)
     assert m["FC"] is None and m["FR"] == "FL"
     assert eq.paired_tabs(m, sink) == ["FL", "FR", "LFE"]
-    st.pin_channel("n", "FC", "FL")            # Add EQ sink, back again
+    # Add EQ sink names an output for FL, and from then on FL goes
+    # THERE -- the spread was a guess and the guess is over
+    st.pin_channel("n", "FC", "FL")
     assert eq.paired_tabs(st.reconcile_map("n", ["FL"], sink),
-                          sink) == sink
+                          sink) == ["FC"]
 
 
 def test_one_channel_spread_makes_every_tab_a_sibling():
@@ -188,14 +190,31 @@ def test_re_pairing_does_not_reorder_the_profile():
     assert eq.keep_channel_order({"FL": 1, "FR": 1}, []) == ["FL", "FR"]
 
 
-def test_one_channel_still_spreads_over_a_pin(tmp_path, monkeypatch):
-    """The exemption: a profile with a single channel spreads by rule,
-    so pinning one output must not unpair the other nine."""
+def test_a_pin_stops_the_spread(tmp_path, monkeypatch):
+    """This court used to assert the opposite, and the field overruled
+    it: spreading is the answer to "nothing said where this goes", so
+    once a hand HAS said, it must stop. Adding one pair by hand had put
+    a tab on every free output of the card, all showing one channel."""
     from perdeviceeq import profiles as P
     monkeypatch.setattr(P, "BINDINGS_FILE", str(tmp_path / "b.json"))
     monkeypatch.setattr(P, "USER_PROFILES_DIR", str(tmp_path / "p"))
     monkeypatch.setattr(P, "CONFIG_DIR", str(tmp_path))
     st = P.ProfileStore()
     sink = ["AUX0", "AUX1", "AUX2"]
-    st.pin_channel("n", "AUX2", "FL")
     assert set(st.reconcile_map("n", ["FL"], sink).values()) == {"FL"}
+    st.pin_channel("n", "AUX2", "FL")
+    m = st.reconcile_map("n", ["FL"], sink)
+    assert m == {"AUX0": None, "AUX1": None, "AUX2": "FL"}
+    assert eq.paired_tabs(m, sink) == ["AUX2"]
+
+
+def test_the_target_vocabulary_leads_with_the_stereo_pair():
+    """A target is the normalisation of a physical channel, so the list
+    is the standard enumeration -- and the two channels an earphone has
+    come first, because that is what nearly every profile needs."""
+    assert eq.TARGETS[:2] == ["FL", "FR"]
+    assert len(set(eq.TARGETS)) == len(eq.TARGETS)
+    for name in ("FC", "LFE", "RL", "RR", "SL", "SR", "FLC", "FRC"):
+        assert name in eq.TARGETS
+    # no sink ever calls a channel this, and no target is a bus number
+    assert not any(t.startswith("AUX") for t in eq.TARGETS)

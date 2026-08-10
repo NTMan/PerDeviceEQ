@@ -219,3 +219,26 @@ def test_pins_are_written_beside_the_map(store, tmp_path):
     rec = _written(tmp_path)[NODE]
     assert rec["map"] == {"AUX0": "FL", "AUX1": "FR"}
     assert rec["pinned"] == {"AUX1": None}
+
+
+def test_a_hand_made_pair_does_not_spread(store):
+    """One channel spreads because nothing said where it goes. Once a
+    hand has said, the guess stops: adding a single pair by hand used
+    to put a tab on every free output of the card, all showing the
+    same channel -- eight tabs for one deliberate choice (field)."""
+    sink = ["AUX%d" % i for i in range(6)]
+    # nothing pinned: the spread is the whole point of one channel
+    assert set(store.reconcile_map(NODE, ["FL"], sink).values()) == {"FL"}
+    store.pin_channel(NODE, "AUX0", "FL")
+    m = store.reconcile_map(NODE, ["FL"], sink)
+    assert m["AUX0"] == "FL"
+    assert all(m[k] is None for k in sink[1:])
+
+
+def test_two_channels_still_take_a_pin_as_an_extra_route(store):
+    """The one-to-one answers are untouched: with two channels a pin
+    ADDS a route rather than multiplying one, which is the deliberate
+    many-to-one a summing card wants."""
+    store.pin_channel(NODE, "AUX2", "FL")
+    m = store.reconcile_map(NODE, ["FL", "FR"], ["AUX0", "AUX1", "AUX2"])
+    assert m == {"AUX0": "FL", "AUX1": "FR", "AUX2": "FL"}

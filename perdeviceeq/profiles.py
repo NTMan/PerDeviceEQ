@@ -405,7 +405,20 @@ class ProfileStore:
         sink = list(sink_keys or [])
         have = set(prof_keys or [])
         pinned = self.pins_for(node)
-        auto = resolve_slots(prof_keys, sink)
+        # SPREADING IS A GUESS, A PIN IS A DECISION. One channel
+        # spreads over every output because nothing said where it
+        # goes; once a hand has said, the guess must stop talking.
+        # Otherwise adding a single pair by hand produced a tab on
+        # every free output of the card, all of them showing the same
+        # channel -- eight tabs for one deliberate choice (field).
+        # The one-to-one answers, by name and by position, are
+        # untouched: there a pin ADDS a route rather than multiplying
+        # one, which is the deliberate many-to-one this app supports.
+        placed = {v for v in pinned.values() if v}
+        if len(prof_keys or []) == 1 and prof_keys[0] in placed:
+            auto = [None] * len(sink)
+        else:
+            auto = resolve_slots(prof_keys, sink)
         out, keep = {}, {}
         for i, ch in enumerate(sink):
             if ch not in pinned:

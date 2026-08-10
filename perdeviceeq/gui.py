@@ -1422,7 +1422,15 @@ class EqWindow(Adw.ApplicationWindow):
         prof = eq.profile_slots(
             {k: self._slot_to_dict(k) for k in self.ch_keys},
             getattr(self, "ch_map", None))
-        full = {k: d for k, d in prof.items() if (d or {}).get("bands")}
+        # A DECLARED channel survives even while it is empty. A pair
+        # made by hand says "this profile has this side, played here",
+        # and dropping it for having no bands yet would erase the
+        # declaration on the very next save -- which is how the
+        # profile could never be born.
+        declared = set(self.ch_map.get(k) or k for k in self.ch_keys) \
+            if getattr(self, "ch_map", None) else set(self.ch_keys)
+        full = {k: d for k, d in prof.items()
+                if (d or {}).get("bands") or k in declared}
         order = eq.keep_channel_order(
             full, (p or {}).get("ch_keys")
             or list(((p or {}).get("channels") or {})))
@@ -1789,11 +1797,33 @@ class EqWindow(Adw.ApplicationWindow):
         self.slots[k] = {"bands": [eq.Band.from_dict(x)
                                    for x in src.get("bands", [])]}
 
+    def _declare_channel(self, key):
+        """The profile gains a side, empty.
+
+        A pair says "this profile has this channel, played there", so
+        adding one for a channel the profile does not have yet has to
+        create it -- otherwise the pin names a channel the resolver
+        cannot honour and no tab appears. Empty is a legitimate state:
+        a side measured flat still carries the tail, and the band table
+        is where it stops being empty."""
+        self._ensure_editable()
+        p = self.store.get(self.current_pid) or {}
+        keys = list(p.get("ch_keys") or list((p.get("channels") or {})))
+        if key in keys:
+            return
+        chans = dict(p.get("channels") or {})
+        chans.setdefault(key, {"bands": []})
+        body = dict(p)
+        body["channels"] = chans
+        body["ch_keys"] = keys + [key]
+        self.store.save_user(body)
+
     def _add_pair(self, value):
         """Pair a sink channel with a profile channel by hand."""
         prof, _, sink = (value or "").partition("|")
         if not (prof and sink and self.node):
             return
+        self._declare_channel(prof)
         self.store.pin_channel(self.node, sink, prof)
         self._sync_map()
         if sink in self.ch_keys:
@@ -1821,17 +1851,23 @@ class EqWindow(Adw.ApplicationWindow):
         self._apply_now()
 
     def _dress_pair_controls(self):
-        """Offer only what can be done: a profile channel can be paired
-        with a sink channel that has no tab, and the tab in view can be
-        removed unless it is the last one -- a profile feeding nothing
-        is what No EQ is for."""
+        """What can be paired with what.
+
+        The first level is the profile's own channels FOLLOWED BY the
+        rest of the target vocabulary, because a profile with no
+        channels has to be able to gain its first one. Without that the
+        window was a dead end: No EQ pairs nothing, so it shows no tab,
+        so there is nowhere to type a band, so no channel is ever born
+        -- and the menu that was supposed to be the way in listed only
+        channels that already existed."""
         add = getattr(self, "_pair_add", None)
         if add is None:
             return
         free = [k for k in self.sink_keys if k not in self.ch_keys]
-        pch = self._profile_channels()
+        have = self._profile_channels()
+        rest = [t for t in eq.TARGETS if t not in have]
         menu = Gio.Menu()
-        for prof in pch:
+        for prof in have + rest:
             sub = Gio.Menu()
             for sink in free:
                 item = Gio.MenuItem.new(sink, None)
@@ -1840,12 +1876,11 @@ class EqWindow(Adw.ApplicationWindow):
                                                  "%s|%s" % (prof, sink)))
                 sub.append_item(item)
             menu.append_submenu(prof, sub)
-        add.set_menu_model(menu if (pch and free) else None)
-        add.set_sensitive(bool(pch and free))
+        add.set_menu_model(menu if free else None)
+        add.set_sensitive(bool(free))
         add.set_tooltip_text(
-            "Add EQ sink: play a profile channel on another output "
-            "channel" if (pch and free) else
-            "Every output channel already has a tab")
+            "Add EQ sink: play a profile channel on an output channel"
+            if free else "Every output channel already has a tab")
         rm = self._pair_del
         rm.set_sensitive(len(self.ch_keys) > 1 and bool(self.cur_ch))
         rm.set_tooltip_text(

@@ -234,6 +234,15 @@ def profile_slots(slots, ch_map):
     return out
 
 
+# The target vocabulary: a target is the NORMALISATION of a physical
+# channel, so it comes from the standard enumeration and not from
+# whatever a card calls its buses. Two channels answer for an earphone
+# and the rest belong to wider layouts, which is why FL and FR lead.
+TARGETS = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR",
+           "FLC", "FRC", "RC", "TC", "TFL", "TFC", "TFR",
+           "TRL", "TRC", "TRR"]
+
+
 def keep_channel_order(channels, stored_keys):
     """The profile's channel ORDER, kept.
 
