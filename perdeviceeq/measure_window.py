@@ -506,25 +506,37 @@ class MeasureWindow(Adw.Window):
             "media-playback-stop-symbolic", "Stop the sweep",
             self._on_stop)
         self.stop_btn.set_sensitive(False)
-        # The transport goes at the BOTTOM, centred, with the status
-        # line under it. Everything above is settings, touched once and
-        # left; this is the thing a hand comes back to, so it sits
-        # where the hand ends up. It was a row of the group for a
-        # while, which put the status in a subtitle -- a sentence the
-        # window needs to say does not belong in the small print of a
-        # control.
+        # The transport is the LAST ROW of the card, centred, with
+        # the status line under it -- inside the card, not loose
+        # beneath it. Everything above is settings, touched once and
+        # left; this is what a hand comes back to, so it sits where
+        # the hand ends up. As an ordinary action row it put the
+        # status in a subtitle, and a sentence the window needs to say
+        # does not belong in the small print of a control; a row whose
+        # child is a box gives the buttons and the sentence each a
+        # place of their own.
         pult = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
                        spacing=6)
         pult.set_halign(Gtk.Align.CENTER)
         pult.append(self.play_btn)
         pult.append(self.stop_btn)
-        col.append(pult)
         self.center = Gtk.Label(xalign=0.5)
         self.center.add_css_class("dim-label")
         self.center.set_wrap(True)
         self.center.set_max_width_chars(46)
         self.center.set_justify(Gtk.Justification.CENTER)
-        col.append(self.center)
+        act = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        act.set_halign(Gtk.Align.CENTER)
+        for side in ("start", "end"):
+            getattr(act, "set_margin_" + side)(12)
+        act.set_margin_top(12)
+        act.set_margin_bottom(12)
+        act.append(pult)
+        act.append(self.center)
+        self._act_row = Adw.PreferencesRow()
+        self._act_row.set_activatable(False)
+        self._act_row.set_child(act)
+        self._measure_grp.add(self._act_row)
 
         # The faders and auto-level were born inside the ring's method
         # and outlive it: the fader is the sweep's level, auto-level
@@ -2572,6 +2584,12 @@ class MeasureWindow(Adw.Window):
             self.cal_group = grp
             self._rebuild_cal_row()
             self._cap_rows.extend(self.cal_rows)
+        # the transport stays LAST: rows added after it would otherwise
+        # land below the thing a hand comes back to
+        act = getattr(self, "_act_row", None)
+        if act is not None and act.get_parent() is not None:
+            grp.remove(act)
+            grp.add(act)
         self._dress_act_row()
 
     def _say(self, text):
