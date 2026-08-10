@@ -219,7 +219,8 @@ class MeasureWindow(Adw.Window):
         self.mic_of = {}            # sink channel -> analyzed mic ch
         self.session = None         # created on first measure
         self._entered = False
-        self._pending_port = None   # a port awaiting its profile
+        self._pending_port = None   # an input awaiting its profile
+        self._pending_out = None    # an output awaiting its profile
         self._busy = False
         self._loud_ack = False
         self._canvas_ids = {}       # (ch, live rec.id) -> canvas id
@@ -1980,13 +1981,28 @@ class MeasureWindow(Adw.Window):
         (the target sink always listed, gone when the graph
         lost it, the selection never dangling) lives in
         picker.py now, one implementation for both windows."""
-        self.picker.refresh(st.sinks)
+        rows = pw_backend.list_playback_entries_from(st.sinks)
+        self.picker.refresh(rows)
+        hit = pw_backend.find_port_entry(rows,
+                                         getattr(self, "_pending_out",
+                                                 None))
+        if hit is not None:
+            self._pending_out = None
+            self._retarget(hit["node"], hit["desc"])
 
     def _on_sink_pick(self, node, desc):
         """A user pick from the shared picker; vetoed while a
         sweep runs (the dropdown is insensitive then, this is
         the second lock on the same door)."""
         if self._busy:
+            return False
+        if pw_backend.is_card_entry(node):
+            # an output behind another profile: switch, remember what
+            # to watch for, and veto -- the row just chosen is about
+            # to stop existing, and the one that replaces it has a
+            # name we cannot know yet
+            self._pending_out = pw_backend.switch_to_port(
+                node, self.picker.core.sinks)
             return False
         self._retarget(node, desc)
 
@@ -2119,26 +2135,8 @@ class MeasureWindow(Adw.Window):
         picker rolls its selection back: the row that was chosen is
         about to stop existing, and the row that replaces it is a
         different one."""
-        dev, idx = pw_backend.card_entry_target(key)
-        port = next((r for s in self.sources
-                     for r in [s.get("route")]
-                     if r and r.get("device_id") == dev
-                     and r.get("index") == idx), None)
-        prof = (port or {}).get("profiles") or []
-        if not prof:
-            return False
-        self._pending_port = (dev, port.get("card_device"))
-        target = prof[0]
-
-        def work():
-            try:
-                pw_backend.set_card_profile(dev, target)
-            except Exception as e:
-                debug.log("card profile: %s" % e)
-
-        pw_backend.in_thread(work)
-        debug.mic_trace("card %s -> profile %s for port %s"
-                        % (dev, target, idx))
+        self._pending_port = pw_backend.switch_to_port(key,
+                                                       self.sources)
         return False
 
     def _adopt_pending_port(self):
@@ -2146,15 +2144,8 @@ class MeasureWindow(Adw.Window):
         row; select it once, then forget it. One shot on purpose --
         a port that never arrives must not keep moving the
         selection under the person's hand."""
-        want = getattr(self, "_pending_port", None)
-        if not want:
-            return
-        dev, card_dev = want
-        hit = next((s for s in self.sources
-                    if (s.get("route") or {}).get("device_id") == dev
-                    and (s.get("route") or {}).get("card_device")
-                    == card_dev
-                    and s.get("node")), None)
+        hit = pw_backend.find_port_entry(
+            self.sources, getattr(self, "_pending_port", None))
         if hit is None:
             return
         self._pending_port = None

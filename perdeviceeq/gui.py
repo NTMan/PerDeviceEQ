@@ -131,6 +131,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._loading = False
         self.sinks = []
         self._born_pending = None   # a fork waiting for its history mark
+        self._pending_out = None    # an output awaiting its profile
         self._node_gone = False
         self._pw = pw_backend.backend()
         self._pw_unsub = None
@@ -1221,7 +1222,8 @@ class EqWindow(Adw.ApplicationWindow):
         self.sinks = b.sinks
         default = next((s["name"] for s in self.sinks if s["default"]), None)
         self.node = default or (self.sinks[0]["name"] if self.sinks else None)
-        self.picker.refresh(self.sinks)
+        self.picker.refresh(
+            pw_backend.list_playback_entries_from(self.sinks))
         self.picker.select(self.node)
         self.device_dd.set_sensitive(not self.follow_btn.get_active())
 
@@ -1244,6 +1246,12 @@ class EqWindow(Adw.ApplicationWindow):
         reconciles itself at idle."""
         if self.follow_btn.get_active():
             return False
+        if pw_backend.is_card_entry(node):
+            # switch, remember what to watch for, and veto: the row
+            # just chosen is about to stop existing
+            self._pending_out = pw_backend.switch_to_port(
+                node, self.picker.core.sinks)
+            return False
         self.node = node
         self._reconcile_node()
         self._load_profile(self.store.binding_for(node) or CLEAN_ID)
@@ -1260,7 +1268,15 @@ class EqWindow(Adw.ApplicationWindow):
         on and no measure window open, chase the default sink. One poll in
         pipewire feeds this instead of a per-window timer."""
         self.sinks = st.sinks
-        self.picker.refresh(st.sinks)
+        rows = pw_backend.list_playback_entries_from(st.sinks)
+        self.picker.refresh(rows)
+        hit = pw_backend.find_port_entry(rows,
+                                         getattr(self, "_pending_out",
+                                                 None))
+        if hit is not None:
+            self._pending_out = None
+            self.picker.select(hit["node"], hit["desc"])
+            self._on_sink_pick(hit["node"], hit["desc"])
         self._maybe_follow(st.default_sink)
         self._reconcile_node()
         # the meter heartbeat: a tap that died with its pipe

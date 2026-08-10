@@ -92,9 +92,73 @@ def list_sinks(dump=None, default=None):
             sinks.append({"id": o["id"], "name": name,
                           "desc": p.get("node.description") or name,
                           "prio": p.get("priority.session") or 0,
+                          "routes": card_output_ports(name, dump),
                           "default": name == default})
     sinks.sort(key=lambda s: -(s["prio"] or 0))
     return sinks
+
+
+def _door_desc(route):
+    """A door reads the way the desktop reads: PORT then CARD, and
+    nothing else.
+
+    It used to say "(switches the card)", which explained OUR
+    machinery rather than the choice. From where a person sits,
+    picking a port behind another profile and picking a port that
+    happens to have a live node are the same act -- choose another
+    output -- and only PipeWire knows the difference. No desktop
+    mentions it, and neither do we now.
+
+    The card is still named, because several cards have a port called
+    Speakers and a row that says only "Speakers" is a coin toss."""
+    port = route.get("description") or route.get("name") or "?"
+    card = route.get("card")
+    return "%s - %s" % (port, card) if card else port
+
+
+def _offerable(route):
+    """A port with no jack behind it is not an offer.
+
+    PipeWire marks a route `available: no` when nothing is plugged in,
+    and a graphics card enumerates one output per connector -- with a
+    single television that is one available port and three that lead
+    nowhere. The desktop filters on this; not filtering is how the
+    list grew four HDMI entries. `unknown` counts as available, which
+    is what most sound cards report."""
+    return route.get("available", True)
+
+
+def list_playback_entries_from(sinks):
+    """The sinks, plus a DOOR for every output port the loaded profile
+    does not carry.
+
+    The same answer the input list already gives, from the other side:
+    a card's other outputs are real and the desktop offers them, so
+    the app must too. Leaving them out meant going to the desktop's
+    own settings to come back to a profile -- for the M62, the whole
+    Direct output vanished from the list the moment its Default
+    profile was loaded."""
+    out, doors, seen = [], [], set()
+    for s in sinks or []:
+        e = dict(s)
+        e["node"] = s["name"]
+        out.append(e)
+        for r in (s.get("routes") or []):
+            if r.get("reachable", True) or not _offerable(r):
+                continue
+            ident = (r.get("device_id"), r.get("index"))
+            if ident in seen:
+                continue
+            seen.add(ident)
+            d = dict(s)
+            d["name"] = card_entry_key(r["device_id"], r["index"])
+            d["node"] = None
+            d["route"] = r
+            d["default"] = False
+            d["prio"] = -1
+            d["desc"] = _door_desc(r)
+            doors.append(d)
+    return out + doors
 
 def list_sources(dump=None):
     """Audio/Source nodes (measurement mics live here): id, name, desc,
@@ -120,9 +184,15 @@ def list_sources(dump=None):
     sources.sort(key=lambda s: -(s["prio"] or 0))
     return sources
 
-def card_input_ports(node_name, dump=None):
-    """EVERY input port of the card behind a node, not just the ones
-    the loaded profile exposes.
+def card_output_ports(node_name, dump=None):
+    """The output half of card_input_ports: every output port of the
+    card behind a node, with the same `reachable` and `profiles`."""
+    return _card_ports(node_name, "Output", dump)
+
+
+def _card_ports(node_name, want, dump=None):
+    """EVERY port of the card behind a node in one direction, not just
+    the ones the loaded profile exposes.
 
     GNOME lists a card's Microphone, Line In and S/PDIF as separate
     entries in its input list. PipeWire has ONE node for the card's
@@ -144,7 +214,7 @@ def card_input_ports(node_name, dump=None):
     Returns {index, device_id, card_device, name, description,
     available, profiles, reachable, active}, or an empty list when
     there is no card behind the node, which is the honest answer for
-    a virtual source: it has no ports to choose from."""
+    a virtual node: it has no ports to choose from."""
     dump = dump if dump is not None else pw_dump()
     props = None
     for o in dump:
@@ -176,12 +246,16 @@ def card_input_ports(node_name, dump=None):
     # believed the sweep came in through a jack with nothing in it
     active = [r for r in (params.get("Route") or [])
               if r.get("device") == card_dev
-              and r.get("direction") == "Input"]
+              and r.get("direction") == want]
+    cur_profile = (params.get("Profile") or [{}])[0].get("index")
+    card_desc = ((device.get("info") or {}).get("props") or {}).get(
+        "device.description") or ""
     out = []
     for r in params.get("EnumRoute") or []:
-        if r.get("direction") != "Input":
+        if r.get("direction") != want:
             continue
         devs = list(r.get("devices") or [])
+        profs = list(r.get("profiles") or [])
         idx = r.get("index")
         out.append({
             "index": idx,
@@ -190,11 +264,27 @@ def card_input_ports(node_name, dump=None):
             "name": r.get("name"),
             "description": r.get("description") or r.get("name"),
             "available": r.get("available") != "no",
-            "profiles": list(r.get("profiles") or []),
-            "reachable": card_dev in devs,
+            "profiles": profs,
+            "card": card_desc,
+            # MINE: this node's own device carries it, so the node can
+            # be switched to it. REACHABLE: the loaded profile carries
+            # it at all, on this node or a sibling. The two are not the
+            # same question, and treating them as one is what put a
+            # door beside every live sibling -- five outputs of one
+            # profile each offering to "switch the card" to the other
+            # four. Without a profile list to go by, the node's own
+            # device is the only honest answer.
+            "mine": card_dev in devs,
+            "reachable": (cur_profile in profs if profs
+                          else card_dev in devs),
             "active": (card_dev in devs
                        and any(a.get("index") == idx for a in active))})
     return out
+
+
+def card_input_ports(node_name, dump=None):
+    """Every INPUT port of the card behind a node."""
+    return _card_ports(node_name, "Input", dump)
 
 
 def input_routes(node_name, dump=None):
@@ -202,7 +292,7 @@ def input_routes(node_name, dump=None):
     touching the card's profile -- the list the picker has always
     built its rows from."""
     return [r for r in card_input_ports(node_name, dump)
-            if r["reachable"]]
+            if r.get("mine", r["reachable"])]
 
 
 def _profile_devices(classes):
@@ -261,6 +351,62 @@ def card_profiles(node_name, dump=None):
                         "sinks": devs.get("Audio/Sink") or []})
         return out
     return []
+
+
+def find_port_entry(entries, want):
+    """The LIVE row that carries a port, or None while none does.
+
+    `want` is (device id, card device) -- what a switch was asked for.
+    After the card moves, the port arrives on a node with a row of its
+    own, and this is how the window finds it without knowing the name
+    that node will be given."""
+    if not want:
+        return None
+    dev, card_dev = want
+    for e in entries or []:
+        if not e.get("node"):
+            continue
+        rs = list(e.get("routes") or [])
+        one = e.get("route")
+        if one:
+            rs.append(one)
+        for r in rs:
+            if (r.get("device_id") == dev
+                    and r.get("card_device") == card_dev
+                    and r.get("mine", True)):
+                return e
+    return None
+
+
+def switch_to_port(key, entries):
+    """Put the card on a profile that carries the port a row names.
+
+    Returns (device id, card device) so the caller can watch for the
+    port arriving, or None when the key is not a door or nothing
+    carries it. The caller vetoes its pick either way: the row it
+    chose is about to stop existing."""
+    dev, idx = card_entry_target(key)
+    if dev is None:
+        return None
+    port = next((r for e in (entries or [])
+                 for r in (list(e.get("routes") or [])
+                           + ([e["route"]] if e.get("route") else []))
+                 if r.get("device_id") == dev
+                 and r.get("index") == idx), None)
+    prof = (port or {}).get("profiles") or []
+    if not prof:
+        return None
+    target = prof[0]
+
+    def work():
+        try:
+            set_card_profile(dev, target)
+        except Exception as e:
+            from . import debug
+            debug.log("card profile: %s" % e)
+
+    in_thread(work)
+    return dev, port.get("card_device")
 
 
 def set_card_profile(device_id, index):
@@ -338,14 +484,14 @@ def list_capture_entries_from(sources):
     out, doors, seen = [], [], set()
     for s in sources or []:
         routes = [r for r in (s.get("routes") or [])
-                  if r.get("reachable", True)]
+                  if r.get("mine", r.get("reachable", True))]
         for r in (s.get("routes") or []):
             # a port the loaded profile does not carry: listed, so
             # the app offers what the desktop offers, and marked
             # with what choosing it costs. It speaks for no node
             # until the card is switched, which is what its key
             # says -- the card, not a node.
-            if r.get("reachable", True):
+            if r.get("reachable", True) or not _offerable(r):
                 continue
             ident = (r.get("device_id"), r.get("index"))
             if ident in seen:
@@ -357,8 +503,7 @@ def list_capture_entries_from(sources):
             e["route"] = r
             e["gain"] = None
             e["prio"] = -1
-            e["desc"] = ("%s - %s (switches the card)"
-                         % (r["description"], s["desc"]))
+            e["desc"] = _door_desc(r)
             doors.append(e)
         if len(routes) < 2:
             e = dict(s)

@@ -479,7 +479,8 @@ def _m62_card_dump():
                                  "card.profile.devices", list(snk)]]
     return [
         {"id": 346, "type": "PipeWire:Interface:Device",
-         "info": {"props": {"device.name": "alsa_card.usb-Topping_M62-00"},
+         "info": {"props": {"device.name": "alsa_card.usb-Topping_M62-00",
+                            "device.description": "Topping M62"},
                   "params": {
                       "Profile": [{"index": 2,
                                    "description": "Direct M62"}],
@@ -563,7 +564,8 @@ def test_a_port_behind_another_profile_gets_a_row_of_its_own():
     doors = [r for r in rows if r["node"] is None]
     assert [r["route"]["description"] for r in doors] == [
         "Aux stereo in", "Mic 2", "Mic 1"]
-    assert all("switches the card" in r["desc"] for r in doors)
+    # named the way the desktop names it: port, then card
+    assert doors[-1]["desc"] == "Mic 1 - Topping M62"
     dev, idx = pw.card_entry_target(doors[-1]["name"])
     assert (dev, idx) == (346, 9)                 # Mic 1
     assert pw.is_card_entry(doors[-1]["name"])
@@ -571,3 +573,108 @@ def test_a_port_behind_another_profile_gets_a_row_of_its_own():
     real = [r for r in rows if r["node"]]
     assert [r["node"] for r in real] == ["m62.source"]
     assert pw.card_entry_target(real[0]["name"]) == (None, None)
+
+
+def _m62_with_outputs(active):
+    """The card with its output ports, on a chosen profile: 2 is Direct
+    (one sink, card device 0), 1 is Default (five sinks, devices 2..6)."""
+    d = _m62_card_dump()
+    d[0]["info"]["params"]["Profile"] = [{"index": active}]
+    d[0]["info"]["params"]["EnumRoute"] += [
+        {"index": 0, "direction": "Output", "description": "Direct M62",
+         "devices": [0], "profiles": [2]}] + [
+        {"index": 20 + i, "direction": "Output",
+         "description": "Playback %d/%d" % (2 * i + 1, 2 * i + 2),
+         "devices": [2 + i], "profiles": [1]} for i in range(5)]
+    if active == 2:
+        nodes = [(0, "Direct M62")]
+    else:
+        nodes = [(2 + i, "M62 Playback %d/%d" % (2 * i + 1, 2 * i + 2))
+                 for i in range(5)]
+    for dev, desc in nodes:
+        d.append({"id": 400 + dev, "type": "PipeWire:Interface:Node",
+                  "info": {"props": {
+                      "node.name": "m62.sink.%d" % dev,
+                      "media.class": "Audio/Sink",
+                      "node.description": desc,
+                      "device.id": 346,
+                      "card.profile.device": dev}}})
+    return d
+
+
+def test_an_output_behind_another_profile_gets_a_door():
+    """On Direct there is one output node, and the five outputs of the
+    Default profile are reachable only by switching the card."""
+    from perdeviceeq import pw_backend as pw
+    rows = pw.list_playback_entries_from(
+        pw.list_sinks(_m62_with_outputs(2), default=""))
+    doors = [r for r in rows if r["node"] is None]
+    assert [r["route"]["description"] for r in doors] == [
+        "Playback 1/2", "Playback 3/4", "Playback 5/6",
+        "Playback 7/8", "Playback 9/10"]
+    # a door names its CARD too: several cards have a port called
+    # Speakers, and a row that says only "Speakers" is a coin toss
+    assert doors[0]["desc"] == "Playback 1/2 - Topping M62"
+    real = [r for r in rows if r["node"]]
+    assert [r["desc"] for r in real] == ["Direct M62"]
+
+
+def test_live_siblings_of_one_profile_are_not_doors():
+    """His field catch: on Default the card has FIVE output nodes, and
+    every one of them offered to switch the card to the other four --
+    a door beside each live sibling. Reachability is a question about
+    the PROFILE, not about which node happens to carry the port."""
+    from perdeviceeq import pw_backend as pw
+    rows = pw.list_playback_entries_from(
+        pw.list_sinks(_m62_with_outputs(1), default=""))
+    doors = [r for r in rows if r["node"] is None]
+    assert [r["route"]["description"] for r in doors] == ["Direct M62"]
+    assert len([r for r in rows if r["node"]]) == 5
+
+
+
+
+def test_a_port_with_nothing_plugged_in_is_not_offered():
+    """A graphics card enumerates one output per connector: with a
+    single television that is one available port and three that lead
+    nowhere. The desktop filters on availability; the list grew four
+    HDMI rows because we did not."""
+    from perdeviceeq import pw_backend as pw
+    d = _m62_with_outputs(2)
+    for r in d[0]["info"]["params"]["EnumRoute"]:
+        if r.get("description", "").startswith("Playback 5"):
+            r["available"] = "no"
+    rows = pw.list_playback_entries_from(pw.list_sinks(d, default=""))
+    doors = [r["route"]["description"] for r in rows if r["node"] is None]
+    assert "Playback 5/6" not in doors
+    assert "Playback 7/8" in doors
+
+
+def test_the_switch_says_what_to_watch_for():
+    """Vetoing the pick is only half of it: the row chosen is about to
+    stop existing and the one that replaces it has a name nobody can
+    know yet, so the switch reports the port and the window waits for
+    it. Without this the first pick only killed the old output and the
+    person had to choose again from the refreshed list."""
+    from perdeviceeq import pw_backend as pw
+    d = _m62_with_outputs(1)                    # Default is loaded
+    rows = pw.list_playback_entries_from(pw.list_sinks(d, default=""))
+    door = next(r for r in rows if r["node"] is None)
+    assert pw.card_entry_target(door["name"])[0] == 346
+
+    calls = []
+    real = pw.in_thread
+    pw.in_thread = lambda fn: calls.append(fn)
+    try:
+        want = pw.switch_to_port(door["name"], rows)
+    finally:
+        pw.in_thread = real
+    assert want == (346, 0)                     # the Direct sink device
+    assert len(calls) == 1
+
+    # nothing carries it yet, and once the card has moved it is found
+    assert pw.find_port_entry(rows, want) is None
+    after = pw.list_playback_entries_from(
+        pw.list_sinks(_m62_with_outputs(2), default=""))
+    hit = pw.find_port_entry(after, want)
+    assert hit is not None and hit["desc"] == "Direct M62"
