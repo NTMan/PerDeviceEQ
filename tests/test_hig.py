@@ -82,19 +82,37 @@ def test_h8_labels_dress_from_the_type_scale():
     assert "hero" in got[0]["msg"]
 
 
-def test_h2_action_row_anchors_to_an_edge():
-    floats = _box([_btn("Add"), _btn("Replace")], halign="center")
-    got = hig.lint(floats)
+def test_h2_a_button_group_is_never_stretched():
+    """Fill hands each button an equal share of the width, so two
+    buttons become two half-window slabs and stop looking like
+    buttons. That is the fault."""
+    stretched = _box([_btn("Add"), _btn("Replace")], halign="fill")
+    got = hig.lint(stretched)
     assert _rules(got) == ["H2"]
-    assert "anchor" in got[0]["fix"]
-    anchored = _box([_btn("Add"), _btn("Replace")],
-                    halign="start")
-    assert hig.lint(anchored) == []
+    assert "stretched" in got[0]["msg"]
+    for place in ("start", "end"):
+        placed = _box([_btn("Add"), _btn("Replace")], halign=place)
+        assert hig.lint(placed) == [], place
+    # centred WORDS are still an action row adrift
+    assert _rules(hig.lint(_box([_btn("Add"), _btn("Replace")],
+                                halign="center"))) == ["H2"]
     # a bar supplies its own geometry -- no finding there
     in_bar = _box([_btn("A", in_bar=True),
                    _btn("B", in_bar=True)],
                   halign="center", in_bar=True)
     assert hig.lint(in_bar) == []
+
+
+def test_h2_centre_is_a_place_a_page_action_may_take():
+    """His transport -- play and stop under the measurement card --
+    is centred on purpose: that is where a hand comes back to. The
+    rule used to call centre floating and it was wrong to."""
+    play = _btn(None, icon_only=True, tooltip="Measure Front Left")
+    stop = _btn(None, icon_only=True, tooltip="Stop the sweep")
+    assert hig.lint(_box([play, stop], halign="center")) == []
+    # and the same icons stretched are still wrong
+    assert _rules(hig.lint(_box([play, stop],
+                                halign="fill"))) == ["H2"]
 
 
 def test_h3_flat_needs_a_structured_container():
@@ -328,3 +346,50 @@ def test_no_window_attribute_is_used_before_it_is_set():
                             "%s.%s.%s: self.%s read at line %d, set at %d"
                             % (path.name, cls.name, name, attr, seen, line))
     assert not faults, "; ".join(faults)
+
+
+def test_a_wrapper_row_does_not_dress_the_list():
+    """H10 asks whether a row hoards text against its sisters. A bare
+    AdwPreferencesRow holding a slider or a tab strip carries no text
+    at all -- but its title is the empty STRING, not None, so it used
+    to count as a sister wearing nothing, drag the mode to zero, and
+    make every honestly subtitled row look overdressed."""
+    node = {"class": "GtkListBox", "children": [
+        {"class": "AdwPreferencesRow", "props": {"title": ""}},
+        {"class": "AdwPreferencesRow", "props": {"title": ""}},
+        {"class": "AdwComboRow", "props": {"title": "Output",
+                                           "subtitle": "Where the "
+                                                       "sweep is played"}},
+        {"class": "AdwComboRow", "props": {"title": "Measurement mic",
+                                           "subtitle": "Input the sweep "
+                                                       "is captured on"}},
+        {"class": "AdwActionRow", "props": {"title": "Recorded",
+                                            "subtitle": "0 calibrations"}},
+    ]}
+    out = []
+    hig._findings_h10(node, "p", out)
+    assert out == [], [o["msg"] for o in out]
+
+
+def test_a_row_that_really_does_hoard_is_still_caught():
+    node = {"class": "GtkListBox", "children": [
+        {"class": "AdwActionRow", "props": {"title": "One"}},
+        {"class": "AdwActionRow", "props": {"title": "Two"}},
+        {"class": "AdwActionRow", "props": {"title": "Three"}},
+        {"class": "AdwActionRow", "props": {"title": "Four",
+                                            "subtitle": "and a whole "
+                                                        "sentence"}},
+    ]}
+    out = []
+    hig._findings_h10(node, "p", out)
+    assert len(out) == 1 and "overdresses" in out[0]["msg"]
+
+
+def test_the_toolkits_own_menu_is_not_ours_to_align():
+    """A GtkPopoverMenu is built from a GMenuModel; its section boxes
+    are GTK's, and no application can set halign on one. Nineteen of
+    twenty-four findings in one field run came from inside one."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "tools" / "hig_audit.py").read_text(encoding="utf-8")
+    assert '"GtkPopoverMenu")' in src or '"GtkPopoverMenu",' in src

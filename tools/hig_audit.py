@@ -71,7 +71,13 @@ _SEALED = ("GtkSpinButton", "GtkDropDown", "GtkWindowControls",
            "AdwSheetControls", "AdwBackButton",
            # assembled from properties end to end, nothing in it
            # is placed by the app
-           "AdwAboutDialog")
+           "AdwAboutDialog",
+           # built by the toolkit from a GMenuModel: the section
+           # boxes and item rows inside are GTK's, and no
+           # application can set halign on a GtkMenuSectionBox.
+           # It answered for nineteen of twenty-four findings in
+           # one run, every one of them unfixable by us.
+           "GtkPopoverMenu")
 
 
 def _own_children(w, t):

@@ -104,7 +104,25 @@ def _findings_h1(node, path, out):
 
 
 def _findings_h2(node, path, out):
-    """H2: an action group anchors to an edge, never floats."""
+    """H2: a button group takes a place, and fill is not one.
+
+    Fill hands each button an equal share of the width, so two
+    buttons become two half-window slabs and the group stops looking
+    like buttons at all. That is always wrong.
+
+    CENTRE depends on what the buttons are, and the field taught both
+    halves. Round one: "Add band" and "Replace bands from file..."
+    centred mid-card -- an action row about the list above it, and the
+    eye called it floating; such a row anchors to an edge. Later: play
+    and stop under the measurement card, centred on purpose, because
+    that is where a hand comes back to -- and it reads well.
+
+    The difference is the face. A group wearing WORDS is an action row
+    and belongs at an edge; a group of icons is a control cluster and
+    may sit in the middle. Widening the rule to bless every centred
+    group would have un-caught round one, which its own court still
+    guards.
+    """
     kids = node.get("children") or []
     if len(kids) < 2 or not node.get("class", "").endswith("Box"):
         return
@@ -115,13 +133,25 @@ def _findings_h2(node, path, out):
     if "linked" in css or node.get("props", {}).get("in_bar"):
         return
     halign = node.get("props", {}).get("halign")
-    if halign in ("center", "fill"):
+    worded = [k for k in kids
+              if not (k.get("props", {}) or {}).get("icon_only")]
+    if halign == "fill":
         out.append({
             "rule": "H2", "path": path,
-            "msg": "action row of %d buttons floats (halign=%s)"
-                   % (len(kids), halign),
+            "msg": "button group of %d is stretched (halign=fill)"
+                   % len(kids),
+            "fix": "give it a place: halign start under lists and "
+                   "tables, end for dialog-style confirm rows, "
+                   "center for a cluster of icon controls"})
+    elif halign == "center" and worded:
+        out.append({
+            "rule": "H2", "path": path,
+            "msg": "action row of %d worded buttons floats "
+                   "(halign=center)" % len(kids),
             "fix": "anchor it: halign start under lists and "
-                   "tables, end for dialog-style confirm rows"})
+                   "tables, end for dialog-style confirm rows. "
+                   "Centre is for a cluster of icon controls, "
+                   "such as a transport"})
 
 
 def _findings_h3(node, path, out):
@@ -272,8 +302,13 @@ def _findings_h10(node, path, out):
         return
     def _p(k, key):
         return (k.get("props") or {}).get(key)
+    # a row that carries TEXT. AdwPreferencesRow's title defaults
+    # to the empty string rather than None, so a bare row holding
+    # a slider or a tab strip used to count as a row wearing
+    # nothing -- dragging the mode to 0 and making every honestly
+    # subtitled row look overdressed beside its own wrappers.
     rows = [k for k in (node.get("children") or [])
-            if _p(k, "title") is not None]
+            if _p(k, "title")]
     if len(rows) < 3:
         return
     lines = [((_p(k, "subtitle") or "").count("\n") + 1)
