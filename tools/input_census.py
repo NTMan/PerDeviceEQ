@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Which capture columns of a source actually carry anything.
 
-    python3 tools/input_census.py <source-node-name> [seconds]
+    python3 tools/input_census.py <source-node-name> [seconds] [--plain]
 
-Records the source WIDE for a few seconds and prints one line per
-column: its name, its peak, and a bar. Run it while a source plays --
-Bluetooth, OTG, coax, the analogue jack -- and the columns that move
-are that input's columns.
+On a terminal it draws LIVE bars, one per column, until you press q:
+knock on a capsule and the column that moves is the column. Two
+numbers per row -- what is there now, and the loudest thing since the
+last reset (r), which is what answers the question after the knock is
+over. Piped, or with --plain, it records for N seconds instead and
+prints a table, which is the form a pull request can be shown.
 
 Why this exists: his M62 declares sixteen capture columns and there is
 no document anywhere saying what they carry. The measurement window's
@@ -18,17 +20,17 @@ Runs from any directory. Nothing is written anywhere.
 
 import math
 import os
-import struct
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))
 
+from perdeviceeq import inmeter                       # noqa: E402
 from perdeviceeq import pw_backend                    # noqa: E402
 
-FS = 48000
-FLOOR_DB = -90.0
+FLOOR_DB = inmeter.FLOOR_DB
 
 
 def _dump():
@@ -82,6 +84,66 @@ def db(x):
     return FLOOR_DB if x <= 0 else max(FLOOR_DB, 20.0 * math.log10(x))
 
 
+def bar(d, width=40, lo=-60.0):
+    n = int(max(0.0, min(1.0, (d - lo) / (0.0 - lo))) * width)
+    return "#" * n
+
+
+def table(names, peaks, secs):
+    print()
+    for i, d in enumerate(peaks):
+        label = names[i] if i < len(names) else "col %d" % i
+        print("  %-8s %7.1f dBFS  %s" % (label, d, bar(d)))
+    live = [names[i] if i < len(names) else str(i)
+            for i, d in enumerate(peaks) if d > -60.0]
+    print()
+    print("carrying signal: %s" % (", ".join(live) if live else "none"))
+
+
+def watch(meter, names, n):
+    """Live bars until q. Knock on a capsule and read the column.
+
+    Two numbers per row: what is there NOW and the loudest thing seen
+    since the last reset. The hold is the one that answers "which
+    column did that knock land on" after the knock is over.
+    """
+    import curses
+
+    def run(scr):
+        curses.curs_set(0)
+        scr.nodelay(True)
+        hold = [FLOOR_DB] * n
+        shown = [FLOOR_DB] * n
+        while True:
+            k = scr.getch()
+            if k in (ord("q"), 27):
+                return hold
+            if k in (ord("r"), ord("R")):
+                hold = [FLOOR_DB] * n
+            live = meter.latest()
+            for i in range(n):
+                d = live[i] if live and i < len(live) else FLOOR_DB
+                shown[i] = d if d >= shown[i] else max(d, shown[i] - 3.0)
+                if d > hold[i]:
+                    hold[i] = d
+            scr.erase()
+            h, w = scr.getmaxyx()
+            width = max(10, min(50, w - 34))
+            scr.addnstr(0, 0, "knock on a capsule -- the column that "
+                        "moves is the column", w - 1)
+            scr.addnstr(1, 0, "q quit    r reset the hold", w - 1)
+            for i in range(min(n, h - 4)):
+                label = names[i] if i < len(names) else "col %d" % i
+                row = "  %-8s %7.1f  %-*s  hold %7.1f" % (
+                    label, shown[i], width, bar(shown[i], width),
+                    hold[i])
+                scr.addnstr(3 + i, 0, row, w - 1)
+            scr.refresh()
+            time.sleep(0.06)
+
+    return curses.wrapper(run)
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -91,8 +153,10 @@ def main():
             for n_, d in found:
                 print("  %s%s" % (n_, ("   -- " + d) if d else ""))
         return 2
-    name = sys.argv[1]
-    secs = float(sys.argv[2]) if len(sys.argv) > 2 else 10.0
+    args = [a for a in sys.argv[1:] if a != "--plain"]
+    plain = "--plain" in sys.argv or not sys.stdout.isatty()
+    name = args[0]
+    secs = float(args[1]) if len(args) > 1 else 10.0
     names = node_channels(name)
     nid = node_id(name)
     if nid is None:
@@ -109,51 +173,32 @@ def main():
             print("\nno capture nodes at all -- is the card plugged in?")
         return 1
     n = len(names) or 2
-    print("%s -- %d columns, %.0f s" % (name, n, secs))
-    if not names:
-        print("(the node declares no channel names; assuming stereo)")
-    props = ('{ node.name = input-census, node.target = %d, '
-             'node.dont-reconnect = true }' % int(nid))
-    cmd = ["pw-record", "--raw", "-P", props, "--format", "f32",
-           "--rate", str(FS), "--channels", str(n), "-"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL)
-    peaks = [0.0] * n
-    want = int(FS * secs) * n * 4
-    got = 0
+    meter = inmeter.InputMeter()
     try:
-        while got < want:
-            chunk = proc.stdout.read(min(1 << 16, want - got))
-            if not chunk:
-                break
-            got += len(chunk)
-            frames = len(chunk) // (4 * n)
-            if not frames:
-                continue
-            vals = struct.unpack("<%df" % (frames * n),
-                                 chunk[:frames * n * 4])
-            for i, v in enumerate(vals):
-                a = -v if v < 0 else v
-                c = i % n
-                if a > peaks[c]:
-                    peaks[c] = a
-    except KeyboardInterrupt:
-        pass
-    finally:
-        proc.terminate()
-    if not got:
-        print("nothing was captured -- is the node still there?")
+        meter.start(nid, n)
+    except Exception as e:
+        print("could not open the capture: %s" % e)
         return 1
-    print()
-    for i, p in enumerate(peaks):
-        d = db(p)
-        bar = "#" * int(max(0, (d + 60.0) / 60.0 * 40))
-        label = names[i] if i < len(names) else "col %d" % i
-        print("  %-8s %7.1f dBFS  %s" % (label, d, bar))
-    live = [names[i] if i < len(names) else str(i)
-            for i, p in enumerate(peaks) if db(p) > -60.0]
-    print()
-    print("carrying signal: %s" % (", ".join(live) if live else "none"))
+    try:
+        if plain:
+            print("%s -- %d columns, %.0f s" % (name, n, secs))
+            if not names:
+                print("(the node declares no channel names; "
+                      "assuming stereo)")
+            peaks = [FLOOR_DB] * n
+            end = time.monotonic() + secs
+            while time.monotonic() < end:
+                live = meter.latest()
+                if live:
+                    peaks = [max(a, b) for a, b in zip(peaks, live)]
+                time.sleep(0.05)
+            table(names, peaks, secs)
+        else:
+            peaks = watch(meter, names, n)
+            print("%s -- %d columns" % (name, n))
+            table(names, peaks, secs)
+    finally:
+        meter.stop()
     return 0
 
 

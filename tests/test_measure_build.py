@@ -600,3 +600,21 @@ def test_a_meter_with_nothing_behind_it_reads_empty():
         db = shown.get(ch, floor)
         return min(1.0, max(0.0, (db - floor) / (0.0 - floor)))
     assert fraction(0) == 0.0 and fraction(1) == 0.0
+
+
+def test_the_census_bar_and_floor_agree_with_the_meter():
+    """The tool draws what the window's meter measures, so the two
+    must share a floor and a scale rather than each inventing one."""
+    import importlib.util
+    import pathlib
+    from perdeviceeq import inmeter
+    p = (pathlib.Path(__file__).resolve().parent.parent
+         / "tools" / "input_census.py")
+    spec = importlib.util.spec_from_file_location("input_census", p)
+    ic = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ic)
+    assert ic.FLOOR_DB == inmeter.FLOOR_DB
+    assert ic.bar(0.0, 10) == "#" * 10
+    assert ic.bar(-60.0, 10) == ""
+    assert ic.bar(-90.0, 10) == ""          # below the scale, not negative
+    assert len(ic.bar(-30.0, 10)) == 5
