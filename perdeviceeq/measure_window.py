@@ -2507,8 +2507,7 @@ class MeasureWindow(Adw.Window):
         if grp is None:
             return
         for row in getattr(self, "cal_rows", []):
-            parent = row.get_parent()
-            if parent is not None:
+            if row.get_parent() is not None:
                 grp.remove(row)
         self.cal_rows = []
         self.cal_cols = []
@@ -2583,8 +2582,16 @@ class MeasureWindow(Adw.Window):
         grp = getattr(self, "_measure_grp", None)
         if grp is None:
             return
+        # EACH REMOVES ITS OWN. The cal rows belong to
+        # _rebuild_cal_row, which has three callers and must clear
+        # them wherever it runs; this one owns the column picker. They
+        # were both clearing both, so the second pass asked the group
+        # to drop a row it no longer held and Adw said so in the
+        # terminal -- a warning nobody planned is one that will hide a
+        # real one later.
         for row in getattr(self, "_cap_rows", []):
-            grp.remove(row)
+            if row.get_parent() is not None:
+                grp.remove(row)
         self._cap_rows = []
         self.map_dds = {}
         ch = self._selected_ch
@@ -2604,7 +2611,6 @@ class MeasureWindow(Adw.Window):
             self.map_dds[ch] = row
             self.cal_group = grp
             self._rebuild_cal_row()
-            self._cap_rows.extend(self.cal_rows)
         # the transport stays LAST: rows added after it would otherwise
         # land below the thing a hand comes back to
         act = getattr(self, "_act_row", None)
