@@ -881,7 +881,12 @@ class MeasureWindow(Adw.Window):
                            ms.TAKE_FLAGGED: "warning",
                            ms.TAKE_CLIPPED: "error"}.get(q, "dim-label"))
         head.append(dot)
-        if rec.clipped:
+        if q == ms.TAKE_SILENT:
+            # name the absence instead of describing it. "SNR n/a
+            # -inf dBFS" reads as a measurement with two poor numbers;
+            # this take is not a poor measurement, it is none.
+            info = "no sweep heard on this column"
+        elif rec.clipped:
             info = "clipped  %.1f dBFS" % rec.peak_dbfs
         else:
             snr = ("SNR %.1f dB" % rec.snr_db
@@ -1408,7 +1413,11 @@ class MeasureWindow(Adw.Window):
             return ""
         if self._clean_count(ch) >= CLEAN_TARGET:
             return "done"
-        if any(ms.take_quality(r) == ms.TAKE_CLIPPED for r in takes):
+        if any(ms.take_quality(r) in (ms.TAKE_CLIPPED, ms.TAKE_SILENT)
+               for r in takes):
+            # silence is as red as clipping and for the same reason:
+            # neither is a measurement, and a tab that looks neutral
+            # invites another sweep down the same dead column
             return "bad"
         spread = self.session.spread_db(ch)
         if spread is not None and len(spread) \

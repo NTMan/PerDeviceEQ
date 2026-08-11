@@ -959,6 +959,7 @@ def trusted_band_hz(freqs, ok, min_run_oct=1.0 / 6.0):
 TAKE_CLEAN = "clean"        # counts toward a channel's three good takes
 TAKE_FLAGGED = "flagged"    # usable but not ideal; does NOT count
 TAKE_CLIPPED = "clipped"    # unusable
+TAKE_SILENT = "silent"      # not a measurement at all
 
 
 def testified(rec):
@@ -981,11 +982,25 @@ def take_quality(rec):
     """Classify an accepted take. Single source of truth for the wizard's
     ring/row status and the 'three clean takes' rule -- CLI, GUI and tests
     all judge quality here, using the same thresholds the live take() path
-    warns on. Clipping is unusable (red); a hot peak (>= HOT_DBFS) or low
-    SNR (< SNR_WARN_DB) is usable-but-flagged (amber) and does not count;
-    everything else is clean (green). A repaired single-sample glitch
-    stays clean -- the take is unaffected by an interpolated sample --
-    while a None SNR (no onset found) is treated as unknown, not low."""
+    warns on.
+
+    FOUR verdicts, and the first is the one this judge lacked. A take
+    that heard NOTHING -- no onset, so no SNR to compute -- used to
+    fall through every test and come out clean, because each test asks
+    whether something is WRONG and nothing is wrong with silence. A
+    green dot went on a flat line at -240 dBFS and counted toward
+    "three clean takes". The file already knew the case: testified()
+    says such a take is "not a bad measurement, it is an absence of
+    one", and this function simply never asked it. It asks now, first,
+    before anything else can call the silence fine.
+
+    Then: clipping is unusable (red); a hot peak (>= HOT_DBFS) or low
+    SNR (< SNR_WARN_DB) is usable-but-flagged (amber) and does not
+    count; everything else is clean (green). A repaired single-sample
+    glitch stays clean -- the take is unaffected by an interpolated
+    sample."""
+    if not testified(rec):
+        return TAKE_SILENT
     if rec.clipped:
         return TAKE_CLIPPED
     if rec.peak_dbfs >= HOT_DBFS:

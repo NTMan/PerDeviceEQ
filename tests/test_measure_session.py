@@ -256,11 +256,23 @@ def test_take_quality_thresholds():
         _q_rec(peak_dbfs=ms.HOT_DBFS + 0.5)) == ms.TAKE_FLAGGED
     assert ms.take_quality(
         _q_rec(peak_dbfs=ms.HOT_DBFS - 0.5)) == ms.TAKE_CLEAN
-    # low SNR is flagged; unknown (None) SNR is not
+    # low SNR is flagged
     assert ms.take_quality(
         _q_rec(snr_db=mc.SNR_WARN_DB - 1.0)) == ms.TAKE_FLAGGED
     assert ms.take_quality(_q_rec(snr_db=mc.SNR_WARN_DB)) == ms.TAKE_CLEAN
-    assert ms.take_quality(_q_rec(snr_db=None)) == ms.TAKE_CLEAN
+    # NO SNR AT ALL IS NOT A TAKE. This court used to pin the opposite
+    # -- None meant "unknown, and unknown is not low, so clean" -- and
+    # the field showed what that costs: a sweep aimed at a column
+    # nothing came back on produced a flat line at -240 dBFS wearing a
+    # green dot and counting toward three clean takes. Unknown is not
+    # the same as fine.
+    assert ms.take_quality(_q_rec(snr_db=None)) == ms.TAKE_SILENT
+    assert ms.take_quality(
+        _q_rec(snr_db=float("-inf"))) == ms.TAKE_SILENT
+    # and silence wins over every other complaint: there is nothing
+    # there to be hot or clipped about
+    assert ms.take_quality(
+        _q_rec(snr_db=None, clipped=3, peak_dbfs=0.0)) == ms.TAKE_SILENT
     # a repaired single-sample glitch stays clean
     assert ms.take_quality(_q_rec(repaired=1)) == ms.TAKE_CLEAN
 
@@ -991,3 +1003,22 @@ def test_a_session_can_be_handed_the_graph_it_needs():
     assert "dump" in sig.parameters
     src = inspect.getsource(ms.MeasureSession.__init__)
     assert "dump if dump is not None else pw_dump()" in src
+
+
+def test_a_take_that_heard_nothing_is_not_a_clean_take():
+    """The bug he found in the field, as an assertion. A sweep aimed at
+    a column nothing comes back on still produces a record: the
+    deconvolution runs on noise and out comes a flat line at -240 dBFS.
+    Every test in the judge asks whether something is WRONG, and
+    nothing is wrong with silence -- so it came out clean, wore a green
+    dot, and counted toward three clean takes."""
+    assert ms.take_quality(_q_rec(snr_db=None)) == ms.TAKE_SILENT
+    assert ms.take_quality(_q_rec(snr_db=float("-inf"))) == ms.TAKE_SILENT
+    assert ms.take_quality(_q_rec(snr_db=float("nan"))) == ms.TAKE_SILENT
+    # and it is not merely "not clean" -- it is its own verdict, so a
+    # caller can say "no sweep heard" rather than "poor measurement"
+    assert ms.TAKE_SILENT not in (ms.TAKE_CLEAN, ms.TAKE_FLAGGED,
+                                  ms.TAKE_CLIPPED)
+    # testified() has known this all along; the judge just never asked
+    assert ms.testified(_q_rec(snr_db=None)) is False
+    assert ms.testified(_q_rec(snr_db=40.0)) is True
