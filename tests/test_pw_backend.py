@@ -744,3 +744,27 @@ def test_the_heartbeat_hands_its_dump_over():
     from perdeviceeq import audio_backend as ab
     assert hasattr(ab.AudioBackend, "last_dump")
     assert ab.AudioBackend.last_dump is None, "born empty, filled by a pull"
+
+
+def test_a_door_speaks_for_no_node_by_any_field():
+    """A door row is a port behind another card profile. It is built
+    as a COPY of the live source, so it used to keep that source's id
+    and channel list while declaring node = None -- and a caller that
+    reached past `node` for `id` got a working handle to a device the
+    person had not chosen. The input meter did that and metered a
+    stranger while the banner said the mic was gone."""
+    from perdeviceeq import pw_backend as pw
+    src = {"name": "m62.direct", "id": 61, "desc": "M62 Direct",
+           "channels": ["AUX%d" % i for i in range(16)],
+           "routes": [{"index": 1, "device_id": 7, "mine": True,
+                       "reachable": True, "description": "Direct",
+                       "available": True, "profiles": [2]},
+                      {"index": 7, "device_id": 7, "mine": False,
+                       "reachable": False, "description": "Aux",
+                       "available": True, "profiles": [1]}]}
+    doors = [e for e in pw.list_capture_entries_from([src])
+             if e.get("node") is None]
+    assert doors, "the unreachable port is offered as a door"
+    for d in doors:
+        assert d["id"] is None
+        assert d["channels"] == []

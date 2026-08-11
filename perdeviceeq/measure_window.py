@@ -2641,19 +2641,33 @@ class MeasureWindow(Adw.Window):
 
     def _meter_wanted(self):
         """A tap costs a capture stream, so it runs only when it can
-        be both useful and harmless: the window on screen, a rig
-        resolved, and no sweep in flight -- during a sweep the only
-        thing this window offers is Stop, and the capture belongs to
-        the take."""
+        be both useful and harmless: the window on screen, a rig that
+        is actually THERE, and no sweep in flight -- during a sweep
+        the only thing this window offers is Stop, and the capture
+        belongs to the take.
+
+        Present, not merely chosen, and by the window's OWN test --
+        the same pair that darkens the transport and raises the
+        banner. The picker keeps a vanished rig on purpose, so that a
+        mic pulled out and put back is the same rig; asking the picker
+        whether a mic exists answers a different question, and the
+        field showed it at once: the banner said the mic was gone
+        while the bars beside it still moved. One window, one idea of
+        what present means."""
         return bool(self.get_mapped() and not self._busy
-                    and self.mic_picker.core.node and self.mic_ch)
+                    and self.mic_ch and self._source_present()
+                    and not self._mic_gone)
 
     def _sync_inmeter(self):
         want = self._meter_wanted()
         if want and not self._inmeter.alive():
             src = self._selected_source() or {}
+            # its own claim to a live node, then the id. A door row
+            # declares node = None and carries no id now, but a meter
+            # is the last place to trust one field alone: what it taps
+            # must be the node the picker resolves to and nothing else.
             node = src.get("id")
-            if node is None:
+            if node is None or not src.get("node"):
                 return
             try:
                 self._inmeter.start(node, self.mic_ch)
@@ -2665,12 +2679,22 @@ class MeasureWindow(Adw.Window):
                     66, self._on_meter_tick)
         elif not want and self._inmeter.alive():
             self._inmeter.stop()
+            self._meter_dark()
+
+    def _meter_dark(self):
+        """A meter with nothing behind it reads EMPTY.
+
+        Leaving the last levels on the bars would be the same lie as a
+        green dot on digital silence: a picture that outlives the thing
+        it pictured."""
+        self._meter_shown = {}
+        self._paint_meters()
 
     def _on_meter_tick(self):
         if not self._meter_wanted():
             self._inmeter.stop()
             self._meter_tick = None
-            self._paint_meters()
+            self._meter_dark()
             return False
         peaks = self._inmeter.latest()
         fall = self.METER_FALL * 0.066

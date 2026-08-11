@@ -571,3 +571,32 @@ def test_a_silent_column_reads_the_floor_not_minus_infinity():
     assert inmeter.peak_db(0.0) == inmeter.FLOOR_DB
     assert inmeter.peak_db(1.0) == 0.0
     assert abs(inmeter.peak_db(0.5) + 6.02) < 0.01
+
+
+def test_the_meter_runs_only_when_the_window_says_the_mic_is_here():
+    """The gate, as one expression. It asked the PICKER whether a mic
+    existed, and the picker keeps a vanished rig on purpose -- so the
+    banner said the mic was gone while the bars beside it still moved.
+    The window already had a test for present; there is one now, not
+    two."""
+    def wanted(mapped, busy, width, present, gone):
+        return bool(mapped and not busy and width and present
+                    and not gone)
+    assert wanted(True, False, 2, True, False)
+    assert not wanted(True, False, 2, True, True)     # the banner's flag
+    assert not wanted(True, False, 2, False, False)   # not in the graph
+    assert not wanted(True, True, 2, True, False)     # a sweep owns it
+    assert not wanted(False, False, 2, True, False)   # window away
+
+
+def test_a_meter_with_nothing_behind_it_reads_empty():
+    """Leaving the last levels on the bars is the same lie as a green
+    dot on digital silence: a picture that outlives what it pictured."""
+    shown = {0: -6.0, 1: -12.0}
+    shown = {}                       # what _meter_dark does
+    floor = -60.0
+
+    def fraction(ch):
+        db = shown.get(ch, floor)
+        return min(1.0, max(0.0, (db - floor) / (0.0 - floor)))
+    assert fraction(0) == 0.0 and fraction(1) == 0.0

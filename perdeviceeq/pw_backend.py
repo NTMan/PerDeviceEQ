@@ -509,6 +509,17 @@ def list_capture_entries_from(sources):
             e = dict(s)
             e["name"] = card_entry_key(r["device_id"], r["index"])
             e["node"] = None
+            # and no ID either. It was a copy of the LIVE source, so
+            # the door kept the live node's id while declaring it
+            # spoke for no node -- and a caller that reached past
+            # `node` for `id` got a working handle to a device the
+            # person had not chosen. The input meter did exactly that
+            # and metered a stranger; the capture-gain slider reads
+            # the same field and would have turned a stranger's knob.
+            # A door speaks for no node: not by its name, not by its
+            # id, not by its channels.
+            e["id"] = None
+            e["channels"] = []
             e["route"] = r
             e["gain"] = None
             e["prio"] = -1
