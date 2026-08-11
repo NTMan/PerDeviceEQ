@@ -768,3 +768,14 @@ def test_a_door_speaks_for_no_node_by_any_field():
     for d in doors:
         assert d["id"] is None
         assert d["channels"] == []
+
+
+def test_a_channel_list_arrives_as_text_with_brackets():
+    """pw-dump hands audio.position as SPA JSON text. A second parser
+    that split it on commas printed "[ AUX0" and "AUX15 ]" in the
+    field -- one parser for one question."""
+    from perdeviceeq import pw_backend as pw
+    assert pw._parse_position("[ AUX0, AUX1 ]") == ["AUX0", "AUX1"]
+    assert pw._parse_position(["AUX0", "AUX1"]) == ["AUX0", "AUX1"]
+    assert pw._parse_position("[ FL, FR ]") == ["FL", "FR"]
+    assert pw._parse_position(None) == []
