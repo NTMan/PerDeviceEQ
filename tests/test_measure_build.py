@@ -547,3 +547,27 @@ def test_a_column_wears_the_name_the_card_gives_it():
     assert labels([], 2) == ["L", "R"]
     assert labels(["FL", "FR"], 2) == ["FL", "FR"]
     assert labels([], 1) == ["Mono"]
+
+
+def test_the_input_meter_finds_the_column_that_moved():
+    """His idea, as an assertion: a card with sixteen capture columns
+    tells you nothing about which one the microphone is on. Knock on
+    the capsule and the column that moved is the column that moved."""
+    import struct
+    from perdeviceeq import inmeter
+    m = inmeter.InputMeter()
+    frames = [[0.0, 0.001, 0.5, 0.0] for _ in range(8)]
+    raw = b"".join(struct.pack("<4f", *f) for f in frames)
+    m._digest(raw, 4)
+    peaks = m.latest()
+    assert len(peaks) == 4
+    assert peaks[2] > peaks[1] > peaks[0] == inmeter.FLOOR_DB
+    assert abs(peaks[2] - (-6.02)) < 0.1        # 0.5 is -6 dBFS
+    assert peaks[3] == inmeter.FLOOR_DB          # silence stays floored
+
+
+def test_a_silent_column_reads_the_floor_not_minus_infinity():
+    from perdeviceeq import inmeter
+    assert inmeter.peak_db(0.0) == inmeter.FLOOR_DB
+    assert inmeter.peak_db(1.0) == 0.0
+    assert abs(inmeter.peak_db(0.5) + 6.02) < 0.01

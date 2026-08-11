@@ -34,6 +34,7 @@ from . import curve_view as cv                      # noqa: E402
 from . import curve_export                          # noqa: E402
 from . import pw_backend
 from . import chantabs                               # noqa: E402
+from . import inmeter                                # noqa: E402
 from . import eq                                     # noqa: E402
 from . import debug
 from .picker import NodePicker                       # noqa: E402
@@ -211,10 +212,16 @@ class MeasureWindow(Adw.Window):
         self._page = None            # selected channel's page widgets
         self._selected_ch = 0        # target the row has selected
         self.tabs = None             # the shared channel row
+        self._inmeter = inmeter.InputMeter()
+        self._meter_bars = {}        # column -> Gtk.LevelBar in the list
+        self._meter_shown = {}       # column -> the dB the eye sees
+        self._meter_tick = None
 
         _t = time.monotonic()
         self._build_ui()
         debug.timing("_build_ui", _t)
+        self.connect("map", lambda *_: self._sync_inmeter())
+        self.connect("unmap", lambda *_: self._inmeter.stop())
         self._select_channel(0)
         self.connect("close-request", self._on_close)
         _t = time.monotonic()
@@ -2587,6 +2594,7 @@ class MeasureWindow(Adw.Window):
             row.set_subtitle("Where %s comes back"
                              % _speaker_name(self.ch_keys[ch]))
             row.set_model(Gtk.StringList.new(self._mic_labels()))
+            row.set_list_factory(self._meter_factory())
             row.set_selected(min(self.mic_of.get(ch, 0),
                                  self.mic_ch - 1))
             row.connect("notify::selected", self._make_map_cb(ch))
@@ -2621,6 +2629,110 @@ class MeasureWindow(Adw.Window):
         btn.set_tooltip_text(
             "Measure %s" % _speaker_name(self.ch_keys[ch])
             if 0 <= ch < len(self.ch_keys) else "Measure")
+
+    # ---- the input meter, one bar per capture column ------------------
+    #
+    # His idea, and the best one of the evening: a card with sixteen
+    # columns tells you nothing about which one the microphone is on.
+    # Knock on the capsule, watch the list, see the column move. No
+    # measurement, no guessing, no probe script.
+    METER_FLOOR = -60.0          # the bottom of the bars
+    METER_FALL = 40.0            # dB per second the display falls
+
+    def _meter_wanted(self):
+        """A tap costs a capture stream, so it runs only when it can
+        be both useful and harmless: the window on screen, a rig
+        resolved, and no sweep in flight -- during a sweep the only
+        thing this window offers is Stop, and the capture belongs to
+        the take."""
+        return bool(self.get_mapped() and not self._busy
+                    and self.mic_picker.core.node and self.mic_ch)
+
+    def _sync_inmeter(self):
+        want = self._meter_wanted()
+        if want and not self._inmeter.alive():
+            src = self._selected_source() or {}
+            node = src.get("id")
+            if node is None:
+                return
+            try:
+                self._inmeter.start(node, self.mic_ch)
+            except Exception as e:
+                debug.log("input meter: %s" % e)
+                return
+            if self._meter_tick is None:
+                self._meter_tick = GLib.timeout_add(
+                    66, self._on_meter_tick)
+        elif not want and self._inmeter.alive():
+            self._inmeter.stop()
+
+    def _on_meter_tick(self):
+        if not self._meter_wanted():
+            self._inmeter.stop()
+            self._meter_tick = None
+            self._paint_meters()
+            return False
+        peaks = self._inmeter.latest()
+        fall = self.METER_FALL * 0.066
+        shown = self._meter_shown
+        for i in range(self.mic_ch):
+            live = peaks[i] if peaks and i < len(peaks) else self.METER_FLOOR
+            was = shown.get(i, self.METER_FLOOR)
+            shown[i] = live if live >= was else max(live, was - fall)
+        self._paint_meters()
+        return True
+
+    def _meter_fraction(self, ch):
+        db = self._meter_shown.get(ch, self.METER_FLOOR)
+        lo = self.METER_FLOOR
+        return min(1.0, max(0.0, (db - lo) / (0.0 - lo)))
+
+    def _paint_meters(self):
+        for ch, bar in list(self._meter_bars.items()):
+            try:
+                bar.set_value(self._meter_fraction(ch))
+            except Exception:
+                self._meter_bars.pop(ch, None)
+
+    def _meter_factory(self):
+        """One row of the column list: the card's name for the column,
+        and a bar that moves when that column does."""
+        f = Gtk.SignalListItemFactory()
+
+        def setup(_f, item):
+            box = Gtk.Box(spacing=12)
+            lbl = Gtk.Label(xalign=0.0)
+            lbl.set_hexpand(True)
+            bar = Gtk.LevelBar()
+            bar.set_min_value(0.0)
+            bar.set_max_value(1.0)
+            bar.set_size_request(90, -1)
+            bar.set_valign(Gtk.Align.CENTER)
+            box.append(lbl)
+            box.append(bar)
+            item.set_child(box)
+
+        def bind(_f, item):
+            box = item.get_child()
+            lbl = box.get_first_child()
+            bar = lbl.get_next_sibling()
+            obj = item.get_item()
+            lbl.set_text(obj.get_string() if obj is not None else "")
+            pos = item.get_position()
+            self._meter_bars[pos] = bar
+            bar.set_value(self._meter_fraction(pos))
+
+        def unbind(_f, item):
+            box = item.get_child()
+            bar = box.get_first_child().get_next_sibling()
+            for k, v in list(self._meter_bars.items()):
+                if v is bar:
+                    self._meter_bars.pop(k, None)
+
+        f.connect("setup", setup)
+        f.connect("bind", bind)
+        f.connect("unbind", unbind)
+        return f
 
     def _make_map_cb(self, k):
         def cb(dd, _p):
@@ -3124,6 +3236,7 @@ class MeasureWindow(Adw.Window):
         self.source_dd.set_tooltip_text(None)
 
     def _update_pult(self):
+        self._sync_inmeter()
         """The pult is the shared gone lock (field verdict): a
         sweep needs a speaker AND a mic, so both sweep triggers
         -- play and the releveler -- obey both ends of the
