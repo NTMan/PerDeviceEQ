@@ -199,6 +199,17 @@ def card_output_ports(node_name, dump=None):
     return _card_ports(node_name, "Output", dump)
 
 
+def _spa_info(info):
+    """A route's `info` is a flat SPA array: a count, then key, value,
+    key, value. PipeWire publishes route.hw-volume and route.hw-mute
+    there, and pactl's HW_VOLUME_CTRL flag is that same bit under
+    another name."""
+    if not isinstance(info, (list, tuple)) or len(info) < 3:
+        return {}
+    body = list(info[1:])
+    return {str(k): str(v) for k, v in zip(body[0::2], body[1::2])}
+
+
 def _card_ports(node_name, want, dump=None):
     """EVERY port of the card behind a node in one direction, not just
     the ones the loaded profile exposes.
@@ -288,6 +299,20 @@ def _card_ports(node_name, want, dump=None):
                           else card_dev in devs),
             "active": (card_dev in devs
                        and any(a.get("index") == idx for a in active))})
+        # volumeBase and the hw-volume bit are published only for the
+        # ACTIVE route, so they can be attached to that one and to no
+        # other. Unknown is the honest answer for the rest, and it is
+        # what None says here.
+        cur = next((a for a in active if a.get("index") == idx), None)
+        out[-1]["hw_volume"] = None
+        out[-1]["volume_base"] = None
+        if cur is not None:
+            flag = _spa_info(cur.get("info")).get("route.hw-volume")
+            if flag is not None:
+                out[-1]["hw_volume"] = (flag == "true")
+            base = (cur.get("props") or {}).get("volumeBase")
+            if base is not None:
+                out[-1]["volume_base"] = float(base)
     return out
 
 
@@ -861,6 +886,41 @@ def gain_state(node_name, dump=None):
         if p.get("node.name") == node_name:
             return gain_of_node(o)
     return None, None
+
+
+def fader_kind(routes, gain=None):
+    """What a capture fader can actually DO, decided from the active
+    route rather than from a value that happens to be in it.
+
+    gain_of_node() can tell a hardware multiplier from a software one,
+    but only while the fader is off unity -- at unity both multiply by
+    one and it honestly returns None. Unity is where an untouched rig
+    sits, so that answer arrives exactly when it is not useful. The
+    route carries the same fact statically:
+
+      "analog"      the route has a hardware volume and its unity
+                    point is below the top, so there is travel ABOVE
+                    unity: real gain, worth searching, buys SNR
+      "attenuator"  a hardware volume whose unity point IS the top:
+                    it can only cut. Moving it throws resolution away
+                    and buys nothing, so it belongs at maximum
+      "software"    no hardware volume on the route, or no route at
+                    all: the fader is a multiplier in the graph. It
+                    buys no headroom and no noise, and belongs at one
+
+    A fader is worth showing in exactly one of these three cases.
+    """
+    active = next((r for r in (routes or []) if r.get("active")), None)
+    if active is None or not active.get("hw_volume"):
+        return "software"
+    base = active.get("volume_base")
+    if base is None:
+        # a hardware volume whose unity point was not published: the
+        # live reading is the only evidence left, and at unity there
+        # is none
+        return "analog" if (gain or (None, None))[1] == "hardware" else \
+            "attenuator"
+    return "analog" if base < 0.999 else "attenuator"
 
 
 def gain_of_node(o):

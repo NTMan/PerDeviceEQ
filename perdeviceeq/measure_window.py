@@ -3177,13 +3177,35 @@ class MeasureWindow(Adw.Window):
             return
         src = self._selected_source() or {}
         cubic, kind = src.get("gain") or (None, None)
+        # what the fader CAN do is a property of the route, not of the
+        # value standing in it: at unity a hardware multiplier and a
+        # software one look the same, and unity is where an untouched
+        # rig sits.
+        self._fader_kind = pw_backend.fader_kind(src.get("routes"),
+                                                 src.get("gain"))
         self._gain_kind = kind
-        self._gain_ok = cubic is not None
-        row.set_sensitive(cubic is not None)
-        if cubic is None:
+        self._gain_ok = self._fader_kind == "analog"
+        row.set_sensitive(self._gain_ok)
+        if not self._gain_ok:
+            # shown, not hidden: an absent control cannot be told from
+            # a broken app, while a dead one at full says something
+            # about the device. It is pinned rather than left where it
+            # was, because a multiplier that buys nothing still costs
+            # the take its level.
             self._gain_seeded = None
+            self._gain_guard = True
+            row.set_value(100)
+            self._gain_guard = False
             row.set_tooltip_text(
-                "This input has no gain control of its own.")
+                {"attenuator": "This input's gain can only attenuate: "
+                               "it sits after the converter, so "
+                               "lowering it throws resolution away "
+                               "and buys no headroom. Held at full.",
+                 "software": "This input has no gain of its own -- "
+                             "this fader would only be a multiplier "
+                             "in software, which buys no headroom and "
+                             "improves no noise. Held at full."}[
+                     self._fader_kind])
             return
         # seeded from the card ONCE per rig, and after that the hand
         # owns it. Re-reading it on every heartbeat meant a lagging
