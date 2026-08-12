@@ -83,14 +83,15 @@ def main():
                          "the old one back afterwards. A card's ports are "
                          "different measurements: a coupler in the "
                          "microphone jack is not heard on line in")
-    ap.add_argument("--lo", type=float, default=None,
-                    help="bottom of the ladder in dB. Defaults to the "
-                         "route's own unity point, because below it the "
-                         "control ATTENUATES and attenuation cannot lift "
-                         "the input above the converter's floor")
+    ap.add_argument("--lo", type=float, default=-60.0,
+                    help="bottom of the ladder in dB (default -60). The "
+                         "ladder spans the control on purpose: the flat "
+                         "stretch it needs as a reference often lies "
+                         "BELOW the unity point, and starting at unity "
+                         "cuts the left half of the knee away")
     ap.add_argument("--hi", type=float, default=0.0,
                     help="top of the ladder in dB (default 0)")
-    ap.add_argument("--steps", type=int, default=8)
+    ap.add_argument("--steps", type=int, default=10)
     ap.add_argument("--dwell", type=float, default=1.5,
                     help="seconds of silence per rung")
     ap.add_argument("--no-refine", action="store_true")
@@ -178,12 +179,12 @@ def main():
                   None)
     base = (active or {}).get("volume_base")
     lo = args.lo
-    if lo is None:
-        lo = (20.0 * math.log10(base)
-              if base and 0.0 < base < 1.0 else -60.0)
-        print("bottom  : %.1f dB%s"
-              % (lo, "  (the route's unity point)" if base else
-                 "  (no unity point published; a plain default)"))
+    if base and 0.0 < base < 1.0:
+        # printed, not used as a boundary: it tells you which part of
+        # the walk the card only attenuates in, and the software
+        # stretch usually ends near it
+        print("unity   : %.1f dB (cubic %.3f) -- below this the card "
+              "attenuates" % (20.0 * math.log10(base), base ** (1 / 3.0)))
 
     before = (src.get("gain") or (None, None))[0]
     print("columns : %d (%s)" % (channels, ", ".join(names) or "unnamed"))
@@ -329,9 +330,23 @@ def main():
 
     v = knee.verdict(rungs)
     print("\n%s" % _draw(v.rungs))
+    if v.segments:
+        print("  the curve reads, in order:")
+        for seg in v.segments:
+            print("    %-7s %+6.1f .. %+6.1f dB   %5.2f dB per dB"
+                  % (seg.kind, seg.lo, seg.hi, seg.slope))
+        print("  scatter between rungs: %.2f dB" % (v.scatter or 0.0))
+    if v.software_below is not None:
+        print("  everything below %.1f dB is gain made up in SOFTWARE: it"
+              % v.software_below)
+        print("  scales the converter's floor along with the signal, which "
+              "is why")
+        print("  it is exactly slope one, and it says nothing about the "
+              "chain.")
     print("VERDICT: %s" % v.kind)
     if v.knee_db is not None:
-        print("  knee at about %.1f dB" % v.knee_db)
+        print("  knee at about %.1f dB (cubic %.3f)"
+              % (v.knee_db, db_to_cubic(v.knee_db)))
     if v.work_db is not None:
         print("  suggested working gain %.1f dB (cubic %.3f)"
               % (v.work_db, db_to_cubic(v.work_db)))

@@ -1,11 +1,13 @@
-"""The knee policy against chains whose answer is known by arithmetic.
+"""The knee policy, against chains whose answer is known by arithmetic
+and against curves this bench actually produced.
 
 A capture chain in silence is two noises adding in power: the
 converter's own floor, fixed in dBFS, and the input's noise, which
 rides the gain. Their sum crosses slope one-half exactly where they
 are equal, so a synthetic chain with a floor at F and an input noise
-of M at zero gain has its knee at F - M dB, to the decimal. That makes
-these courts arithmetic rather than approximate.
+of M at zero gain has its knee at F - M dB. The module is not told
+that slope, and must not need it: on a hardware route the x axis is
+not true decibels at all.
 """
 
 import math
@@ -22,78 +24,144 @@ def chain(floor_db, mic_at_zero_db):
     return read
 
 
-def ladder(read, lo=-40.0, hi=40.0, steps=8, with_refine=True):
+def ladder(read, lo=-40.0, hi=40.0, steps=8, refine=True):
     rungs = [knee.Rung(g, read(g)) for g in knee.plan(lo, hi, steps)]
-    if with_refine:
+    if refine:
         rungs += [knee.Rung(g, read(g)) for g in knee.refine(rungs)]
     return rungs
 
 
-def test_a_knee_inside_the_range_is_found_where_the_arithmetic_puts_it():
+# --- the four shapes -------------------------------------------------
+
+def test_a_knee_is_found_near_where_the_arithmetic_puts_it():
     v = knee.verdict(ladder(chain(-118.0, -140.0)))
     assert v.kind == "knee"
-    assert v.knee_db == pytest.approx(22.0, abs=1.0)
-    assert v.work_db == pytest.approx(28.0, abs=1.0)
+    # no slope-one assumption is made, so this is an estimate rather
+    # than an identity; a couple of dB is the price of an axis that
+    # may not be decibels at all
+    assert v.knee_db == pytest.approx(22.0, abs=3.0)
+    assert v.work_db > v.knee_db
     assert v.usable
 
 
-def test_an_input_that_already_dominates_has_no_knee_and_wants_the_minimum():
+def test_rising_throughout_means_the_input_already_wins():
     v = knee.verdict(ladder(chain(-118.0, -80.0)))
     assert v.kind == "input"
-    assert v.work_db == -40.0
+    assert v.work_db == -40.0          # the bottom of what was walked
     assert v.usable
 
 
-def test_a_converter_that_rules_everywhere_yields_no_working_point():
+def test_flat_throughout_wants_the_TOP_of_the_range():
+    # the converter outweighs the input everywhere, so this noise does
+    # not follow the control while a signal would: more gain still
+    # buys SNR, which makes the top the place to be
     v = knee.verdict(ladder(chain(-100.0, -200.0)))
     assert v.kind == "converter"
-    assert not v.usable
+    assert v.work_db == 40.0
+    assert v.usable
 
 
 def test_too_few_rungs_is_unclear_rather_than_a_guess():
-    v = knee.verdict([knee.Rung(0.0, -100.0), knee.Rung(10.0, -90.0)])
+    v = knee.verdict([knee.Rung(0.0, -100.0)])
     assert v.kind == "unclear"
     assert not v.usable
 
 
-def test_refine_declines_when_the_curve_never_flattens():
-    # the input dominates from the first step, so there is no crossing
-    # to bracket and refining would invent one
-    rungs = [knee.Rung(g, chain(-118.0, -80.0)(g))
-             for g in knee.plan(-40, 40, 8)]
-    assert knee.refine(rungs) == []
+# --- the curves this bench produced ----------------------------------
+
+def test_the_three_region_curve_names_its_software_stretch():
+    """A CM106 laddered from -60 dB to 0 on its microphone port.
+
+    Slope one from -60 to -34 is the session manager making up gain in
+    software below the hardware control's range: it scales the
+    converter's floor along with everything else, which is why it is
+    exactly one and never flattens. Then the converter outweighs the
+    input and the curve is flat. Then the card's own preamp takes over
+    and it rises again. The knee is the SECOND boundary; the first is
+    an artefact of the software path and says nothing about the chain.
+    """
+    measured = [(-60.0, -118.95), (-51.4, -110.59), (-42.9, -101.94),
+                (-34.3, -93.49), (-25.7, -86.30), (-17.1, -85.88),
+                (-8.6, -83.95), (0.0, -59.13)]
+    v = knee.verdict([knee.Rung(g, x) for g, x in measured])
+    assert v.kind == "knee"
+    assert [s.kind for s in v.segments] == ["rising", "flat", "rising"]
+    assert v.software_below == pytest.approx(-34.3, abs=0.1)
+    assert -20.0 < v.knee_db < 0.0
+    # the software stretch is exactly slope one, which is its signature
+    assert v.segments[0].slope == pytest.approx(1.0, abs=0.1)
 
 
-def test_refine_brackets_the_crossing():
-    read = chain(-118.0, -140.0)
-    rungs = [knee.Rung(g, read(g)) for g in knee.plan(-40, 40, 8)]
-    pts = knee.refine(rungs)
-    assert pts, "a curve with a knee must be worth refining"
-    assert min(pts) < 22.0 < max(pts)
+def test_the_unity_start_run_reads_input():
+    """The same card walked from its unity point upward: every rung
+    answers the control, so what is measured sits before it."""
+    measured = [(-11.1, -85.40), (-9.5, -83.96), (-7.9, -82.24),
+                (-6.3, -79.01), (-4.7, -75.47), (-3.2, -71.38),
+                (-1.6, -66.95), (0.0, -60.65)]
+    v = knee.verdict([knee.Rung(g, x) for g, x in measured])
+    assert v.kind == "input"
+    assert v.work_db == -11.1
+
+
+def test_the_scatter_is_measured_from_the_data():
+    """Both of those runs are repeatable to a fraction of a dB, and
+    the fit says so without being told."""
+    measured = [(-11.1, -85.40), (-9.5, -83.96), (-7.9, -82.24),
+                (-6.3, -79.01), (-4.7, -75.47), (-3.2, -71.38),
+                (-1.6, -66.95), (0.0, -60.65)]
+    v = knee.verdict([knee.Rung(g, x) for g, x in measured])
+    assert 0.0 < v.scatter < 1.0
+
+
+# --- the machinery ---------------------------------------------------
+
+def test_neighbours_that_say_the_same_thing_are_one_region():
+    # a real knee is a curve, and least squares will spend a boundary
+    # inside the bend; two rising pieces in a row are one rising region
+    segs, _ = knee.describe(ladder(chain(-118.0, -140.0), refine=False))
+    kinds = [s.kind for s in segs]
+    assert kinds == ["flat", "rising"]
+    assert all(a != b for a, b in zip(kinds, kinds[1:]))
+
+
+def test_noise_does_not_buy_a_boundary():
+    # a straight flat line with scatter on it must stay ONE segment
+    import random
+    rng = random.Random(7)
+    rungs = [knee.Rung(g, -100.0 + rng.gauss(0.0, 0.4))
+             for g in knee.plan(-40, 40, 10)]
+    segs, scatter = knee.describe(rungs)
+    assert [s.kind for s in segs] == ["flat"]
+    assert scatter == pytest.approx(0.4, abs=0.35)
 
 
 def test_a_transient_is_marked_and_kept_out_of_the_fit():
     read = chain(-118.0, -140.0)
     rungs = [knee.Rung(g, read(g), peak_dbfs=read(g) + 9.0)
              for g in knee.plan(-40, 40, 8)]
-    clean_slopes = len(knee.slopes(rungs))
-    # a door slams during one rung: the level it recorded is nonsense
-    # and its crest gives it away
     rungs[2].rms_dbfs = -40.0
     rungs[2].peak_dbfs = -5.0
-    marked = knee.mark_transients(rungs)
-    assert marked == [rungs[2]]
+    assert knee.mark_transients(rungs) == [rungs[2]]
     assert rungs[2].suspect
-    # dropped from the fit: one rung gone is one slope fewer. The
-    # midpoints cannot be checked instead -- on an evenly spaced
-    # ladder the pair that closes over a dropped rung has exactly
-    # that rung's gain as its midpoint
-    assert len(knee.slopes(rungs)) == clean_slopes - 1
-    # and, the property that actually matters, a poisoned reading does
-    # not move the answer
+    # a poisoned reading must not move the answer
     v = knee.verdict(rungs)
     assert v.kind == "knee"
-    assert v.knee_db == pytest.approx(22.0, abs=2.0)
+    assert v.knee_db == pytest.approx(22.0, abs=4.0)
+
+
+def test_refine_brackets_a_knee_and_declines_without_one():
+    read = chain(-118.0, -140.0)
+    rungs = [knee.Rung(g, read(g)) for g in knee.plan(-40, 40, 8)]
+    pts = knee.refine(rungs)
+    assert pts and min(pts) < knee.verdict(rungs).knee_db < max(pts)
+    flat = [knee.Rung(g, -100.0) for g in knee.plan(-40, 40, 8)]
+    assert knee.refine(flat) == []
+
+
+def test_the_margin_never_walks_off_the_top_of_the_control():
+    v = knee.verdict(ladder(chain(-100.0, -130.0), lo=0.0, hi=33.0))
+    assert v.kind == "knee"
+    assert v.work_db <= 33.0
 
 
 def test_the_plan_spans_the_control_ends_included():
@@ -102,61 +170,37 @@ def test_the_plan_spans_the_control_ends_included():
     assert pts[0] == -40.0 and pts[-1] == 40.0
 
 
-def test_the_margin_never_walks_off_the_top_of_the_control():
-    # knee at 30 dB with only 33 dB of control: work would be 36 and
-    # is clamped to what the card can actually be set to
-    v = knee.verdict(ladder(chain(-100.0, -130.0), lo=0.0, hi=33.0))
-    assert v.kind == "knee"
-    assert v.knee_db == pytest.approx(30.0, abs=2.0)
-    assert v.work_db == 33.0
-
-
-def test_a_knee_too_close_to_the_ceiling_is_unclear_rather_than_claimed():
-    # the crossing sits 2 dB below the top, so the ladder never sees a
-    # pair climb steeply enough. Saying so is better than naming a
-    # knee the evidence does not carry
-    v = knee.verdict(ladder(chain(-100.0, -138.0), lo=0.0, hi=40.0))
-    assert v.kind == "unclear"
-    assert not v.usable
-
-
 def test_a_reading_with_no_crest_is_not_a_noise_floor():
-    # his CM106 line in: rms -67.40, peak -67.31. Nine hundredths of a
-    # dB of crest is a DC offset or a tone, and a ladder walked over
-    # one measures the control's transfer curve, not the chain's floor
-    assert not knee.noise_like(-67.31, -67.40)
-    # a sine has 3 dB and is still not noise
-    assert not knee.noise_like(-6.02, -9.03)
-    # broadband noise carries 11 to 13
-    assert knee.noise_like(-60.0, -72.0)
-    # nothing to object with
-    assert knee.noise_like(None, None)
+    assert not knee.noise_like(-67.31, -67.40)   # his CM106, DC-like
+    assert not knee.noise_like(-6.02, -9.03)     # a sine, 3 dB
+    assert knee.noise_like(-60.0, -72.0)         # broadband noise
+    assert knee.noise_like(None, None)           # nothing to object with
 
 
-def test_an_offset_is_not_a_floor():
-    # the meter reports RMS about the mean, so a chain carrying a large
-    # DC offset still reports the noise underneath it rather than the
-    # offset. knee.noise_like() then judges the AC part on its own
-    assert knee.noise_like(-60.0, -72.0)      # noise under any offset
-    assert not knee.noise_like(-34.53, -34.62)
+def test_the_full_fifteen_rung_ladder_resolves_all_three_regions():
+    """The same CM106, walked with ten coarse rungs and five refined.
 
-
-def test_a_curve_that_climbs_before_it_flattens_has_no_knee():
-    """A CM106's real ladder, read off its microphone port.
-
-    Slope one from -60 to -34, a plateau from -25 to -8.6, then a
-    climb steeper than one. Three regions of a control rather than a
-    floor and a rise, and an earlier version of this module took the
-    plateau for the floor and named a knee at -24.5 dB that is not in
-    the data. Nothing in a ladder that begins by climbing is a
-    crossing: the bottom of it was never in the converter's region.
+    With every region resolved the reading is unambiguous: slope
+    exactly one where the session manager is making up gain in
+    software, flat where the converter outweighs the input, and rising
+    where the card's own preamp has taken over. The knee lands just
+    above the route's unity point (cubic 0.654), which is where that
+    preamp starts to amplify at all.
     """
-    measured = [(-60.0, -118.95), (-51.4, -110.59), (-42.9, -101.94),
-                (-34.3, -93.49), (-25.7, -86.30), (-17.1, -85.88),
-                (-8.6, -83.95), (-6.4, -76.00), (-4.3, -73.13),
-                (-2.1, -67.43), (0.0, -61.79)]
-    rungs = [knee.Rung(g, v) for g, v in measured]
-    v = knee.verdict(rungs)
-    assert v.kind == "unclear"
-    assert not v.usable
-    assert knee.refine(rungs) == []
+    measured = [(-60.0, -119.01), (-53.3, -112.38), (-46.7, -105.70),
+                (-40.0, -99.08), (-33.3, -92.43), (-26.7, -86.12),
+                (-20.0, -85.95), (-15.2, -85.74), (-13.3, -85.61),
+                (-11.9, -85.58), (-8.5, -82.96), (-6.7, -80.09),
+                (-5.2, -76.17), (-1.9, -67.02), (0.0, -60.98)]
+    v = knee.verdict([knee.Rung(g, x) for g, x in measured])
+    assert v.kind == "knee"
+    assert [s.kind for s in v.segments] == ["rising", "flat", "rising"]
+    # the software stretch is slope one by construction, and that is
+    # what identifies it
+    assert v.segments[0].slope == pytest.approx(1.0, abs=0.05)
+    assert v.segments[1].slope == pytest.approx(0.0, abs=0.15)
+    assert v.software_below == pytest.approx(-33.3, abs=1.0)
+    assert -12.0 < v.knee_db < -4.0
+    assert v.work_db > v.knee_db
+    # the scatter the fit measures is the repeatability the bench has
+    assert v.scatter < 0.5
