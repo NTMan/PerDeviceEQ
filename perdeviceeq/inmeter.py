@@ -22,7 +22,8 @@ import threading
 
 FS = 48000
 BLOCK = 2048            # ~43 ms at 48k: fast enough for a knock
-FLOOR_DB = -90.0
+FLOOR_DB = -90.0        # a meter has nothing to draw below this
+QUIET_DB = -200.0       # a NOISE FLOOR must not be clamped there
 
 
 def peak_db(x):
@@ -33,6 +34,19 @@ def peak_db(x):
     return max(FLOOR_DB, 20.0 * math.log10(min(1.0, x)))
 
 
+def level_db(x):
+    """dBFS of a level, with room underneath.
+
+    peak_db() stops at -90 because a meter has nothing to draw below
+    that, but a noise floor lives down there: clamp it and a gain
+    ladder reads a false plateau where the chain was simply quiet.
+    """
+    if x <= 0.0:
+        return QUIET_DB
+    import math
+    return max(QUIET_DB, 20.0 * math.log10(min(1.0, x)))
+
+
 class InputMeter:
     """Owns a capture subprocess and a worker thread.
 
@@ -40,6 +54,23 @@ class InputMeter:
     order, or None before the first block arrives. The caller polls it;
     nothing is pushed, because the only consumer is a redraw that has
     its own clock anyway.
+
+    latest_rms() hands back the same columns as RMS. A meter wants the
+    peak, but a NOISE FLOOR wants the RMS: the peak of a stationary
+    hiss wanders with the block length while its RMS does not, and a
+    gain ladder read off peaks would spend its rungs arguing with that
+    wander. The RMS is taken ABOUT THE MEAN, because a constant offset
+    is not noise and a chain carrying one would otherwise report its
+    offset as its floor.
+
+    latest_dc() hands back that mean, as a level. Together the three
+    say what is on a column without a spectrum: a crest of 11 to 13 dB
+    over an insignificant mean is noise, a crest near 3 with the same
+    is a tone, and a mean that stands up to the RMS is an offset --
+    which is a fault to fix rather than a floor to measure.
+
+    All three come out of the one pass the worker already makes, so
+    they cost two accumulators and no extra capture.
     """
 
     def __init__(self, fs=FS, block=BLOCK):
@@ -50,6 +81,8 @@ class InputMeter:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._peaks = None
+        self._rms = None
+        self._dc = None
         self._n = 0
 
     # ---- lifecycle ---------------------------------------------------
@@ -85,10 +118,25 @@ class InputMeter:
             thread.join(timeout=1.0)
         with self._lock:
             self._peaks = None
+            self._rms = None
+            self._dc = None
 
     def latest(self):
         with self._lock:
             return None if self._peaks is None else list(self._peaks)
+
+    def latest_rms(self):
+        """One RMS per column in dBFS, about the mean, or None before
+        the first block."""
+        with self._lock:
+            return None if self._rms is None else list(self._rms)
+
+    def latest_dc(self):
+        """The mean of each column as a level in dBFS, signed by
+        nothing -- only its size matters. None before the first
+        block."""
+        with self._lock:
+            return None if self._dc is None else list(self._dc)
 
     # ---- the worker --------------------------------------------------
     def _run(self, proc, n):
@@ -110,15 +158,33 @@ class InputMeter:
         finally:
             with self._lock:
                 self._peaks = None
+                self._rms = None
+                self._dc = None
 
     def _digest(self, raw, n):
         frames = len(raw) // (4 * n)
         vals = struct.unpack("<%df" % (frames * n), raw[:frames * n * 4])
         peaks = [0.0] * n
+        sq = [0.0] * n
+        tot = [0.0] * n
         for i, v in enumerate(vals):
             c = i % n
             a = -v if v < 0.0 else v
             if a > peaks[c]:
                 peaks[c] = a
+            sq[c] += v * v
+            tot[c] += v
+        rms, dc = [], []
+        for c in range(n):
+            if not frames:
+                rms.append(QUIET_DB)
+                dc.append(QUIET_DB)
+                continue
+            mean = tot[c] / frames
+            var = sq[c] / frames - mean * mean
+            rms.append(level_db(var ** 0.5 if var > 0.0 else 0.0))
+            dc.append(level_db(-mean if mean < 0.0 else mean))
         with self._lock:
             self._peaks = [peak_db(p) for p in peaks]
+            self._rms = rms
+            self._dc = dc
