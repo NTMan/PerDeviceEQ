@@ -2690,6 +2690,7 @@ class MeasureWindow(Adw.Window):
                 grp.remove(row)
         self._cap_rows = []
         self.map_dds = {}
+        self._row_bar = None         # rebuilt with the row that owns it
         ch = self._selected_ch
         if self.mic_ch > 1 and 0 <= ch < self.n_ch:
             row = Adw.ComboRow()
@@ -2698,6 +2699,12 @@ class MeasureWindow(Adw.Window):
                              % _speaker_name(self.ch_keys[ch]))
             row.set_model(Gtk.StringList.new(self._mic_labels()))
             row.set_list_factory(self._meter_factory())
+            # and the SAME bar in the closed row, for the column it
+            # points at. The list already meters every column; when it
+            # shuts, the one column still being pointed at stops being
+            # watched, and that is the column the fader under this row
+            # is about to move.
+            row.set_factory(self._row_meter_factory())
             row.set_selected(min(self.mic_of.get(ch, 0),
                                  self.mic_ch - 1))
             row.connect("notify::selected", self._make_map_cb(ch))
@@ -2814,6 +2821,58 @@ class MeasureWindow(Adw.Window):
                 bar.set_value(self._meter_fraction(ch))
             except Exception:
                 self._meter_bars.pop(ch, None)
+        bar = getattr(self, "_row_bar", None)
+        if bar is not None:
+            try:
+                bar.set_value(self._meter_fraction(
+                    self.mic_of.get(self._selected_ch, 0)))
+            except Exception:                          # noqa: BLE001
+                self._row_bar = None
+
+    def _row_meter_factory(self):
+        """The CLOSED row: the column's name and a bar for it.
+
+        It cannot key its bar by list position the way the popup does
+        -- the button binds the selected item, and the position it
+        reports is not a row in a list anybody is looking at. It keeps
+        the one bar it has, and the painter feeds it the column the
+        picker points at.
+        """
+        f = Gtk.SignalListItemFactory()
+
+        def setup(_f, item):
+            box = Gtk.Box(spacing=12)
+            lbl = Gtk.Label(xalign=0.0)
+            lbl.set_hexpand(True)
+            bar = Gtk.LevelBar()
+            bar.set_min_value(0.0)
+            bar.set_max_value(1.0)
+            bar.set_size_request(90, -1)
+            bar.set_valign(Gtk.Align.CENTER)
+            box.append(lbl)
+            box.append(bar)
+            item.set_child(box)
+
+        def bind(_f, item):
+            box = item.get_child()
+            lbl = box.get_first_child()
+            bar = lbl.get_next_sibling()
+            obj = item.get_item()
+            lbl.set_text(obj.get_string() if obj is not None else "")
+            self._row_bar = bar
+            bar.set_value(self._meter_fraction(
+                self.mic_of.get(self._selected_ch, 0)))
+
+        def unbind(_f, item):
+            box = item.get_child()
+            bar = box.get_first_child().get_next_sibling()
+            if self._row_bar is bar:
+                self._row_bar = None
+
+        f.connect("setup", setup)
+        f.connect("bind", bind)
+        f.connect("unbind", unbind)
+        return f
 
     def _meter_factory(self):
         """One row of the column list: the card's name for the column,
