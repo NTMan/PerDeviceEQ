@@ -58,6 +58,31 @@ def gain_of(source):
     return (source.get("gain") or (None, None))[0]
 
 
+def active_route(source):
+    """The input route a source is currently on, or None."""
+    return next((r for r in (source.get("routes") or [])
+                 if r.get("active")), None)
+
+
+def channel_gain(node_name, channel):
+    """One column's own gain, as a cubic, or None.
+
+    A source record folds its channels into one number, which is right
+    while they agree and wrong the moment they do not -- and they are
+    independent in the hardware. Anything that speaks for one column
+    reads that column.
+    """
+    for o in pw_backend.pw_dump():
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        if p.get("node.name") != node_name:
+            continue
+        gains = pw_backend.channel_gains_of_node(o)
+        return gains[channel] if 0 <= channel < len(gains) else None
+    return None
+
+
 def read_back(node_name):
     """The gain the card actually took, not the one it was asked for.
     A hardware control quantises to its own steps, and an axis made of
@@ -82,7 +107,14 @@ class Walk:
         self.dwell = float(dwell)
         self.settle = float(settle)
         self.width = pw_backend.source_width(source)
-        self.before = gain_of(source)
+        # per-column when the route publishes its channels, and the
+        # whole node otherwise. A ladder measures ONE column, so
+        # moving the others is at best noise on a canvas and at worst
+        # a second capsule dragged off its own working point
+        self.route = active_route(source)
+        self.per_channel = bool((self.route or {}).get("channel_volumes"))
+        self.before = (channel_gain(source["name"], self.column)
+                       if self.per_channel else gain_of(source))
         self.rungs = []
         self.restored = None            # True, False, or None if untouched
         self._meter = inmeter.InputMeter()
@@ -112,7 +144,7 @@ class Walk:
         if self.before is None:
             return
         try:
-            pw_backend.set_gain(self.source["id"], self.before)
+            self._set(self.before)
             self.restored = True
         except Exception:                              # noqa: BLE001
             # said, not swallowed: a walk that could not put the gain
@@ -121,6 +153,13 @@ class Walk:
             self.restored = False
 
     # -- the two things it can do ---------------------------------------
+
+    def _set(self, cubic):
+        """Move this column's gain, and only this column's."""
+        if self.per_channel:
+            pw_backend.set_channel_gain(self.route, self.column, cubic)
+        else:
+            pw_backend.set_gain(self.source["id"], cubic)
 
     def listen(self, seconds=None):
         """(rms about the mean, peak, offset) for the chosen column,
@@ -132,9 +171,10 @@ class Walk:
         """Set the gain, wait for the card, and listen. Returns a Rung
         whose gain is what the card TOOK, or None if nothing was
         heard."""
-        pw_backend.set_gain(self.source["id"], db_to_cubic(db))
+        self._set(db_to_cubic(db))
         time.sleep(self.settle)
-        got = read_back(self.source["name"])
+        got = (channel_gain(self.source["name"], self.column)
+               if self.per_channel else read_back(self.source["name"]))
         real = cubic_to_db(got)
         rms, peak, _dc, blocks = self._gather(self.dwell, with_blocks=True)
         if rms is None:

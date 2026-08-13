@@ -191,3 +191,80 @@ def test_source_width_falls_back_without_a_list(monkeypatch):
     monkeypatch.setattr(pw_backend, "backend",
                         lambda: (_ for _ in ()).throw(OSError("none")))
     assert pw_backend.source_width({"channels": [], "name": "x"}) == 2
+
+
+# --- one column at a time ----------------------------------------------
+
+class Route(dict):
+    """An input route that publishes its channels, as a real one does."""
+
+    def __init__(self, volumes):
+        super().__init__(name="mic", active=True, hw_volume=True,
+                         volume_base=0.279892, index=1, device_id=54,
+                         card_device=0, channel_volumes=list(volumes))
+
+
+def test_a_route_writes_one_channel_and_carries_the_others(monkeypatch):
+    sent = {}
+
+    def run(cmd):
+        sent["cmd"] = cmd
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(pw_backend, "_run", run)
+    r = Route([0.287401, 0.535773])
+    out = pw_backend.set_channel_gain(r, 0, 0.9)
+    # the written channel is the CUBE of the cubic, because route props
+    # are linear while wpctl speaks cubic
+    assert out[0] == pytest.approx(0.9 ** 3)
+    # and the other channel is carried across untouched
+    assert out[1] == pytest.approx(0.535773)
+    body = sent["cmd"][-1]
+    assert "channelVolumes" in body and "index: 1" in body
+    assert "0.729000" in body and "0.535773" in body
+
+
+def test_a_channel_the_route_does_not_have_is_refused(monkeypatch):
+    monkeypatch.setattr(pw_backend, "_run",
+                        lambda c: (_ for _ in ()).throw(
+                            AssertionError("must not run")))
+    with pytest.raises(ValueError):
+        pw_backend.set_channel_gain(Route([0.5, 0.5]), 7, 0.5)
+    with pytest.raises(RuntimeError):
+        pw_backend.set_channel_gain(Route([]), 0, 0.5)
+
+
+def test_channel_gains_are_read_apart_not_averaged():
+    node = {"info": {"params": {"Props": [
+        {"channelVolumes": [0.287401, 0.535773]}]}}}
+    both = pw_backend.channel_gains_of_node(node)
+    assert both[0] == pytest.approx(0.287401 ** (1 / 3.0))
+    assert both[1] == pytest.approx(0.535773 ** (1 / 3.0))
+    # the folded reading really does sit between them, which is the
+    # number a per-column caller must not use
+    folded, _ = pw_backend.gain_of_node(node)
+    assert both[0] < folded < both[1]
+
+
+def test_the_ladder_moves_only_its_own_column(card, monkeypatch):
+    written = []
+    card.src["routes"] = [Route([0.5, 0.5])]
+
+    def set_channel_gain(route, channel, cubic):
+        written.append((channel, cubic))
+        route["channel_volumes"][channel] = cubic ** 3
+        card.cubic = cubic
+        return route["channel_volumes"]
+
+    monkeypatch.setattr(pw_backend, "set_channel_gain", set_channel_gain)
+    monkeypatch.setattr(pw_backend, "set_gain",
+                        lambda *a: (_ for _ in ()).throw(
+                            AssertionError("the whole node must not move")))
+    monkeypatch.setattr(knee_run, "channel_gain",
+                        lambda name, ch: card.cubic)
+    knee_run.ladder(card.src, 1, lo_db=-40.0, hi_db=0.0, steps=4,
+                    dwell=0.05, refine=False)
+    assert written, "the ladder wrote nothing"
+    assert all(ch == 1 for ch, _ in written)
+    # and it put ITS channel back, leaving the other where it was
+    assert card.src["routes"][0]["channel_volumes"][0] == pytest.approx(0.5)

@@ -306,6 +306,7 @@ def _card_ports(node_name, want, dump=None):
         cur = next((a for a in active if a.get("index") == idx), None)
         out[-1]["hw_volume"] = None
         out[-1]["volume_base"] = None
+        out[-1]["channel_volumes"] = None
         if cur is not None:
             flag = _spa_info(cur.get("info")).get("route.hw-volume")
             if flag is not None:
@@ -313,6 +314,12 @@ def _card_ports(node_name, want, dump=None):
             base = (cur.get("props") or {}).get("volumeBase")
             if base is not None:
                 out[-1]["volume_base"] = float(base)
+            # the LINEAR per-channel volumes, kept because writing one
+            # channel means writing them all back: a Route takes the
+            # whole list, so the others have to be carried across
+            cv = (cur.get("props") or {}).get("channelVolumes")
+            if cv:
+                out[-1]["channel_volumes"] = [float(v) for v in cv]
     return out
 
 
@@ -588,6 +595,38 @@ def active_input_route(node_name, dump=None):
         if r["active"]:
             return r["description"]
     return None
+
+
+def set_channel_gain(route, channel, cubic):
+    """Set ONE capture column's gain, leaving the others where they are.
+
+    wpctl takes a single number and writes it to every channel, which
+    is fine while one capsule is plugged in and a lie the moment two
+    are: the hardware really is per channel (a CM106 declares cvolume,
+    and 60% / 80% set independently read back as 0.287401 / 0.535773).
+    The Route is the same object the app already writes to switch a
+    port, and it takes the whole list -- so the other channels are
+    carried across unchanged rather than reset.
+
+    Route props are LINEAR while wpctl speaks the cubic volume, hence
+    the cube.
+    """
+    have = list(route.get("channel_volumes") or [])
+    if not have:
+        raise RuntimeError("that route publishes no channel volumes")
+    if not 0 <= channel < len(have):
+        raise ValueError("channel %d of a %d-channel route"
+                         % (channel, len(have)))
+    have[channel] = max(0.0, min(1.0, float(cubic))) ** 3
+    r = _run(["pw-cli", "set-param", str(route["device_id"]), "Route",
+              "{ index: %d, device: %d, props: { channelVolumes: [ %s ] },"
+              " save: true }"
+              % (int(route["index"]), int(route["card_device"]),
+                 ", ".join("%.6f" % v for v in have))])
+    if r.returncode != 0:
+        raise RuntimeError("pw-cli set-param Route failed: %s"
+                           % ((r.stderr or r.stdout) or "").strip())
+    return have
 
 
 def set_input_route(route):
@@ -974,6 +1013,23 @@ def gain_of_node(o):
     else:
         kind = None
     return cubic, kind
+
+
+def channel_gains_of_node(o):
+    """Every channel's gain as a cubic, in the node's own order.
+
+    gain_of_node() folds them into one number, which is right for a
+    single reading and wrong the moment the channels differ: a CM106
+    set to 60% and 80% would report 70% for both. A capture column is
+    a wire and has its own gain, so anything that speaks for one
+    column reads it here.
+    """
+    d = {}
+    for blk in ((o.get("info") or {}).get("params")
+                or {}).get("Props") or []:
+        if isinstance(blk, dict):
+            d.update(blk)
+    return [float(v) ** (1.0 / 3.0) for v in d.get("channelVolumes") or []]
 
 
 def set_gain(node_id, cubic):
