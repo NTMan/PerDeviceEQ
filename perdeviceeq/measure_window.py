@@ -2571,6 +2571,7 @@ class MeasureWindow(Adw.Window):
                 "and costs headroom. Decibels here are the CONTROL's "
                 "own axis, not the card's.")
             kb.connect("clicked", self._on_knee)
+            kb.set_sensitive(self._knee_btn_live())
             fbox.append(kb)
             fcol.append(fbox)
             krow = Gtk.Label(xalign=0.0)
@@ -3262,7 +3263,24 @@ class MeasureWindow(Adw.Window):
         row = getattr(self, "gain_spin", None)
         if row is None:
             return
-        src = self._selected_source() or {}
+        src = self._selected_source()
+        if not src:
+            # NOTHING is claimed about an input the window has not
+            # reached. fader_kind of an empty record is honestly
+            # "software" -- there is no element in nothing -- and that
+            # was being printed as a fact about the device: "this
+            # input has no gain of its own", under a card whose own
+            # status line said the mic was not resolved. A partial
+            # denial is worse than none, because the fields that still
+            # work look authoritative.
+            self._fader_kind = None
+            self._gain_kind = None
+            self._gain_ok = False
+            self._gain_seeded = None
+            row.set_sensitive(False)
+            row.set_tooltip_text("No measurement mic resolved.")
+            self._refresh_knee_caption()
+            return
         cubic, kind = src.get("gain") or (None, None)
         # the COLUMN's own gain where the card has one: the folded
         # reading is true of neither channel the moment they differ
@@ -3368,6 +3386,25 @@ class MeasureWindow(Adw.Window):
     # the converter; above it, more gain buys nothing and costs
     # headroom. The point is found in SILENCE, because the signal
     # cancels out of the question.
+
+    def _knee_btn_live(self):
+        """Whether the search may run at all.
+
+        NOT gated on the pult's `live`: the ladder plays nothing, so
+        it wants a source and has no use for a sink. Gated on the
+        fader being analogue, because that is the only kind with
+        anything to search.
+
+        It lives here rather than only in _update_pult because the row
+        is REBUILT -- a fresh button is sensitive by default, and a
+        rebuild after the pult had spoken left an enabled Find under a
+        card that had just said the mic was not resolved. The same
+        shape as the transport landing below the rows: a state kept by
+        somebody else is one the next builder misses.
+        """
+        return bool(not self._busy
+                    and self._source_present() and not self._mic_gone
+                    and getattr(self, "_fader_kind", None) == "analog")
 
     def _on_knee(self, _btn):
         if self._busy:
@@ -3549,6 +3586,9 @@ class MeasureWindow(Adw.Window):
         row = getattr(self, "gain_spin", None)
         if krow is None:
             return
+        if getattr(self, "_fader_kind", None) is None:
+            krow.set_text("no measurement mic resolved")
+            return
         if not getattr(self, "_gain_ok", False):
             krow.set_text("this input has no gain of its own")
             return
@@ -3685,15 +3725,7 @@ class MeasureWindow(Adw.Window):
         if getattr(self, "relevel_btn", None) is not None:
             self.relevel_btn.set_sensitive(not self._busy and live)
         if getattr(self, "knee_btn", None) is not None:
-            # NOT gated on `live`: the ladder plays nothing, so it wants
-            # a source and has no use for a sink. And only an analogue
-            # fader has anything to search -- an attenuator and a
-            # software multiplier are held at full and there is no
-            # working point to find on either.
-            self.knee_btn.set_sensitive(
-                not self._busy
-                and self._source_present() and not self._mic_gone
-                and getattr(self, "_fader_kind", None) == "analog")
+            self.knee_btn.set_sensitive(self._knee_btn_live())
         self.stop_btn.set_sensitive(self._busy)
         if getattr(self, "sink_dd", None) is not None:
             # mid-sweep the route is not a choice
