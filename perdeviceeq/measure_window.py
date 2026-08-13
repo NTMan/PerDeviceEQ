@@ -3774,22 +3774,7 @@ class MeasureWindow(Adw.Window):
             text = knee.caption(v["kind"], v.get("knee_db"),
                                 knee_run.cubic_to_db(
                                     row.get_value() / 100.0))
-        note = text or "not measured yet"
-        # and when the columns of one source stand far apart, say so.
-        # Two capsules with genuinely different knees SHOULD differ and
-        # the app must not fight it -- but one capsule heard on two
-        # columns must not, because takes made at different capture
-        # gains sit at different levels and that lands in the spread
-        # between channels, where it reads as the earphone's own
-        # asymmetry
-        src = self._selected_source() or {}
-        apart = knee.columns_disagree(src.get("gains"))
-        if apart is not None:
-            note += ("  --  this source's columns stand %.1f dB apart "
-                     "(%.1f and %.1f); if one capsule feeds both, that "
-                     "difference will show up as channel asymmetry"
-                     % (apart[1] - apart[0], apart[0], apart[1]))
-        krow.set_text(note)
+        krow.set_text(text or "not measured yet")
 
     def _on_gain_edited(self, scale):
         if self._gain_guard:

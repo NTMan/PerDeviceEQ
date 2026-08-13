@@ -261,19 +261,3 @@ def test_the_caption_is_silent_when_it_has_nothing_to_say():
     assert knee.caption("knee", -8.5, None) is None
 
 
-def test_columns_that_stand_apart_are_noticed():
-    """Two capsules with genuinely different knees SHOULD differ, and
-    the app must not fight it. One capsule heard on two columns must
-    not: takes made at different capture gains sit at different levels,
-    and that lands in the spread between channels where it reads as the
-    earphone's own asymmetry."""
-    # his own two columns, each set to its own verdict: 0.46 dB apart,
-    # which is inside the scatter two ladders over one coupler produce,
-    # so crying about it would be crying wolf
-    assert knee.columns_disagree([0.7976, 0.8116]) is None
-    apart = knee.columns_disagree([0.5, 0.9])
-    assert apart is not None and apart[1] - apart[0] > 10.0
-    assert knee.columns_disagree([0.8]) is None
-    assert knee.columns_disagree([]) is None
-    assert knee.columns_disagree(None) is None
-    assert knee.columns_disagree([0.0, 0.8]) is None      # nothing to compare
