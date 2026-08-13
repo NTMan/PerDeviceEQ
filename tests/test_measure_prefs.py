@@ -24,7 +24,8 @@ def test_mic_profile_roundtrip(paths):
     assert s.ordered() == []
     pid = s.save({"name": "miniDSP EARS", "serial": "860-3052",
                   "node_match": "alsa_input.usb-miniDSP_ears",
-                  "cal": {"0": "/c/L_RAW.txt", "1": "/c/R_RAW.txt"}})
+                  "columns": {"0": {"cal": "/c/L_RAW.txt"},
+                              "1": {"cal": "/c/R_RAW.txt"}}})
     assert micf.exists()
     s2 = mp.MicProfileStore()                    # reload from disk
     p = s2.get(pid)
@@ -39,8 +40,9 @@ def test_mic_profile_roundtrip(paths):
 
 def test_mic_profile_overwrite_same_id(paths):
     s = mp.MicProfileStore()
-    pid = s.save({"name": "first", "cal": {"0": "/a.txt"}})
-    s.save({"id": pid, "name": "renamed", "cal": {"0": "/b.txt"}})
+    pid = s.save({"name": "first", "columns": {"0": {"cal": "/a.txt"}}})
+    s.save({"id": pid, "name": "renamed",
+            "columns": {"0": {"cal": "/b.txt"}}})
     assert len(mp.MicProfileStore().profiles) == 1
     assert mp.MicProfileStore().get(pid)["name"] == "renamed"
     assert mp.MicProfileStore().cal_for(pid, 0) == "/b.txt"
@@ -111,7 +113,8 @@ def test_a_rig_no_longer_stores_a_capsule_count(paths):
     was what kept a sixteen-column interface offering L and R."""
     s = mp.MicProfileStore()
     pid = s.save({"name": "Umik", "node_match": "umik.0",
-                  "cal": {"0": "/c/umik.txt"}, "channels": 1})
+                  "columns": {"0": {"cal": "/c/umik.txt"}},
+                  "channels": 1})
     assert "channels" not in s.get(pid)
     s2 = mp.MicProfileStore()                    # reload from disk
     assert "channels" not in s2.get(pid)
@@ -213,12 +216,12 @@ def test_a_rig_is_named_by_its_jack_too(paths):
     s = mp.MicProfileStore()
     mic = s.save({"name": "CM106 (Microphone)",
                   "node_match": "alsa_input.usb-0d8c-00#1",
-                  "serial": "", "cal": {"0": "/c/mic.txt"},
-                  "channels": 1})
+                  "serial": "",
+                  "columns": {"0": {"cal": "/c/mic.txt"}}})
     line = s.save({"name": "CM106 (Line In)",
                    "node_match": "alsa_input.usb-0d8c-00#2",
-                   "serial": "", "cal": {"0": "/c/line.txt"},
-                   "channels": 1})
+                   "serial": "",
+                   "columns": {"0": {"cal": "/c/line.txt"}}})
     again = mp.MicProfileStore()
     assert again.match("alsa_input.usb-0d8c-00#1")["id"] == mic
     assert again.match("alsa_input.usb-0d8c-00#2")["id"] == line
@@ -235,8 +238,8 @@ def test_a_rig_named_before_jacks_answers_for_its_card(paths):
     only."""
     s = mp.MicProfileStore()
     old = s.save({"name": "CM106", "node_match": "alsa_input.x",
-                  "serial": "", "cal": {"0": "/c/old.txt"},
-                  "channels": 1})
+                  "serial": "",
+                  "columns": {"0": {"cal": "/c/old.txt"}}})
     assert s.match("alsa_input.x")["id"] == old
     assert s.match("alsa_input.x#1")["id"] == old   # any jack
     assert s.match("alsa_input.x#2")["id"] == old
@@ -245,10 +248,14 @@ def test_a_rig_named_before_jacks_answers_for_its_card(paths):
     # once a jack is named, it answers for itself and nothing else
     jack = s.save({"name": "CM106 line", "node_match":
                    "alsa_input.x#2", "serial": "",
-                   "cal": {"0": "/c/line.txt"}, "channels": 1})
+                   "columns": {"0": {"cal": "/c/line.txt"}}})
     assert s.match("alsa_input.x#2")["id"] == jack
     assert s.match("alsa_input.x")["id"] == old
     assert s.match("alsa_input.x#1")["id"] == old
+    # and each keeps its OWN calibration, which is the thing the
+    # bare-node fallback exists to protect
+    assert s.cal_for(old, 0) == "/c/old.txt"
+    assert s.cal_for(jack, 0) == "/c/line.txt"
 
 
 def test_a_hand_alone_is_worth_a_rig_profile():
@@ -263,3 +270,81 @@ def test_a_hand_alone_is_worth_a_rig_profile():
     # a handler firing during load must not mint a profile
     assert mp.worth_saving({}, None) is False
     assert mp.worth_saving({}, None, by_hand=False) is False
+
+
+# --- the channel record: a column's calibration and its sensitivity --------
+
+def test_a_channel_record_keeps_cal_and_knee_together(paths):
+    s = mp.MicProfileStore()
+    pid = s.save({"name": "CM106", "node_match": "alsa_input.cm#1",
+                  "columns": {"0": {
+                      "cal": "/c/coupler-711.txt",
+                      "knee": {"gain": 0.78, "kind": "knee",
+                               "knee_axis_db": -9.4, "flat_dbfs": -85.6,
+                               "scatter_db": 0.05, "at": "2026-08-14"}}}})
+    again = mp.MicProfileStore()                 # reload from disk
+    assert again.cal_for(pid, 0) == "/c/coupler-711.txt"
+    k = again.knee_for(pid, 0)
+    assert k["gain"] == pytest.approx(0.78)
+    assert k["kind"] == "knee"
+    assert k["knee_axis_db"] == pytest.approx(-9.4)
+    assert again.knee_for(pid, 1) is None
+    assert list(again.knees_of(pid)) == ["0"]
+
+
+def test_a_verdict_belongs_to_the_jack_not_to_any_sink(paths):
+    """A working point costs half a minute of silence and is worth the
+    same on every earphone measured through that microphone, so it is
+    keyed by the capture identity and by nothing else."""
+    s = mp.MicProfileStore()
+    pid = s.save({"name": "CM106", "node_match": "alsa_input.cm#1",
+                  "columns": {"0": {"knee": {"gain": 0.78,
+                                              "kind": "knee"}}}})
+    again = mp.MicProfileStore()
+    assert again.match("alsa_input.cm#1")["id"] == pid
+    # a profile that names a JACK never answers for a different one
+    assert again.match("alsa_input.cm#2") is None
+
+
+def test_a_file_from_before_the_column_records_is_not_read(paths):
+    """One shape, deliberately. The store holds a calibration binding
+    and a working point, both seconds to re-enter, so carrying a second
+    shape forever to save those seconds is the worse trade -- his call,
+    and he would rather delete the file once."""
+    import json
+    micf, _ = paths
+    micf.write_text(json.dumps({"old": {
+        "name": "x", "node_match": "n", "serial": "",
+        "cal": {"0": "/c/a.txt", "1": "/c/b.txt"}}}))
+    s = mp.MicProfileStore()
+    assert s.cal_for("old", 0) is None
+    assert s.profiles["old"]["columns"] == {}
+
+
+def test_a_new_field_survives_the_next_save(paths):
+    """_body is a WHITELIST -- a field missing from it is dropped
+    silently on the next save, which is exactly how a new one is
+    lost."""
+    s = mp.MicProfileStore()
+    pid = s.save({"name": "x", "node_match": "n", "columns": {
+        "0": {"knee": {"gain": 0.5, "kind": "input"}}}})
+    s.save(dict(s.get(pid), name="renamed"))     # any later write
+    again = mp.MicProfileStore()
+    assert again.knee_for(pid, 0)["kind"] == "input"
+
+
+def test_a_verdict_that_says_nothing_is_not_stored(paths):
+    assert mp.sane_knee(None) is None
+    assert mp.sane_knee({}) is None
+    assert mp.sane_knee({"kind": "knee"}) is None        # no position
+    assert mp.sane_knee({"gain": 0.5}) is None           # no verdict
+    assert mp.sane_knee({"gain": "0.5", "kind": "input", "junk": 1}) \
+        == {"gain": 0.5, "kind": "input"}
+
+
+def test_a_measured_sensitivity_is_worth_a_file(paths):
+    # a rig with no calibration is every rig until one is chosen, and
+    # its working point cost half a minute of silence
+    assert mp.worth_saving({}, None, False, knees={"0": {"gain": 0.5}})
+    assert not mp.worth_saving({}, None, False, knees={})
+    assert not mp.worth_saving({}, None, False)

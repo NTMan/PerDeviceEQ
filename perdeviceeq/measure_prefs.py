@@ -38,7 +38,7 @@ def _atomic_write(path, obj):
 
 
 
-def worth_saving(cal, existing, by_hand=False):
+def worth_saving(cal, existing, by_hand=False, knees=None):
     """Is there anything about this rig worth writing down?
 
     A remembered rig, or a calibration, obviously. And a HAND: an
@@ -47,9 +47,83 @@ def worth_saving(cal, existing, by_hand=False):
     and refusing to record it let the next opening read the file
     back and hand it straight to the rig again.
 
+    And a MEASURED SENSITIVITY, for the same reason a calibration
+    counts: it is a statement about this rig, it cost half a minute
+    of silence to obtain, and it is worth exactly as much on the
+    next earphone as on this one. Without this a rig with no
+    calibration -- which is every rig until one is chosen -- would
+    have its verdict thrown away when the window closed.
+
     Everything else is a handler firing during load, which must not
     mint a profile for every rig that is merely selected."""
-    return bool(cal) or existing is not None or bool(by_hand)
+    return (bool(cal) or existing is not None or bool(by_hand)
+            or bool(knees))
+
+
+KNEE_FIELDS = ("gain", "kind", "knee_axis_db", "flat_dbfs",
+               "scatter_db", "at")
+
+
+def sane_knee(body):
+    """A stored sensitivity verdict, or None if it says nothing.
+
+    `gain` is the position to stand at, as a cubic volume, and it is
+    the only field the app acts on. The rest is what makes a re-run a
+    CHECK rather than a repeat: knee_axis_db so the caption can say
+    which side of it the control is on, flat_dbfs and scatter_db as
+    the fingerprint a second ladder either confirms or contradicts,
+    and the date.
+
+    knee_axis_db is named for the CONTROL's axis on purpose. On a
+    hardware route that axis is not the card's decibels -- the
+    session manager reports what it was asked for while the card maps
+    it through a taper of its own -- and a field called plain "db"
+    would promise what nobody can deliver.
+    """
+    if not isinstance(body, dict):
+        return None
+    out = {}
+    for k in KNEE_FIELDS:
+        v = body.get(k)
+        if v is None:
+            continue
+        out[k] = str(v) if k in ("kind", "at") else float(v)
+    if out.get("gain") is None or not out.get("kind"):
+        return None
+    return out
+
+
+def sane_columns(body):
+    """{column index as a string: {"cal": path, "knee": {...}}}.
+
+    Called "columns" and not "channels" because that key is TAKEN: it
+    once held a capsule COUNT, which was retired because a count
+    cannot say which wire carries what. An old file may still carry
+    an integer there, so a non-dict is ignored here rather than
+    trusted -- reusing a retired key with a new type is a trap for
+    whoever opens such a file next.
+
+    One record per column, because a column is a wire and everything
+    here belongs to the microphone plugged into it: same owner, same
+    lifetime. A new per-column setting is then one line here rather
+    than a second dictionary to keep in step with this one.
+    """
+    out = {}
+    if not isinstance(body, dict):
+        return out
+    for k, v in body.items():
+        if not isinstance(v, dict):
+            continue
+        rec = {}
+        if v.get("cal"):
+            rec["cal"] = str(v["cal"])
+        knee = sane_knee(v.get("knee"))
+        if knee:
+            rec["knee"] = knee
+        if rec:
+            out[str(k)] = rec
+    return out
+
 
 
 def cal_to_store(chosen, remembered, by_hand=False):
@@ -126,16 +200,25 @@ class MicProfileStore:
 
     @staticmethod
     def _sane(pid, body):
-        cal = body.get("cal") or {}
-        cal = {str(k): str(v) for k, v in cal.items() if v}
+        # ONE shape. A file from before this change is simply not read
+        # -- his call, and the right one: the store holds a
+        # calibration binding and a working point, both a few seconds
+        # to re-enter, and carrying a second shape forever to save
+        # those seconds is a worse trade than deleting the file once
+        cols = sane_columns(body.get("columns"))
+        cal = {k: v["cal"] for k, v in cols.items() if v.get("cal")}
         return {"id": pid, "name": body.get("name") or pid,
                 "node_match": body.get("node_match") or "",
-                "serial": body.get("serial") or "", "cal": cal}
+                "serial": body.get("serial") or "", "cal": cal,
+                "columns": cols}
 
     @staticmethod
     def _body(p):
+        # a WHITELIST: a field missing from here is dropped silently
+        # on the next save, which is how a new one gets lost. `cal` is
+        # derived from `columns` on read, so it is not written
         return {k: p[k] for k in ("name", "node_match", "serial",
-                                  "cal")}
+                                  "columns")}
 
     def get(self, pid):
         return self.profiles.get(pid)
@@ -198,6 +281,27 @@ class MicProfileStore:
         or None. This is what the window hands finalize(channel, cal=...)."""
         p = self.profiles.get(pid)
         return p["cal"].get(str(channel)) if p else None
+
+    def knee_for(self, pid, channel):
+        """The sensitivity verdict measured on that column, or None.
+
+        It belongs to the SOURCE, not to any earphone: choosing a
+        different sink does not touch it, which is the whole point --
+        a coupler's working point is found once and reused for every
+        earphone measured through it.
+        """
+        p = self.profiles.get(pid)
+        if not p:
+            return None
+        return (p["columns"].get(str(channel)) or {}).get("knee")
+
+    def knees_of(self, pid):
+        """{column: verdict} for everything measured on this rig."""
+        p = self.profiles.get(pid)
+        if not p:
+            return {}
+        return {k: v["knee"] for k, v in p["columns"].items()
+                if v.get("knee")}
 
 
 class MeasureMemory:

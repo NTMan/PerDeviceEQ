@@ -2244,6 +2244,11 @@ class MeasureWindow(Adw.Window):
                 path = prof.get("cal", {}).get(str(i))
                 if path:
                     self.cal[i] = path
+        # and its remembered sensitivity, so the line is there before
+        # anything is measured. A working point costs half a minute of
+        # silence and is worth the same on every earphone measured
+        # through this microphone -- there is no reason to find it twice
+        self._load_knees(src)
         self._rebuild_cal_row()
         # the rig is row context: take passports compare against
         # the SELECTED mic, so a rig switch rebuilds the rows.
@@ -3377,6 +3382,50 @@ class MeasureWindow(Adw.Window):
             return
         self._apply_knee(out["src"], v)
 
+    def _knees_for_store(self, src, existing):
+        """Verdicts to write: what this session measured on this
+        source's ACTIVE route, plus whatever the store already had for
+        columns this session did not touch.
+
+        The route is not part of the stored key -- one microphone
+        profile stands for one jack, which is what node_match already
+        says -- so only the verdicts belonging to the route in view
+        may be written, or a line-in ladder would overwrite the
+        microphone's.
+        """
+        out = dict((existing or {}).get("columns") and
+                   {k: v["knee"] for k, v
+                    in existing["columns"].items() if v.get("knee")}
+                   or {})
+        name = src.get("name")
+        route = next((r.get("name") for r in src.get("routes") or []
+                      if r.get("active")), None)
+        for (node, rt, col), v in self._knee.items():
+            if node != name or rt != route:
+                continue
+            rec = measure_prefs.sane_knee(v)
+            if rec:
+                out[str(col)] = rec
+        return out
+
+    def _load_knees(self, src):
+        """Bring a rig's remembered verdicts into this session, so the
+        sensitivity line is there before anything is measured and a
+        ladder is a CHECK rather than a first acquaintance."""
+        if not src or not src.get("name"):
+            return
+        prof = self.mic_store.match(src["name"])
+        if not prof:
+            return
+        route = next((r.get("name") for r in src.get("routes") or []
+                      if r.get("active")), None)
+        for col, rec in self.mic_store.knees_of(prof["id"]).items():
+            try:
+                key = (src["name"], route, int(col))
+            except (TypeError, ValueError):
+                continue
+            self._knee.setdefault(key, dict(rec))
+
     def _knee_key(self):
         """Which input a ladder's answer belongs to.
 
@@ -3409,9 +3458,21 @@ class MeasureWindow(Adw.Window):
         without this a re-run nudges the gain every time for no reason.
         """
         key = self._knee_key()
+        row = getattr(self, "gain_spin", None)
         if key is not None:
-            self._knee[key] = {"kind": v.kind, "knee_db": v.knee_db,
-                               "work_db": v.work_db}
+            self._knee[key] = {
+                "kind": v.kind, "knee_db": v.knee_db,
+                "work_db": v.work_db,
+                # what the store keeps: the position to stand at, and
+                # the numbers that let a second ladder agree or not
+                "gain": knee_run.db_to_cubic(v.work_db)
+                if v.work_db is not None else None,
+                "knee_axis_db": v.knee_db,
+                "flat_dbfs": next((s.rungs[-1].rms_dbfs
+                                   for s in v.segments
+                                   if s.kind == "flat"), None),
+                "scatter_db": v.scatter,
+                "at": time.strftime("%Y-%m-%d")}
         row = getattr(self, "gain_spin", None)
         cur_db = (knee_run.cubic_to_db(row.get_value() / 100.0)
                   if row is not None else None)
@@ -3452,6 +3513,8 @@ class MeasureWindow(Adw.Window):
         v = self._knee.get(self._knee_key())
         text = None
         if v is not None and row is not None:
+            v = dict(v)
+            v.setdefault("knee_db", v.get("knee_axis_db"))
             text = knee.caption(v["kind"], v.get("knee_db"),
                                 knee_run.cubic_to_db(
                                     row.get_value() / 100.0))
@@ -3966,12 +4029,22 @@ class MeasureWindow(Adw.Window):
         # and only a hand may empty the block
         cal = measure_prefs.cal_to_store(
             self.cal, (existing or {}).get("cal"), by_hand)
-        if not measure_prefs.worth_saving(cal, existing, by_hand):
+        # a measured sensitivity is a statement about this rig, worth
+        # writing down for the same reason a calibration is -- and a
+        # rig with no calibration is every rig until one is chosen
+        knees = self._knees_for_store(src, existing)
+        if not measure_prefs.worth_saving(cal, existing, by_hand,
+                                          knees=knees):
             return
+        chans = {}
+        for k, path in cal.items():
+            chans.setdefault(str(k), {})["cal"] = path
+        for k, rec in knees.items():
+            chans.setdefault(str(k), {})["knee"] = rec
         body = {"name": src["desc"], "node_match": src["name"],
                 "serial": ((existing or {}).get("serial", "")
                            or measure_prefs.serial_from_cal(cal.values())),
-                "cal": cal}
+                "columns": chans}
         if existing:
             body["id"] = existing["id"]
         pid = self.mic_store.save(body)
