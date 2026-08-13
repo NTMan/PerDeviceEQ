@@ -161,27 +161,41 @@
 
         <!-- the seven blocks, slotted into whichever layout is active -->
         <child type="mic">
-          <object class="AdwPreferencesGroup" id="mic_group">
+          <!-- TWO cards, in the order a rig is set up. The microphone
+               is settled FIRST and knows nothing about targets or
+               routing; the output can only be chosen once there is
+               something to capture it with. -->
+          <object class="GtkBox">
+            <property name="orientation">vertical</property>
+            <property name="spacing">18</property>
             <child>
-              <object class="AdwComboRow" id="sink_row">
-                <property name="title" translatable="yes">Output</property>
-                <property name="subtitle" translatable="yes">Where the sweep is played</property>
+              <object class="AdwPreferencesGroup" id="mic_group">
+                <child>
+                  <object class="AdwComboRow" id="source_row">
+                    <property name="title" translatable="yes">Measurement mic</property>
+                    <property name="subtitle" translatable="yes">Input the sweep is captured on</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesRow" id="gain_host">
+                    <property name="activatable">false</property>
+                  </object>
+                </child>
               </object>
             </child>
             <child>
-              <object class="AdwPreferencesRow" id="vol_host">
-                <property name="activatable">false</property>
-              </object>
-            </child>
-            <child>
-              <object class="AdwComboRow" id="source_row">
-                <property name="title" translatable="yes">Measurement mic</property>
-                <property name="subtitle" translatable="yes">Input the sweep is captured on</property>
-              </object>
-            </child>
-            <child>
-              <object class="AdwPreferencesRow" id="gain_host">
-                <property name="activatable">false</property>
+              <object class="AdwPreferencesGroup" id="out_group">
+                <child>
+                  <object class="AdwComboRow" id="sink_row">
+                    <property name="title" translatable="yes">Output</property>
+                    <property name="subtitle" translatable="yes">Where the sweep is played</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesRow" id="vol_host">
+                    <property name="activatable">false</property>
+                  </object>
+                </child>
               </object>
             </child>
           </object>

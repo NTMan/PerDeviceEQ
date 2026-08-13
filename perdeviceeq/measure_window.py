@@ -2655,6 +2655,16 @@ class MeasureWindow(Adw.Window):
             r.set_activatable_widget(b)
             self.cal_manage_row = r
             self.mic_group.add(r)
+        else:
+            # the rows above it are removed and re-added on every
+            # rebuild, and Adw.PreferencesGroup.add appends, so this
+            # one has to be pushed back down or it climbs above them.
+            # Same shape as the transport: an invariant belongs to the
+            # code that adds rows.
+            r = self.cal_manage_row
+            if r.get_parent() is not None:
+                self.mic_group.remove(r)
+                self.mic_group.add(r)
 
     def _keep_act_last(self):
         """The transport stays the LAST row of the card.
@@ -2676,11 +2686,18 @@ class MeasureWindow(Adw.Window):
             grp.add(act)
 
     def _rebuild_map_slots(self):
-        """The capture rows for the tab in view: which column carries
-        this target, and the calibration of that column under it --
-        rows of the SAME group the tabs live in, so one alignment
-        holds for all of them."""
-        grp = getattr(self, "_measure_grp", None)
+        """The MICROPHONE's rows: which channel it arrives on, what
+        that channel's sensitivity is, and its calibration.
+
+        They live in the microphone's own card because none of them
+        needs to know a target. A rig is set up in that order -- the
+        microphone first, knowing nothing about routing; then the
+        output, which can only be chosen once there is something to
+        capture it with; then the level. Choosing the capture channel
+        eight times, once per target of a 7.1 set, was the cost of
+        having it under the tabs.
+        """
+        grp = getattr(self, "mic_group", None)
         if grp is None:
             return
         # EACH REMOVES ITS OWN. The cal rows belong to
@@ -2699,9 +2716,10 @@ class MeasureWindow(Adw.Window):
         ch = self._selected_ch
         if self.mic_ch > 1 and 0 <= ch < self.n_ch:
             row = Adw.ComboRow()
-            row.set_title("Capture column")
-            row.set_subtitle("Where %s comes back"
-                             % _speaker_name(self.ch_keys[ch]))
+            row.set_title("Capture channel")
+            # no target named here: this card does not know about
+            # targets, and the channel is the same for all of them
+            row.set_subtitle("Which channel the microphone arrives on")
             row.set_model(Gtk.StringList.new(self._mic_labels()))
             row.set_list_factory(self._meter_factory())
             # and the SAME bar in the closed row, for the column it
@@ -2921,7 +2939,13 @@ class MeasureWindow(Adw.Window):
 
     def _make_map_cb(self, k):
         def cb(dd, _p):
-            self.mic_of[k] = dd.get_selected()
+            # EVERY target, not just the one in view. One microphone
+            # arrives on one channel, and a 7.1 set would otherwise
+            # ask the same question eight times. Two capsules in two
+            # jacks are one click apart, which is his own measure of
+            # what that costs.
+            for t in range(self.n_ch):
+                self.mic_of[t] = dd.get_selected()
             # the rows under this dropdown speak for the column it
             # chooses -- the calibration and the sensitivity both. They
             # were being relabelled a heartbeat later by the periodic
