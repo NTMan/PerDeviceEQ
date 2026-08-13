@@ -334,6 +334,54 @@ def noise_like(peak_dbfs, rms_dbfs, floor=CREST_NOISE):
 
 # ------------------------------------------------------------ the reading
 
+def already_good(here_db, work_db, margin_db=MARGIN_DB):
+    """Whether a control standing at `here_db` is already somewhere the
+    ladder would have chosen.
+
+    Above the knee every position has the same SNR, so a fader inside
+    the margin band is already right and moving it buys nothing while
+    fragmenting a canvas: takes made at different capture gains sit at
+    different levels, which lands in the per-frequency spread and reads
+    as disagreement. The knee is an extrapolation and wanders a few
+    tenths between runs, so without this a re-run nudges the gain every
+    time for no reason.
+    """
+    if here_db is None or work_db is None:
+        return False
+    return abs(here_db - work_db) <= margin_db
+
+
+def caption(kind, knee_db, here_db):
+    """One line saying where a control stands with respect to a verdict,
+    or None when there is nothing to say.
+
+    Deliberately about POSITION rather than about the search: it stays
+    true while the hand moves the control, which is why it belongs
+    under the control and not in a status line that the next sweep
+    overwrites.
+
+    The decibels are the CONTROL's axis, not the card's -- see the
+    module docstring -- so this says above and below and never promises
+    a quantity of SNR.
+    """
+    if kind == "knee":
+        if here_db is None or knee_db is None:
+            return None
+        d = here_db - knee_db
+        if d < -0.05:
+            return ("%.1f dB BELOW the knee at %+.1f dB -- SNR is being "
+                    "thrown away" % (-d, knee_db))
+        return "+%.1f dB above the knee at %+.1f dB" % (d, knee_db)
+    if kind == "input":
+        return ("the input outweighs the converter across this control, "
+                "so every position has the same SNR and this one is free")
+    if kind == "converter":
+        return ("the converter outweighs the input across this control, "
+                "so higher is better here and the knee is above what was "
+                "walked")
+    return None
+
+
 def _boundary(a, b):
     """Where the two asymptotes meet, in gain.
 

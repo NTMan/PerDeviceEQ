@@ -35,6 +35,7 @@ from . import curve_export                          # noqa: E402
 from . import pw_backend
 from . import chantabs                               # noqa: E402
 from . import inmeter                                # noqa: E402
+from . import knee                                   # noqa: E402
 from . import knee_run                               # noqa: E402
 from . import eq                                     # noqa: E402
 from . import debug
@@ -216,6 +217,12 @@ class MeasureWindow(Adw.Window):
             pass
         self._page = None            # selected channel's page widgets
         self._selected_ch = 0        # target the row has selected
+        # what a ladder found, per (source node, active route, capture
+        # column). The route belongs in the key because a node name
+        # does NOT distinguish jacks: a CM106 answers to one node name
+        # on both its microphone and its line input, and the knee of
+        # one says nothing about the other.
+        self._knee = {}
         self.tabs = None             # the shared channel row
         self._inmeter = inmeter.InputMeter()
         self._meter_bars = {}        # column -> Gtk.LevelBar in the list
@@ -352,18 +359,6 @@ class MeasureWindow(Adw.Window):
         gbox.set_margin_top(6)
         gbox.set_margin_bottom(6)
         gbox.append(self.gain_spin)
-        # on the fader's OWN row, mirroring the releveler at the end of
-        # the output fader's. A search belongs beside the thing it
-        # searches, and the two rows now read the same way.
-        self.knee_btn = self._pult_btn(
-            "system-search-symbolic",
-            "Find this input's working gain. Walks the control in "
-            "SILENCE -- nothing is played -- and looks for where the "
-            "input's own noise stops being buried in the converter's. "
-            "Below that point SNR is being thrown away; above it more "
-            "gain buys nothing and costs headroom.",
-            self._on_knee)
-        gbox.append(self.knee_btn)
         b.get_object("gain_host").set_child(gbox)
         # the lead bin stays: it kept the status line clear of the
         # fader column, and with the faders gone from the sides it is
@@ -1253,6 +1248,10 @@ class MeasureWindow(Adw.Window):
                 tip += "\n" + brk
             row.set_tooltip_text(tip)
             btn.set_label("Change\u2026")
+        # the sensitivity line speaks for the same column as
+        # these titles do, so it is refreshed with them and
+        # cannot lag behind by a heartbeat
+        self._refresh_knee_caption()
 
     def _selected_source(self):
         """The LIVE source entry behind the picker's choice; None
@@ -2514,10 +2513,15 @@ class MeasureWindow(Adw.Window):
         grp = getattr(self, "cal_group", None)
         if grp is None:
             return
-        for row in getattr(self, "cal_rows", []):
+        for row in (list(getattr(self, "cal_rows", []))
+                    + list(getattr(self, "knee_rows", []))):
             if row.get_parent() is not None:
                 grp.remove(row)
         self.cal_rows = []
+        # their own list: cal_rows is zipped with cal_cols in
+        # _sync_cal_labels, and a sensitivity row in that list would be
+        # paired with the next column and given a calibration's text
+        self.knee_rows = []
         self.cal_cols = []
         self.cal_btns = {}
         self.cal_badges = {}
@@ -2559,6 +2563,34 @@ class MeasureWindow(Adw.Window):
             self.cal_rows.append(row)
             self.cal_cols.append(i)
             self.cal_btns[i] = btn
+            # SENSITIVITY, sibling of the calibration and for the same
+            # reason: both are the provenance of the microphone plugged
+            # into THIS column, they share an owner and a lifetime, and
+            # the store keeps them in one record. On the microphone's
+            # fader row it read as a property of the card, and that row
+            # cannot say which column a knee was measured on -- this
+            # row's own title does, so the line under it stays short.
+            krow = Adw.ActionRow()
+            krow.set_title("%s sensitivity" % labels[i])
+            krow.set_subtitle("")
+            kb = Gtk.Button(label="Find")
+            kb.set_valign(Gtk.Align.CENTER)
+            kb.add_css_class("flat")
+            kb.set_tooltip_text(
+                "Walk this input's gain in SILENCE -- nothing is played "
+                "-- and find where the microphone's own noise stops "
+                "being buried in the converter's. Below that point SNR "
+                "is being thrown away; above it more gain buys nothing "
+                "and costs headroom. Decibels here are the CONTROL's "
+                "own axis, not the card's.")
+            kb.connect("clicked", self._on_knee)
+            krow.add_suffix(kb)
+            krow.set_activatable_widget(kb)
+            grp.add(krow)
+            self.knee_rows.append(krow)
+            self.knee_row = krow
+            self.knee_btn = kb
+        self._keep_act_last()
         self._ensure_cal_manage_row()
         self._refresh_cal_manage()
         self._sync_cal_labels()
@@ -2581,6 +2613,25 @@ class MeasureWindow(Adw.Window):
             r.set_activatable_widget(b)
             self.cal_manage_row = r
             self.mic_group.add(r)
+
+    def _keep_act_last(self):
+        """The transport stays the LAST row of the card.
+
+        Adw.PreferencesGroup.add appends, so anything added after the
+        transport lands below the thing a hand comes back to. This used
+        to be done by _rebuild_map_slots after it had called the row
+        builders -- which held only as long as nobody called a builder
+        from anywhere else. The column dropdown then did, and the
+        calibration and sensitivity rows appeared under the transport.
+        An invariant kept by the CALLER is one the next caller breaks,
+        so it now belongs to the code that adds rows.
+        """
+        grp = getattr(self, "_measure_grp", None)
+        act = getattr(self, "_act_row", None)
+        if grp is not None and act is not None \
+                and act.get_parent() is not None:
+            grp.remove(act)
+            grp.add(act)
 
     def _rebuild_map_slots(self):
         """The capture rows for the tab in view: which column carries
@@ -2619,12 +2670,7 @@ class MeasureWindow(Adw.Window):
             self.map_dds[ch] = row
             self.cal_group = grp
             self._rebuild_cal_row()
-        # the transport stays LAST: rows added after it would otherwise
-        # land below the thing a hand comes back to
-        act = getattr(self, "_act_row", None)
-        if act is not None and act.get_parent() is not None:
-            grp.remove(act)
-            grp.add(act)
+        self._keep_act_last()
         self._dress_act_row()
 
     def _say(self, text):
@@ -2775,6 +2821,12 @@ class MeasureWindow(Adw.Window):
     def _make_map_cb(self, k):
         def cb(dd, _p):
             self.mic_of[k] = dd.get_selected()
+            # the rows under this dropdown speak for the column it
+            # chooses -- the calibration and the sensitivity both. They
+            # were being relabelled a heartbeat later by the periodic
+            # pass, so picking a different column left the provenance
+            # of the old one on screen until the tabs were clicked.
+            self._rebuild_cal_row()
         return cb
 
     def _open_cal_manager(self):
@@ -3209,6 +3261,7 @@ class MeasureWindow(Adw.Window):
                              "in software, which buys no headroom and "
                              "improves no noise. Held at full."}[
                      self._fader_kind])
+            self._refresh_knee_caption()
             return
         # seeded from the card ONCE per rig, and after that the hand
         # owns it. Re-reading it on every heartbeat meant a lagging
@@ -3231,6 +3284,7 @@ class MeasureWindow(Adw.Window):
         note += (" Every take records the gain it was measured at; "
                  "takes made at different gains are not comparable.")
         row.set_tooltip_text(note)
+        self._refresh_knee_caption()
 
     def _assert_capture_gain(self):
         """Put the card where the slider says, right before the
@@ -3323,38 +3377,85 @@ class MeasureWindow(Adw.Window):
             return
         self._apply_knee(out["src"], v)
 
-    def _apply_knee(self, src, v):
-        """Stand the fader where the ladder said, and say why.
+    def _knee_key(self):
+        """Which input a ladder's answer belongs to.
 
-        The walk put the gain back on its way out, so this is a
-        deliberate move to a found place rather than a leftover.
+        The ROUTE is in the key because a node name does not
+        distinguish jacks: a CM106 answers to one node name on both its
+        microphone and its line input. And the COLUMN is in it because
+        a card's columns are different wires -- on an M62, column 0 is
+        Mic1 and column 1 is Mic2. Nothing needs erasing when any of
+        the three changes: the lookup simply finds no answer, which is
+        the truth.
         """
-        cubic = knee_run.db_to_cubic(v.work_db)
-        row = getattr(self, "gain_spin", None)
-        if row is not None:
-            self._gain_guard = True
-            row.set_value(round(cubic * 100.0))
-            self._gain_guard = False
-        nid = src.get("id")
-        if nid is not None:
-            def work():
-                try:
-                    pw_backend.set_gain(nid, cubic)
-                except Exception as e:                  # noqa: BLE001
-                    debug.log("capture gain: %s" % e)
+        src = self._selected_source() or {}
+        name = src.get("name")
+        if not name:
+            return None
+        route = next((r.get("name") for r in src.get("routes") or []
+                      if r.get("active")), None)
+        return (name, route, self.mic_of.get(self._selected_ch, 0))
 
-            pw_backend.in_thread(work)
-        where = {"knee": "the knee is at %s; standing %s above it"
-                         % (_db(v.knee_db), _db(v.work_db - v.knee_db)
-                            if v.knee_db is not None else "?"),
-                 "input": "the input already outweighs the converter "
-                          "everywhere here, so the bottom is the place "
-                          "to be and the headroom is free",
-                 "converter": "the converter outweighs the input "
-                              "everywhere here, so more gain still buys "
-                              "SNR and the top is the place to be"}.get(
-                                  v.kind, v.kind)
-        self._say("Gain set to %d%% -- %s." % (round(cubic * 100.0), where))
+    def _apply_knee(self, src, v):
+        """Remember what the ladder found, and move the fader only if
+        it is not already standing somewhere equivalent.
+
+        Above the knee every position has the same SNR, so a fader
+        already inside the margin band is already right, and moving it
+        would buy nothing while fragmenting the canvas: takes made at
+        different capture gains sit at different levels, which lands in
+        the per-frequency spread and reads as disagreement. The knee is
+        an extrapolation and wanders by a few tenths between runs, so
+        without this a re-run nudges the gain every time for no reason.
+        """
+        key = self._knee_key()
+        if key is not None:
+            self._knee[key] = {"kind": v.kind, "knee_db": v.knee_db,
+                               "work_db": v.work_db}
+        row = getattr(self, "gain_spin", None)
+        cur_db = (knee_run.cubic_to_db(row.get_value() / 100.0)
+                  if row is not None else None)
+        if knee.already_good(cur_db, v.work_db):
+            self._say("Gain left where it was -- already in the band the "
+                      "ladder would have chosen.")
+        else:
+            cubic = knee_run.db_to_cubic(v.work_db)
+            if row is not None:
+                self._gain_guard = True
+                row.set_value(round(cubic * 100.0))
+                self._gain_guard = False
+            nid = src.get("id")
+            if nid is not None:
+                def work():
+                    try:
+                        pw_backend.set_gain(nid, cubic)
+                    except Exception as e:              # noqa: BLE001
+                        debug.log("capture gain: %s" % e)
+
+                pw_backend.in_thread(work)
+            self._say("Gain set to %d%%." % round(cubic * 100.0))
+        self._refresh_knee_caption()
+
+    def _refresh_knee_caption(self):
+        """Where the gain stands relative to the knee measured on the
+        column in view, recomputed every time the fader moves and
+        every time the tab changes. With two capsules in two jacks the
+        two tabs carry two different lines, which is how a pair
+        standing at different sensitivities becomes visible at all."""
+        krow = getattr(self, "knee_row", None)
+        row = getattr(self, "gain_spin", None)
+        if krow is None:
+            return
+        if not getattr(self, "_gain_ok", False):
+            krow.set_subtitle("this input has no gain of its own")
+            return
+        v = self._knee.get(self._knee_key())
+        text = None
+        if v is not None and row is not None:
+            text = knee.caption(v["kind"], v.get("knee_db"),
+                                knee_run.cubic_to_db(
+                                    row.get_value() / 100.0))
+        krow.set_subtitle(text or "not measured on this column yet")
 
     def _on_gain_edited(self, scale):
         if self._gain_guard:
@@ -3364,6 +3465,7 @@ class MeasureWindow(Adw.Window):
         if nid is None:
             return
         cubic = scale.get_value() / 100.0
+        self._refresh_knee_caption()
 
         def work():
             try:

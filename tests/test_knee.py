@@ -204,3 +204,39 @@ def test_the_full_fifteen_rung_ladder_resolves_all_three_regions():
     assert v.work_db > v.knee_db
     # the scatter the fit measures is the repeatability the bench has
     assert v.scatter < 0.5
+
+
+# --- what to say about where a control stands ---------------------------
+
+def test_a_control_inside_the_margin_band_is_already_right():
+    # above the knee every position has the same SNR, so a fader within
+    # the margin of the suggested point must not be nudged: the knee is
+    # an extrapolation and wanders a few tenths between runs, and every
+    # nudge fragments a canvas by capture gain
+    assert knee.already_good(-5.5, -5.5)
+    assert knee.already_good(-5.5, -8.4)          # 2.9 dB, inside 3.0
+    assert not knee.already_good(-18.1, -5.5)
+    assert not knee.already_good(None, -5.5)
+    assert not knee.already_good(-5.5, None)
+
+
+def test_the_caption_says_which_side_of_the_knee_the_control_is_on():
+    above = knee.caption("knee", -8.5, -5.5)
+    assert "above the knee" in above and "-8.5" in above
+    below = knee.caption("knee", -8.5, -13.3)
+    assert "BELOW the knee" in below
+    assert "thrown away" in below                 # the one wrong place
+    # it never promises a QUANTITY of SNR, because the axis is the
+    # control's own and not the card's decibels
+    assert "SNR" not in above
+
+
+def test_the_caption_speaks_for_the_other_two_verdicts_too():
+    assert "same SNR" in knee.caption("input", None, -60.0)
+    assert "higher is better" in knee.caption("converter", None, 0.0)
+
+
+def test_the_caption_is_silent_when_it_has_nothing_to_say():
+    assert knee.caption("unclear", None, -5.5) is None
+    assert knee.caption("knee", None, -5.5) is None
+    assert knee.caption("knee", -8.5, None) is None
