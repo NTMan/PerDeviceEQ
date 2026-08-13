@@ -325,6 +325,15 @@ class MeasureWindow(Adw.Window):
         # is size-grouped with the fader)
         ring_col.set_hexpand(True)
         ring_col.append(self._build_measure_col())
+        # HIS ORDER, and it is a dependency rather than a taste: the
+        # microphone is settled first and knows nothing about targets;
+        # the target comes next, because without one there is nothing
+        # to play to; the output and its level after that; and play
+        # and stop last, when everything is prepared. The output card
+        # is built in the ui file and placed here, since only this
+        # knows where the targets and the transport rows are.
+        ring_col.append(b.get_object("out_group"))
+        ring_col.append(self._act_grp)
         self.ready_hint = Gtk.Label(xalign=0.5)
         self.ready_hint.add_css_class("success")
         self.ready_hint.set_wrap(True)
@@ -561,7 +570,12 @@ class MeasureWindow(Adw.Window):
         self._act_row = Adw.PreferencesRow()
         self._act_row.set_activatable(False)
         self._act_row.set_child(act)
-        self._measure_grp.add(self._act_row)
+        # its OWN card, and the last one. Play and stop are done when
+        # everything else is prepared -- the microphone, the target,
+        # the level -- so they sit at the bottom of the page and
+        # nothing can be added beneath them by accident.
+        self._act_grp = Adw.PreferencesGroup()
+        self._act_grp.add(self._act_row)
 
         # The faders and auto-level were born inside the ring's method
         # and outlive it: the fader is the sweep's level, auto-level
@@ -2671,23 +2685,15 @@ class MeasureWindow(Adw.Window):
                 self.mic_group.add(r)
 
     def _keep_act_last(self):
-        """The transport stays the LAST row of the card.
+        """Nothing to keep any more: play and stop have a card of
+        their own at the bottom of the page, so no row can land under
+        them however the cards above are rebuilt.
 
-        Adw.PreferencesGroup.add appends, so anything added after the
-        transport lands below the thing a hand comes back to. This used
-        to be done by _rebuild_map_slots after it had called the row
-        builders -- which held only as long as nobody called a builder
-        from anywhere else. The column dropdown then did, and the
-        calibration and sensitivity rows appeared under the transport.
-        An invariant kept by the CALLER is one the next caller breaks,
-        so it now belongs to the code that adds rows.
+        Kept as a name rather than deleted because it was called from
+        two builders and this says why it now does nothing, which the
+        next reader will want more than a missing function.
         """
-        grp = getattr(self, "_measure_grp", None)
-        act = getattr(self, "_act_row", None)
-        if grp is not None and act is not None \
-                and act.get_parent() is not None:
-            grp.remove(act)
-            grp.add(act)
+        return
 
     def _rebuild_map_slots(self):
         """The MICROPHONE's rows: which channel it arrives on, what
