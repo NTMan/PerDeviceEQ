@@ -2569,7 +2569,11 @@ class MeasureWindow(Adw.Window):
             if old_parent is not None:
                 old_parent.remove(self.gain_spin)
             fbox.append(self.gain_spin)
-            kb = Gtk.Button(label="Find")
+            # a microphone with an arrow down its stand, beside the
+            # fader it walks. The word "Find" said nothing about WHAT
+            # was being found, and this row has no heading to say it
+            kb = Gtk.Button()
+            kb.set_icon_name("pde-find-gain-symbolic")
             kb.set_valign(Gtk.Align.CENTER)
             kb.add_css_class("flat")
             kb.set_tooltip_text(
@@ -2946,6 +2950,12 @@ class MeasureWindow(Adw.Window):
             # what that costs.
             for t in range(self.n_ch):
                 self.mic_of[t] = dd.get_selected()
+            # and the FADER speaks for the chosen channel too, so it is
+            # re-read with the rows. It was not: picking the other
+            # channel without leaving the tab left the previous
+            # channel's number under a line that had already moved to
+            # the new channel's knee.
+            self._refresh_gain()
             # the rows under this dropdown speak for the column it
             # chooses -- the calibration and the sensitivity both. They
             # were being relabelled a heartbeat later by the periodic

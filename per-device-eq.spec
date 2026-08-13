@@ -79,6 +79,8 @@ install -Dpm0644 data/icons/hicolor/scalable/apps/%{appid}.svg \
         %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/%{appid}.svg
 install -Dpm0644 data/icons/pde-level-symbolic.svg \
         %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-level-symbolic.svg
+install -Dpm0644 data/icons/pde-find-gain-symbolic.svg \
+        %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-find-gain-symbolic.svg
 install -Dpm0644 data/%{appid}.metainfo.xml \
         %{buildroot}%{_metainfodir}/%{appid}.metainfo.xml
 
@@ -121,6 +123,7 @@ fi
 %{_datadir}/applications/%{appid}.desktop
 %{_datadir}/icons/hicolor/scalable/apps/%{appid}.svg
 %{_datadir}/icons/hicolor/scalable/actions/pde-level-symbolic.svg
+%{_datadir}/icons/hicolor/scalable/actions/pde-find-gain-symbolic.svg
 %{_metainfodir}/%{appid}.metainfo.xml
 
 %changelog
