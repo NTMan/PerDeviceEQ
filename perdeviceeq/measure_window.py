@@ -35,6 +35,7 @@ from . import curve_export                          # noqa: E402
 from . import pw_backend
 from . import chantabs                               # noqa: E402
 from . import inmeter                                # noqa: E402
+from . import knee_run                               # noqa: E402
 from . import eq                                     # noqa: E402
 from . import debug
 from .picker import NodePicker                       # noqa: E402
@@ -71,6 +72,10 @@ SPEAKER_NAMES = {
     "LFE": "Subwoofer", "RL": "Rear Left", "RR": "Rear Right",
     "SL": "Side Left", "SR": "Side Right",
 }
+
+
+def _db(x):
+    return "?" if x is None else "%+.1f dB" % x
 
 
 def _speaker_name(key):
@@ -347,6 +352,18 @@ class MeasureWindow(Adw.Window):
         gbox.set_margin_top(6)
         gbox.set_margin_bottom(6)
         gbox.append(self.gain_spin)
+        # on the fader's OWN row, mirroring the releveler at the end of
+        # the output fader's. A search belongs beside the thing it
+        # searches, and the two rows now read the same way.
+        self.knee_btn = self._pult_btn(
+            "system-search-symbolic",
+            "Find this input's working gain. Walks the control in "
+            "SILENCE -- nothing is played -- and looks for where the "
+            "input's own noise stops being buried in the converter's. "
+            "Below that point SNR is being thrown away; above it more "
+            "gain buys nothing and costs headroom.",
+            self._on_knee)
+        gbox.append(self.knee_btn)
         b.get_object("gain_host").set_child(gbox)
         # the lead bin stays: it kept the status line clear of the
         # fader column, and with the faders gone from the sides it is
@@ -3144,6 +3161,10 @@ class MeasureWindow(Adw.Window):
         self._start_measure(self._selected_ch)
 
     def _on_stop(self, _btn):
+        # one stop for both long things the window does. The ladder
+        # watches this flag between rungs and puts the gain back on its
+        # way out, so stopping costs nothing but the time already spent
+        self._knee_stop = True
         if self.session is not None and self._busy:
             self.session.cancel()            # aborts the sweep in flight
 
@@ -3234,6 +3255,106 @@ class MeasureWindow(Adw.Window):
             pw_backend.set_gain(nid, self._take_gain)
         except Exception as e:
             debug.log("capture gain: %s" % e)
+
+    # ---- the working gain, found rather than guessed -----------------
+    #
+    # The fader says what it CAN do; this says where on it to stand.
+    # An input gain sits after the microphone, so it multiplies the
+    # signal and the microphone's own noise together and cannot change
+    # the ratio between them -- all it changes is how far that package
+    # sits above the converter's fixed floor. Below the point where the
+    # input's noise overtakes that floor, SNR is being thrown away in
+    # the converter; above it, more gain buys nothing and costs
+    # headroom. The point is found in SILENCE, because the signal
+    # cancels out of the question.
+
+    def _on_knee(self, _btn):
+        if self._busy:
+            return
+        src = self._selected_source()
+        if not src:
+            self._error("Pick a measurement mic first.")
+            return
+        self._knee_stop = False
+        self._busy = True
+        self._set_row_sensitive(False)
+        self._update_pult()
+        self._say("Finding the working gain -- keep the room quiet, "
+                  "nothing is played.")
+        threading.Thread(target=self._knee_worker, args=(src,),
+                         daemon=True).start()
+
+    def _knee_worker(self, src):
+        col = self.mic_of.get(self._selected_ch, 0)
+        out = {"error": None, "verdict": None, "walk": None, "src": src}
+        try:
+            def said(rung, done, total):
+                self._post_status(
+                    "gain %+.1f dB -> %.1f dBFS   (rung %d of %d)"
+                    % (rung.gain_db, rung.rms_dbfs, done, total))
+
+            out["verdict"], out["walk"] = knee_run.ladder(
+                src, col, on_rung=said,
+                should_stop=lambda: self._knee_stop)
+        except Exception as e:                          # noqa: BLE001
+            out["error"] = e
+        GLib.idle_add(self._knee_done, out)
+
+    def _knee_done(self, out):
+        self._busy = False
+        self._set_row_sensitive(True)
+        self._update_pult()
+        walk = out["walk"]
+        if out["error"] is not None:
+            self._say("Could not walk the gain: %s" % out["error"])
+            return
+        if walk is not None and walk.restored is False:
+            # the one failure that must not pass quietly: the card is
+            # standing somewhere nobody chose
+            self._say("The gain could not be put back -- set it by hand.")
+            return
+        if self._knee_stop:
+            self._say("Stopped. The gain is back where it was.")
+            return
+        v = out["verdict"]
+        if v is None or not v.usable:
+            self._say("No working gain found: %s"
+                      % (v.note if v is not None else "nothing measured"))
+            return
+        self._apply_knee(out["src"], v)
+
+    def _apply_knee(self, src, v):
+        """Stand the fader where the ladder said, and say why.
+
+        The walk put the gain back on its way out, so this is a
+        deliberate move to a found place rather than a leftover.
+        """
+        cubic = knee_run.db_to_cubic(v.work_db)
+        row = getattr(self, "gain_spin", None)
+        if row is not None:
+            self._gain_guard = True
+            row.set_value(round(cubic * 100.0))
+            self._gain_guard = False
+        nid = src.get("id")
+        if nid is not None:
+            def work():
+                try:
+                    pw_backend.set_gain(nid, cubic)
+                except Exception as e:                  # noqa: BLE001
+                    debug.log("capture gain: %s" % e)
+
+            pw_backend.in_thread(work)
+        where = {"knee": "the knee is at %s; standing %s above it"
+                         % (_db(v.knee_db), _db(v.work_db - v.knee_db)
+                            if v.knee_db is not None else "?"),
+                 "input": "the input already outweighs the converter "
+                          "everywhere here, so the bottom is the place "
+                          "to be and the headroom is free",
+                 "converter": "the converter outweighs the input "
+                              "everywhere here, so more gain still buys "
+                              "SNR and the top is the place to be"}.get(
+                                  v.kind, v.kind)
+        self._say("Gain set to %d%% -- %s." % (round(cubic * 100.0), where))
 
     def _on_gain_edited(self, scale):
         if self._gain_guard:
@@ -3334,6 +3455,16 @@ class MeasureWindow(Adw.Window):
         self.play_btn.set_sensitive(not self._busy and live)
         if getattr(self, "relevel_btn", None) is not None:
             self.relevel_btn.set_sensitive(not self._busy and live)
+        if getattr(self, "knee_btn", None) is not None:
+            # NOT gated on `live`: the ladder plays nothing, so it wants
+            # a source and has no use for a sink. And only an analogue
+            # fader has anything to search -- an attenuator and a
+            # software multiplier are held at full and there is no
+            # working point to find on either.
+            self.knee_btn.set_sensitive(
+                not self._busy
+                and self._source_present() and not self._mic_gone
+                and getattr(self, "_fader_kind", None) == "analog")
         self.stop_btn.set_sensitive(self._busy)
         if getattr(self, "sink_dd", None) is not None:
             # mid-sweep the route is not a choice
