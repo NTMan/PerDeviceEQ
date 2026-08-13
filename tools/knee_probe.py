@@ -24,27 +24,20 @@ written twice here before.
 """
 
 import argparse
-import math
 import os
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from perdeviceeq import inmeter, knee, pw_backend      # noqa: E402
+from perdeviceeq import knee, knee_run, pw_backend     # noqa: E402
+
+cubic_to_db = knee_run.cubic_to_db
+db_to_cubic = knee_run.db_to_cubic
 
 
-def cubic_to_db(cubic):
-    """wpctl speaks the cubic volume; a route's own props are linear,
-    and 20*log10 of those is what pactl prints. linear = cubic**3, so
-    the two agree at 60*log10(cubic)."""
-    if not cubic or cubic <= 0.0:
-        return None
-    return 60.0 * math.log10(min(1.0, float(cubic)))
 
 
-def db_to_cubic(db):
-    return min(1.0, 10.0 ** (float(db) / 60.0))
 
 
 def find_source(needle):
@@ -59,14 +52,6 @@ def find_source(needle):
     return None, hits or srcs
 
 
-def read_back(node_name):
-    """The gain the card actually took, not the one we asked for. A
-    hardware control quantises to its own steps, and an axis made of
-    requests rather than of readings carries that error into the fit."""
-    for s in pw_backend.list_sources():
-        if s["name"] == node_name:
-            return (s.get("gain") or (None, None))[0]
-    return None
 
 
 def main():
@@ -168,25 +153,14 @@ def main():
               % (args.column, channels, ", ".join(names) or "unnamed"))
         return 1
 
-    # Below unity the control attenuates, and attenuation cannot move
-    # the input relative to the converter's floor -- so a knee, if the
-    # chain has one, is at or above the point where the card gives
-    # unity gain. A CM106 laddered from -60 spent six of its eight
-    # rungs down in the attenuation range and left two for the part
-    # that matters. The route publishes that point as volumeBase,
-    # linear, and 20*log10 of it is the same axis this walks.
-    active = next((r for r in (src.get("routes") or []) if r.get("active")),
-                  None)
-    base = (active or {}).get("volume_base")
-    lo = args.lo
-    if base and 0.0 < base < 1.0:
-        # printed, not used as a boundary: it tells you which part of
-        # the walk the card only attenuates in, and the software
-        # stretch usually ends near it
+    unity = knee_run.unity_db(src)
+    if unity is not None:
+        # printed, not obeyed: the flat stretch a knee is measured
+        # against often lies BELOW it. It does say which part of the
+        # walk the card can only attenuate in
         print("unity   : %.1f dB (cubic %.3f) -- below this the card "
-              "attenuates" % (20.0 * math.log10(base), base ** (1 / 3.0)))
-
-    before = (src.get("gain") or (None, None))[0]
+              "attenuates" % (unity, db_to_cubic(unity)))
+    before = knee_run.gain_of(src)
     print("columns : %d (%s)" % (channels, ", ".join(names) or "unnamed"))
     print("listening on column %d%s"
           % (args.column,
@@ -196,16 +170,72 @@ def main():
              if before else "unknown"))
     print("NOTHING IS PLAYED. Keep the room quiet until this finishes.\n")
 
-    meter = inmeter.InputMeter()
-    rungs = []
+    def say(rung, done, total):
+        print("  %7.1f dB   rms %8.2f   peak %8.2f   (%d blocks, %d/%d)"
+              % (rung.gain_db, rung.rms_dbfs, rung.peak_dbfs,
+                 getattr(rung, "blocks", 0), done, total))
 
-    def restore():
-        if before is not None:
-            try:
-                pw_backend.set_gain(src["id"], before)
-                print("\nrestored the gain to %.3f" % before)
-            except Exception as exc:                    # noqa: BLE001
-                print("\nCOULD NOT RESTORE the gain: %s" % exc)
+    rungs = []
+    try:
+        with knee_run.Walk(src, args.column, dwell=args.dwell) as w:
+            ac, peak_db, dc_db = w.listen(1.5)
+            if ac is not None:
+                print("column   : rms %.2f dBFS about the mean, peak %.2f, "
+                      "offset %.2f" % (ac, peak_db, dc_db))
+                if dc_db - ac > 10.0:
+                    # an offset is not noise and is not measured as one;
+                    # the ladder walks the AC part underneath it. But an
+                    # offset that size eats headroom and is a fault
+                    print("  the column carries a DC OFFSET %.1f dB above "
+                          "its own noise." % (dc_db - ac))
+                    print("  The ladder measures the noise about it, which "
+                          "is the right thing,")
+                    print("  but an offset that large is worth chasing on "
+                          "its own: it eats")
+                    print("  headroom and no gain setting will remove it.")
+                elif not knee.noise_like(peak_db, ac):
+                    print("  this column is not silent: crest %.1f dB."
+                          % (peak_db - ac))
+                    print("  Broadband noise carries 11 to 13 dB of crest "
+                          "and a sine 3. A few")
+                    print("  dB or less is a tone or something clipped, and "
+                          "a ladder walked over")
+                    print("  a signal describes the CONTROL rather than the "
+                          "chain's floor.")
+                    print("  Check what is feeding this column and that the "
+                          "port above is the")
+                    print("  jack you mean. --force ladders it anyway.")
+                    if not args.force:
+                        return 1
+                print("")
+            print("  %-10s %-16s %-11s %s" % ("gain", "", "noise", "peak"))
+            for db in knee.plan(args.lo, args.hi, args.steps):
+                r = w.visit(db)
+                if r is not None:
+                    say(r, len(w.rungs), args.steps)
+            knee.mark_transients(w.rungs)
+            if not args.no_refine:
+                fine = knee.refine(w.rungs)
+                if fine:
+                    print("\nrefining between %.1f and %.1f dB"
+                          % (min(fine), max(fine)))
+                    for db in fine:
+                        r = w.visit(db)
+                        if r is not None:
+                            say(r, len(w.rungs), args.steps + len(fine))
+                    knee.mark_transients(w.rungs)
+            rungs = w.rungs
+        if w.restored:
+            print("\nrestored the gain to %.3f" % w.before)
+        elif w.restored is False:
+            print("\nCOULD NOT RESTORE the gain; set it back by hand")
+    except KeyboardInterrupt:
+        print("\nstopped.")
+        rungs = rungs or []
+    except (RuntimeError, ValueError) as exc:
+        print("%s" % exc)
+        return 1
+    finally:
         # the port belongs to the device, so every application saw the
         # change and every application must see it put back
         if was_route is not None and not was_route.get("active"):
@@ -214,115 +244,6 @@ def main():
                 print("restored the port to %s" % was_route.get("name"))
             except Exception as exc:                    # noqa: BLE001
                 print("COULD NOT RESTORE the port: %s" % exc)
-
-    def visit(db):
-        pw_backend.set_gain(src["id"], db_to_cubic(db))
-        time.sleep(0.35)                     # let the card take it
-        got = read_back(src["name"])
-        real = cubic_to_db(got)
-        # AVERAGE the dwell, do not sample the end of it. One block is
-        # 43 ms, and a noise floor read off 43 ms wanders by more than
-        # a dB: two runs of this ladder disagreed by 3.8 dB on the top
-        # rung and the disagreement flipped a verdict. Power averages,
-        # peaks take the highest.
-        deadline = time.time() + args.dwell
-        power, count, top, seen = 0.0, 0, None, None
-        while time.time() < deadline:
-            # the meter publishes a block every 43 ms and only its
-            # LATEST; polling at 150 ms caught ten of the thirty-five
-            # a 1.5 s dwell contains, and the third that was thrown
-            # away is the residual scatter. Poll faster than the
-            # blocks arrive and the duplicate check below drops the
-            # repeats
-            time.sleep(0.02)
-            rms = meter.latest_rms()
-            peak = meter.latest()
-            if rms is None or peak is None:
-                continue
-            v = rms[args.column]
-            if v == seen:
-                continue                     # the same block twice
-            seen = v
-            power += 10.0 ** (v / 10.0)
-            count += 1
-            p = peak[args.column]
-            top = p if top is None else max(top, p)
-        if not count:
-            return None
-        mean_db = 10.0 * math.log10(power / count)
-        r = knee.Rung(real if real is not None else db, mean_db,
-                      peak_dbfs=top, raw=got)
-        rungs.append(r)
-        print("  %7.1f dB (asked %+6.1f)   rms %8.2f   peak %8.2f   "
-              "(%d blocks)"
-              % (r.gain_db, db, r.rms_dbfs, r.peak_dbfs, count))
-        return r
-
-    try:
-        meter.start(src["id"], channels)
-        time.sleep(0.6)
-        if not meter.alive():
-            print("the capture did not start; is the source in use?")
-            return 1
-        # before the ladder: is this silence? A crest factor near zero
-        # is a DC offset or a tone, not a floor, and a ladder over a
-        # signal measures the control rather than the chain
-        settle = time.time() + 1.5
-        first = None
-        while time.time() < settle:
-            time.sleep(0.2)
-            rms, peak, dc = (meter.latest_rms(), meter.latest(),
-                             meter.latest_dc())
-            if rms is not None and peak is not None and dc is not None:
-                first = (rms[args.column], peak[args.column],
-                         dc[args.column])
-        if first is not None:
-            ac, peak_db, dc_db = first
-            print("column   : rms %.2f dBFS about the mean, peak %.2f, "
-                  "offset %.2f" % (ac, peak_db, dc_db))
-            if dc_db - ac > 10.0:
-                # an offset is not noise and is not measured as one; the
-                # ladder walks the AC part underneath it. But an offset
-                # this size eats headroom and is a fault of its own
-                print("  the column carries a DC OFFSET %.1f dB above its "
-                      "own noise." % (dc_db - ac))
-                print("  The ladder measures the noise about it, which is "
-                      "the right thing,")
-                print("  but an offset that large is worth chasing on its "
-                      "own: it eats")
-                print("  headroom and no gain setting will remove it.")
-            elif not knee.noise_like(peak_db, ac):
-                print("  this column is not silent: crest %.1f dB."
-                      % (peak_db - ac))
-                print("  Broadband noise carries 11 to 13 dB of crest and a "
-                      "sine 3. A few")
-                print("  dB or less is a tone or something clipped, and a "
-                      "ladder walked over")
-                print("  a signal describes the CONTROL rather than the "
-                      "chain's floor.")
-                print("  Check what is feeding this column and that the port "
-                      "above is the")
-                print("  jack you mean. --force ladders it anyway.")
-                if not args.force:
-                    return 1
-            print("")
-        print("  %-10s %-16s %-11s %s" % ("gain", "", "noise", "peak"))
-        for db in knee.plan(lo, args.hi, args.steps):
-            visit(db)
-        knee.mark_transients(rungs)
-        if not args.no_refine:
-            fine = knee.refine(rungs)
-            if fine:
-                print("\nrefining between %.1f and %.1f dB"
-                      % (min(fine), max(fine)))
-                for db in fine:
-                    visit(db)
-                knee.mark_transients(rungs)
-    except KeyboardInterrupt:
-        print("\nstopped.")
-    finally:
-        meter.stop()
-        restore()
 
     if any(r.suspect for r in rungs):
         print("\nrungs marked suspect caught a transient -- something made")

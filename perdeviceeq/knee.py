@@ -64,14 +64,20 @@ MAX_K = 5            # three regimes and the two bends between them
 class Rung:
     """One step of the ladder: what was asked, what was heard."""
 
-    __slots__ = ("gain_db", "raw", "rms_dbfs", "peak_dbfs", "suspect")
+    __slots__ = ("gain_db", "raw", "rms_dbfs", "peak_dbfs", "suspect",
+                 "blocks")
 
-    def __init__(self, gain_db, rms_dbfs, peak_dbfs=None, raw=None):
+    def __init__(self, gain_db, rms_dbfs, peak_dbfs=None, raw=None,
+                 blocks=None):
         self.gain_db = float(gain_db)
         self.raw = raw
         self.rms_dbfs = float(rms_dbfs)
         self.peak_dbfs = (None if peak_dbfs is None else float(peak_dbfs))
         self.suspect = False
+        # how much silence stands behind this reading. A rung is an
+        # average over the dwell, and a rung backed by three blocks
+        # deserves less trust than one backed by thirty-six
+        self.blocks = blocks
 
     @property
     def crest(self):

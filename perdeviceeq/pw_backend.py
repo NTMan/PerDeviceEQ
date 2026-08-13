@@ -923,6 +923,31 @@ def fader_kind(routes, gain=None):
     return "analog" if base < 0.999 else "attenuator"
 
 
+def source_width(src, fallback=2):
+    """How many capture columns a source record stands for.
+
+    A source's "channels" is the list of its channel KEYS, not a
+    count. Reading it as one crashed a tool, and the window and that
+    tool were computing this two ways -- which is how the second one
+    came to be wrong. One place now.
+
+    The list from the heartbeat's snapshot is preferred because asking
+    the backend costs a pw-dump SUBPROCESS, and this is called from
+    the prefill, from the rig selection and from every pair change.
+    And there is NO clamp to two: "a measurement rig is 1- or
+    2-channel" was true of a USB dongle and false of an interface,
+    where a loopback comes back on column 2 of sixteen.
+    """
+    n = len(src.get("channels") or [])
+    if not n:
+        try:
+            n = len(backend().input_channels(
+                src.get("node") or src["name"]))
+        except Exception:                              # noqa: BLE001
+            n = fallback
+    return max(1, n)
+
+
 def gain_of_node(o):
     """The same reading straight off a node object, so the list of
     sources can carry it from the graph dump the window already

@@ -2376,25 +2376,7 @@ class MeasureWindow(Adw.Window):
         # carries what. The per-target column picker says it exactly,
         # and a stale stored 2 was what kept his sixteen-column
         # interface showing L and R.
-        # off the heartbeat's snapshot: this is called from the
-        # prefill, from the rig selection and from every pair change,
-        # and asking pw_backend costs a pw-dump SUBPROCESS each time.
-        # Removing the stored count was right; replacing it with a
-        # trip outside was not.
-        n = len(src.get("channels") or [])
-        if not n:
-            try:
-                n = len(pw_backend.backend().input_channels(
-                    src.get("node") or src["name"]))
-            except Exception:
-                n = 2
-        # NO clamp to two. "A measurement rig is 1- or 2-channel" was
-        # true of a USB dongle and false of an interface: his loopback
-        # comes back on COLUMN 2 of a sixteen-column source, and with
-        # the old clamp the window could only ever analyse 0 or 1 --
-        # so it recorded digital silence and called it a take. A
-        # column is a wire; there can be as many as the card has.
-        return max(1, n)
+        return pw_backend.source_width(src)
 
     def _mic_labels(self):
         """A capture column wears the name the CARD gives it.
