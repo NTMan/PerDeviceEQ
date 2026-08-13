@@ -181,10 +181,11 @@ def list_sources(dump=None):
             name = p.get("node.name")
             if not name:
                 continue
+            routes = card_input_ports(name, dump)
             sources.append({"id": o["id"], "name": name,
                             "desc": p.get("node.description") or name,
                             "prio": p.get("priority.session") or 0,
-                            "routes": card_input_ports(name, dump),
+                            "routes": routes,
                             # as on the sink side: the dump is in hand
                             # here, and a window that asks separately
                             # pays a subprocess on the main loop
@@ -312,6 +313,7 @@ def _card_ports(node_name, want, dump=None):
         out[-1]["hw_volume"] = None
         out[-1]["volume_base"] = None
         out[-1]["channel_volumes"] = None
+        out[-1]["channel_volumes"] = None
         if cur is not None:
             flag = _spa_info(cur.get("info")).get("route.hw-volume")
             if flag is not None:
@@ -319,6 +321,12 @@ def _card_ports(node_name, want, dump=None):
             base = (cur.get("props") or {}).get("volumeBase")
             if base is not None:
                 out[-1]["volume_base"] = float(base)
+            # the LINEAR per-channel volumes: a Route takes the whole
+            # list, so a caller setting one column has to hand back
+            # the others, and this is where it reads them
+            cv = (cur.get("props") or {}).get("channelVolumes")
+            if cv:
+                out[-1]["channel_volumes"] = [float(v) for v in cv]
             # the LINEAR per-channel volumes, kept because writing one
             # channel means writing them all back: a Route takes the
             # whole list, so the others have to be carried across
@@ -602,36 +610,37 @@ def active_input_route(node_name, dump=None):
     return None
 
 
-def set_channel_gain(route, channel, cubic):
-    """Set ONE capture column's gain, leaving the others where they are.
 
-    wpctl takes a single number and writes it to every channel, which
-    is fine while one capsule is plugged in and a lie the moment two
-    are: the hardware really is per channel (a CM106 declares cvolume,
-    and 60% / 80% set independently read back as 0.287401 / 0.535773).
-    The Route is the same object the app already writes to switch a
-    port, and it takes the whole list -- so the other channels are
-    carried across unchanged rather than reset.
+def set_route_volumes(route, cubics):
+    """Set every capture column of a route at once.
+
+    The hardware really is per channel -- a CM106 declares cvolume,
+    and 60% / 80% set independently read back as 0.287401 / 0.535773
+    -- while wpctl takes one number and writes it to all of them.
+
+    It takes the WHOLE list on purpose. A Route accepts nothing less,
+    and the alternative -- set one column and carry the rest across
+    from the graph's snapshot -- is what made this hard: the snapshot
+    is a beat behind, two drags land inside one beat, and the second
+    write hands the card the first column's pre-drag value. Only the
+    caller knows what every column is meant to be, so only the caller
+    may say.
 
     Route props are LINEAR while wpctl speaks the cubic volume, hence
     the cube.
     """
-    have = list(route.get("channel_volumes") or [])
-    if not have:
-        raise RuntimeError("that route publishes no channel volumes")
-    if not 0 <= channel < len(have):
-        raise ValueError("channel %d of a %d-channel route"
-                         % (channel, len(have)))
-    have[channel] = max(0.0, min(1.0, float(cubic))) ** 3
+    if not cubics:
+        raise ValueError("no volumes given")
+    lin = [max(0.0, min(1.0, float(c))) ** 3 for c in cubics]
     r = _run(["pw-cli", "set-param", str(route["device_id"]), "Route",
               "{ index: %d, device: %d, props: { channelVolumes: [ %s ] },"
               " save: true }"
               % (int(route["index"]), int(route["card_device"]),
-                 ", ".join("%.6f" % v for v in have))])
+                 ", ".join("%.6f" % v for v in lin))])
     if r.returncode != 0:
         raise RuntimeError("pw-cli set-param Route failed: %s"
                            % ((r.stderr or r.stdout) or "").strip())
-    return have
+    return lin
 
 
 def set_input_route(route):
@@ -1018,6 +1027,26 @@ def gain_of_node(o):
     else:
         kind = None
     return cubic, kind
+
+
+def _column_gains(o, routes):
+    """Every capture column's gain as a cubic, in the node's order.
+
+    READ FROM WHERE IT IS WRITTEN. A hardware capture gain is set on
+    the device's Route, and the node's own Props do not always follow:
+    the field saw a route holding [0.125, 0.822567] -- the two values
+    that had just been set -- while the node still reported 0.008 for
+    the first column, so the window seeded its fader from a number the
+    card did not hold.
+
+    The node is the fallback for a card whose route publishes no
+    channels, which is what a device with one shared control has.
+    """
+    active = next((r for r in (routes or []) if r.get("active")), None)
+    cv = (active or {}).get("channel_volumes")
+    if cv:
+        return [float(v) ** (1.0 / 3.0) for v in cv]
+    return channel_gains_of_node(o)
 
 
 def channel_gains_of_node(o):

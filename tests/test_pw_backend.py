@@ -779,3 +779,31 @@ def test_a_channel_list_arrives_as_text_with_brackets():
     assert pw._parse_position(["AUX0", "AUX1"]) == ["AUX0", "AUX1"]
     assert pw._parse_position("[ FL, FR ]") == ["FL", "FR"]
     assert pw._parse_position(None) == []
+
+
+def test_a_column_gain_is_read_from_the_route_it_is_written_to():
+    """A hardware capture gain is set on the device's Route, and the
+    node's own Props do not always follow: the field saw a route
+    holding the two values that had just been set while the node still
+    reported the old one for the first column, so the window seeded
+    its fader from a number the card did not hold."""
+    from perdeviceeq.pw_backend import _column_gains
+    node = {"info": {"params": {"Props": [
+        {"channelVolumes": [0.008, 0.822567]}]}}}       # the stale node
+    routes = [{"active": True,
+               "channel_volumes": [0.125, 0.822567]}]   # the card's truth
+    got = _column_gains(node, routes)
+    assert got[0] == pytest.approx(0.5, abs=1e-4)       # 50%, as set
+    # the graph prints channelVolumes rounded, so the cube root lands
+    # a whisker under the exact 0.9375
+    assert got[1] == pytest.approx(0.9375, abs=1e-3)
+
+
+def test_a_route_without_channels_falls_back_to_the_node():
+    """Which is what a device with one shared control actually has."""
+    from perdeviceeq.pw_backend import _column_gains
+    node = {"info": {"params": {"Props": [
+        {"channelVolumes": [0.008, 0.822567]}]}}}
+    got = _column_gains(node, [{"active": True}])
+    assert got[0] == pytest.approx(0.2, abs=1e-4)
+    assert _column_gains(node, []) == pytest.approx(got, abs=1e-4)

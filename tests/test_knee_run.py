@@ -204,7 +204,11 @@ class Route(dict):
                          card_device=0, channel_volumes=list(volumes))
 
 
-def test_a_route_writes_one_channel_and_carries_the_others(monkeypatch):
+def test_a_route_is_written_whole(monkeypatch):
+    """A Route accepts nothing less than the full list, and only the
+    caller knows what every column is meant to be -- carrying the
+    others across from the graph's snapshot is what let a second drag
+    hand the card the first column's pre-drag value."""
     sent = {}
 
     def run(cmd):
@@ -212,26 +216,22 @@ def test_a_route_writes_one_channel_and_carries_the_others(monkeypatch):
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr(pw_backend, "_run", run)
-    r = Route([0.287401, 0.535773])
-    out = pw_backend.set_channel_gain(r, 0, 0.9)
-    # the written channel is the CUBE of the cubic, because route props
-    # are linear while wpctl speaks cubic
+    out = pw_backend.set_route_volumes(Route([0.287401, 0.535773]),
+                                       [0.9, 0.5])
+    # LINEAR on the wire, cubic in hand
     assert out[0] == pytest.approx(0.9 ** 3)
-    # and the other channel is carried across untouched
-    assert out[1] == pytest.approx(0.535773)
+    assert out[1] == pytest.approx(0.5 ** 3)
     body = sent["cmd"][-1]
     assert "channelVolumes" in body and "index: 1" in body
-    assert "0.729000" in body and "0.535773" in body
+    assert "0.729000" in body and "0.125000" in body
 
 
-def test_a_channel_the_route_does_not_have_is_refused(monkeypatch):
+def test_an_empty_list_is_refused(monkeypatch):
     monkeypatch.setattr(pw_backend, "_run",
                         lambda c: (_ for _ in ()).throw(
                             AssertionError("must not run")))
     with pytest.raises(ValueError):
-        pw_backend.set_channel_gain(Route([0.5, 0.5]), 7, 0.5)
-    with pytest.raises(RuntimeError):
-        pw_backend.set_channel_gain(Route([]), 0, 0.5)
+        pw_backend.set_route_volumes(Route([0.5, 0.5]), [])
 
 
 def test_channel_gains_are_read_apart_not_averaged():
@@ -250,13 +250,15 @@ def test_the_ladder_moves_only_its_own_column(card, monkeypatch):
     written = []
     card.src["routes"] = [Route([0.5, 0.5])]
 
-    def set_channel_gain(route, channel, cubic):
-        written.append((channel, cubic))
-        route["channel_volumes"][channel] = cubic ** 3
-        card.cubic = cubic
+    def set_route_volumes(route, cubics):
+        for i, c in enumerate(cubics):
+            if abs(c ** 3 - route["channel_volumes"][i]) > 1e-9:
+                written.append((i, c))
+        route["channel_volumes"] = [c ** 3 for c in cubics]
+        card.cubic = cubics[1]
         return route["channel_volumes"]
 
-    monkeypatch.setattr(pw_backend, "set_channel_gain", set_channel_gain)
+    monkeypatch.setattr(pw_backend, "set_route_volumes", set_route_volumes)
     monkeypatch.setattr(pw_backend, "set_gain",
                         lambda *a: (_ for _ in ()).throw(
                             AssertionError("the whole node must not move")))

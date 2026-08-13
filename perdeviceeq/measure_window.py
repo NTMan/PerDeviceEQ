@@ -594,6 +594,11 @@ class MeasureWindow(Adw.Window):
         self._tame_scroll(self.gain_spin)
         self._gain_guard = False
         self._gain_seeded = None
+        # what this window has PUT on each capture column, keyed the
+        # way a verdict is. The card is read for a column the first
+        # time it is met and never again: a snapshot is a beat behind,
+        # and a beat is exactly the gap a tab switch falls into.
+        self._gain_set = {}
         self._take_gain = None
         self.relevel_btn = self._pult_btn(
             "pde-level-symbolic",
@@ -3299,9 +3304,10 @@ class MeasureWindow(Adw.Window):
         self._selected_ch = ch
         if self.tabs is not None and 0 <= ch < len(self.ch_keys):
             self.tabs.select(self.ch_keys[ch])
-        # the capture row and its calibration belong to the tab in
-        # view, so they are redrawn with it
+        # the capture row, its calibration AND its gain belong to the
+        # tab in view, so they are redrawn with it
         self._rebuild_map_slots()
+        self._refresh_gain()
         self._rebuild_page()
         self._update_pult()
 
@@ -3382,19 +3388,8 @@ class MeasureWindow(Adw.Window):
                      self._fader_kind])
             self._refresh_knee_caption()
             return
-        # seeded from the card ONCE per rig, and after that the hand
-        # owns it. Re-reading it on every heartbeat meant a lagging
-        # graph dump could yank the slider out from under the
-        # operator, which is exactly what the field saw mid-sweep.
-        # seeded per COLUMN, not per rig: two columns are two gains,
-        # and a seed keyed by the node alone would hand the first
-        # column's value to the second
-        seed = self._knee_key() or (src.get("node") or src.get("name"))
-        if self._gain_seeded != seed:
-            self._gain_seeded = seed
-            self._gain_guard = True
-            row.set_value(round(cubic * 100.0))
-            self._gain_guard = False
+        self._seed_fader(row, self._knee_key()
+                         or (src.get("node") or src.get("name")), cubic)
         note = {"hardware": "The card's own gain: it moves the "
                             "signal BEFORE the converter, so it "
                             "buys real headroom and real noise.",
@@ -3427,14 +3422,9 @@ class MeasureWindow(Adw.Window):
         nid = src.get("id")
         if nid is None:
             return
-        col = self.mic_of.get(self._selected_ch, 0)
-        route = next((r for r in (src.get("routes") or [])
-                      if r.get("active")), None)
         try:
-            if (route or {}).get("channel_volumes"):
-                pw_backend.set_channel_gain(route, col, self._take_gain)
-            else:
-                pw_backend.set_gain(nid, self._take_gain)
+            self._write_gain(src, self.mic_of.get(self._selected_ch, 0),
+                             self._take_gain)
         except Exception as e:
             debug.log("capture gain: %s" % e)
 
@@ -3568,6 +3558,71 @@ class MeasureWindow(Adw.Window):
                 continue
             self._knee.setdefault(key, dict(rec))
 
+    def _seed_fader(self, row, seed, cubic):
+        """Put a value on the fader when the column under it changes.
+
+        THE HAND OWNS IT. The card is read for a column the first time
+        that column is met, and after that the window shows what was
+        last put on it -- by a hand on the fader or by the search,
+        which moves it the same way.
+
+        Reading the card at every switch is what made this hard: the
+        graph's snapshot is a beat behind, a tab switch happens inside
+        that beat, and the seed then hands back the value the column
+        held BEFORE the drag. And since the seed runs once per column,
+        the wrong number stays -- no later pass asks again. Leaving an
+        L tab for an R one and coming back showed a number the card
+        did not hold.
+        """
+        if self._gain_seeded == seed:
+            return
+        self._gain_seeded = seed
+        held = self._gain_set.get(seed)
+        self._gain_guard = True
+        row.set_value(held if held is not None
+                      else round((cubic or 0.0) * 100.0))
+        self._gain_guard = False
+
+    def _column_cubics(self, src):
+        """What every capture column of this rig should be standing at.
+
+        A Route takes the WHOLE list, so setting one column means
+        saying what all of them are. Carrying the others across from
+        the graph's snapshot is what broke: it is a beat behind, two
+        drags land inside one beat, and the second write hands the
+        card the first column's pre-drag value. This window knows what
+        it put on each column; for a column it never touched, the card
+        is the answer.
+        """
+        gains = list(src.get("gains") or [])
+        name = src.get("name")
+        route = next((r.get("name") for r in src.get("routes") or []
+                      if r.get("active")), None)
+        out = []
+        for i, g in enumerate(gains):
+            held = self._gain_set.get((name, route, i))
+            out.append(held / 100.0 if held is not None else g)
+        return out
+
+    def _write_gain(self, src, col, cubic):
+        """Put ONE capture column's gain on the card.
+
+        Three callers want this -- the fader, the search and the
+        pre-flight before a sweep -- and written out three times the
+        search kept the whole-node call and quietly moved both
+        columns. A rule kept in three places is one that will be
+        missed in one of them.
+        """
+        route = next((r for r in (src.get("routes") or [])
+                      if r.get("active")), None)
+        nid = src.get("id")
+        want = self._column_cubics(src)
+        if (route or {}).get("channel_volumes") and 0 <= col < len(want):
+            want[col] = cubic
+            pw_backend.set_route_volumes(route, want)
+        elif nid is not None:
+            pw_backend.set_gain(nid, cubic)
+
     def _knee_key(self):
         """Which input a ladder's answer belongs to.
 
@@ -3627,15 +3682,19 @@ class MeasureWindow(Adw.Window):
                 self._gain_guard = True
                 row.set_value(round(cubic * 100.0))
                 self._gain_guard = False
-            nid = src.get("id")
-            if nid is not None:
-                def work():
-                    try:
-                        pw_backend.set_gain(nid, cubic)
-                    except Exception as e:              # noqa: BLE001
-                        debug.log("capture gain: %s" % e)
+            # the search moves the fader, so it owns the value the
+            # same way a hand would
+            if key is not None:
+                self._gain_set[key] = round(cubic * 100.0)
+            col = self.mic_of.get(self._selected_ch, 0)
 
-                pw_backend.in_thread(work)
+            def work():
+                try:
+                    self._write_gain(src, col, cubic)
+                except Exception as e:                  # noqa: BLE001
+                    debug.log("capture gain: %s" % e)
+
+            pw_backend.in_thread(work)
             self._say("Gain set to %d%%." % round(cubic * 100.0))
         self._refresh_knee_caption()
 
@@ -3690,16 +3749,13 @@ class MeasureWindow(Adw.Window):
         cubic = scale.get_value() / 100.0
         self._refresh_knee_caption()
         col = self.mic_of.get(self._selected_ch, 0)
-        route = next((r for r in (src.get("routes") or [])
-                      if r.get("active")), None)
-        per_channel = bool((route or {}).get("channel_volumes"))
+        seed = self._knee_key()
+        if seed is not None:
+            self._gain_set[seed] = round(scale.get_value())
 
         def work():
             try:
-                if per_channel:
-                    pw_backend.set_channel_gain(route, col, cubic)
-                else:
-                    pw_backend.set_gain(nid, cubic)
+                self._write_gain(src, col, cubic)
             except Exception as e:
                 debug.log("capture gain: %s" % e)
 

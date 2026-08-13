@@ -112,7 +112,15 @@ class Walk:
         # moving the others is at best noise on a canvas and at worst
         # a second capsule dragged off its own working point
         self.route = active_route(source)
-        self.per_channel = bool((self.route or {}).get("channel_volumes"))
+        cv = (self.route or {}).get("channel_volumes")
+        self.per_channel = bool(cv)
+        # the other columns are read ONCE, at the start of the walk,
+        # and held: a Route takes the whole list, and re-reading it
+        # per rung would mean carrying values from a snapshot that is
+        # a beat behind our own last write. During a ladder this
+        # window is the only writer, so the list it starts with is the
+        # list that stays true.
+        self.others = [float(v) ** (1.0 / 3.0) for v in (cv or [])]
         self.before = (channel_gain(source["name"], self.column)
                        if self.per_channel else gain_of(source))
         self.rungs = []
@@ -156,8 +164,10 @@ class Walk:
 
     def _set(self, cubic):
         """Move this column's gain, and only this column's."""
-        if self.per_channel:
-            pw_backend.set_channel_gain(self.route, self.column, cubic)
+        if self.per_channel and self.column < len(self.others):
+            want = list(self.others)
+            want[self.column] = cubic
+            pw_backend.set_route_volumes(self.route, want)
         else:
             pw_backend.set_gain(self.source["id"], cubic)
 
