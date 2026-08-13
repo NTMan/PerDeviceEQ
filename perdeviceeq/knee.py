@@ -351,6 +351,29 @@ def already_good(here_db, work_db, margin_db=MARGIN_DB):
     return abs(here_db - work_db) <= margin_db
 
 
+def columns_disagree(gains, tol_db=1.0):
+    """Which capture columns of one source stand at different gains.
+
+    Returns (lo, hi) in dB when the spread exceeds `tol_db`, else None.
+
+    It matters because of what a spread MEANS downstream: takes made
+    at different capture gains sit at different levels, and that lands
+    in the per-frequency spread between channels, where a difference
+    is otherwise read as the earphone's own asymmetry. Two capsules
+    with genuinely different knees SHOULD differ here and the app must
+    not fight it -- but one capsule heard on two columns should not,
+    and on this bench two ladders over the same coupler put its
+    columns 0.46 dB apart from measurement scatter alone.
+    """
+    have = [g for g in (gains or []) if g and g > 0.0]
+    if len(have) < 2:
+        return None
+    import math
+    db = [60.0 * math.log10(min(1.0, g)) for g in have]
+    lo, hi = min(db), max(db)
+    return (lo, hi) if (hi - lo) > tol_db else None
+
+
 def caption(kind, knee_db, here_db):
     """One line saying where a control stands with respect to a verdict,
     or None when there is nothing to say.

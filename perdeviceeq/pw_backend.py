@@ -189,7 +189,12 @@ def list_sources(dump=None):
                             # here, and a window that asks separately
                             # pays a subprocess on the main loop
                             "channels": _node_channels(name, dump),
-                            "gain": gain_of_node(o)})
+                            "gain": gain_of_node(o),
+                            # and the columns APART, because a capture
+                            # column is a wire with its own gain: the
+                            # folded reading is true of neither channel
+                            # the moment they differ
+                            "gains": channel_gains_of_node(o)})
     sources.sort(key=lambda s: -(s["prio"] or 0))
     return sources
 

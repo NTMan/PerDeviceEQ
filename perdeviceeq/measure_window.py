@@ -353,13 +353,15 @@ class MeasureWindow(Adw.Window):
         vbox.append(self.vol_spin)
         vbox.append(self.relevel_btn)
         b.get_object("vol_host").set_child(vbox)
-        gbox = Gtk.Box(spacing=6)
-        for side in ("start", "end"):
-            getattr(gbox, "set_margin_" + side)(12)
-        gbox.set_margin_top(6)
-        gbox.set_margin_bottom(6)
-        gbox.append(self.gain_spin)
-        b.get_object("gain_host").set_child(gbox)
+        # THE FADER IS NOT HERE. A capture column is a wire with its
+        # own gain -- the hardware says so, a CM106 declaring cvolume
+        # and taking 60% and 80% independently -- so the control that
+        # sets it belongs in the card that speaks for the column,
+        # beside that column's calibration and its working point. This
+        # row stays in the ui file and stands empty rather than being
+        # deleted, so the mic card keeps its shape if it is ever wanted
+        # back.
+        b.get_object("gain_host").set_visible(False)
         # the lead bin stays: it kept the status line clear of the
         # fader column, and with the faders gone from the sides it is
         # simply empty
@@ -2539,6 +2541,51 @@ class MeasureWindow(Adw.Window):
         used = [min(self.mic_of.get(ch, 0), self.mic_ch - 1)] \
             if 0 <= ch < self.n_ch else []
         for i in used:
+            # ONE row: the fader, its search, and the line that says
+            # where it stands. No heading -- a fader in this card IS
+            # the sensitivity, and a title would cost a line of a card
+            # he is deliberately shortening. The column is named by
+            # the row above it.
+            frow = Adw.PreferencesRow()
+            frow.set_activatable(False)
+            fcol = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            fbox = Gtk.Box(spacing=6)
+            for side in ("start", "end"):
+                getattr(fbox, "set_margin_" + side)(12)
+            fbox.set_margin_top(6)
+            # ONE scale, re-parented rather than rebuilt: it carries
+            # the operator's hand position, and a fresh widget on every
+            # tab change would drop it
+            old_parent = self.gain_spin.get_parent()
+            if old_parent is not None:
+                old_parent.remove(self.gain_spin)
+            fbox.append(self.gain_spin)
+            kb = Gtk.Button(label="Find")
+            kb.set_valign(Gtk.Align.CENTER)
+            kb.add_css_class("flat")
+            kb.set_tooltip_text(
+                "Walk this input's gain in SILENCE -- nothing is played "
+                "-- and find where the microphone's own noise stops "
+                "being buried in the converter's. Below that point SNR "
+                "is being thrown away; above it more gain buys nothing "
+                "and costs headroom. Decibels here are the CONTROL's "
+                "own axis, not the card's.")
+            kb.connect("clicked", self._on_knee)
+            fbox.append(kb)
+            fcol.append(fbox)
+            krow = Gtk.Label(xalign=0.0)
+            krow.add_css_class("dim-label")
+            krow.add_css_class("caption")
+            krow.set_wrap(True)
+            for side in ("start", "end"):
+                getattr(krow, "set_margin_" + side)(12)
+            krow.set_margin_bottom(6)
+            fcol.append(krow)
+            frow.set_child(fcol)
+            grp.add(frow)
+            self.knee_rows.append(frow)
+            self.knee_row = krow
+            self.knee_btn = kb
             row = Adw.ActionRow()
             row.set_title("%s calibration" % labels[i])
             badge = Gtk.Label()
@@ -2575,26 +2622,6 @@ class MeasureWindow(Adw.Window):
             # fader row it read as a property of the card, and that row
             # cannot say which column a knee was measured on -- this
             # row's own title does, so the line under it stays short.
-            krow = Adw.ActionRow()
-            krow.set_title("%s sensitivity" % labels[i])
-            krow.set_subtitle("")
-            kb = Gtk.Button(label="Find")
-            kb.set_valign(Gtk.Align.CENTER)
-            kb.add_css_class("flat")
-            kb.set_tooltip_text(
-                "Walk this input's gain in SILENCE -- nothing is played "
-                "-- and find where the microphone's own noise stops "
-                "being buried in the converter's. Below that point SNR "
-                "is being thrown away; above it more gain buys nothing "
-                "and costs headroom. Decibels here are the CONTROL's "
-                "own axis, not the card's.")
-            kb.connect("clicked", self._on_knee)
-            krow.add_suffix(kb)
-            krow.set_activatable_widget(kb)
-            grp.add(krow)
-            self.knee_rows.append(krow)
-            self.knee_row = krow
-            self.knee_btn = kb
         self._keep_act_last()
         self._ensure_cal_manage_row()
         self._refresh_cal_manage()
@@ -3237,6 +3264,12 @@ class MeasureWindow(Adw.Window):
             return
         src = self._selected_source() or {}
         cubic, kind = src.get("gain") or (None, None)
+        # the COLUMN's own gain where the card has one: the folded
+        # reading is true of neither channel the moment they differ
+        col = self.mic_of.get(self._selected_ch, 0)
+        per = list(src.get("gains") or [])
+        if 0 <= col < len(per):
+            cubic = per[col]
         # what the fader CAN do is a property of the route, not of the
         # value standing in it: at unity a hardware multiplier and a
         # software one look the same, and unity is where an untouched
@@ -3272,7 +3305,10 @@ class MeasureWindow(Adw.Window):
         # owns it. Re-reading it on every heartbeat meant a lagging
         # graph dump could yank the slider out from under the
         # operator, which is exactly what the field saw mid-sweep.
-        seed = src.get("node") or src.get("name")
+        # seeded per COLUMN, not per rig: two columns are two gains,
+        # and a seed keyed by the node alone would hand the first
+        # column's value to the second
+        seed = self._knee_key() or (src.get("node") or src.get("name"))
         if self._gain_seeded != seed:
             self._gain_seeded = seed
             self._gain_guard = True
@@ -3310,8 +3346,14 @@ class MeasureWindow(Adw.Window):
         nid = src.get("id")
         if nid is None:
             return
+        col = self.mic_of.get(self._selected_ch, 0)
+        route = next((r for r in (src.get("routes") or [])
+                      if r.get("active")), None)
         try:
-            pw_backend.set_gain(nid, self._take_gain)
+            if (route or {}).get("channel_volumes"):
+                pw_backend.set_channel_gain(route, col, self._take_gain)
+            else:
+                pw_backend.set_gain(nid, self._take_gain)
         except Exception as e:
             debug.log("capture gain: %s" % e)
 
@@ -3508,7 +3550,7 @@ class MeasureWindow(Adw.Window):
         if krow is None:
             return
         if not getattr(self, "_gain_ok", False):
-            krow.set_subtitle("this input has no gain of its own")
+            krow.set_text("this input has no gain of its own")
             return
         v = self._knee.get(self._knee_key())
         text = None
@@ -3518,7 +3560,22 @@ class MeasureWindow(Adw.Window):
             text = knee.caption(v["kind"], v.get("knee_db"),
                                 knee_run.cubic_to_db(
                                     row.get_value() / 100.0))
-        krow.set_subtitle(text or "not measured on this column yet")
+        note = text or "not measured yet"
+        # and when the columns of one source stand far apart, say so.
+        # Two capsules with genuinely different knees SHOULD differ and
+        # the app must not fight it -- but one capsule heard on two
+        # columns must not, because takes made at different capture
+        # gains sit at different levels and that lands in the spread
+        # between channels, where it reads as the earphone's own
+        # asymmetry
+        src = self._selected_source() or {}
+        apart = knee.columns_disagree(src.get("gains"))
+        if apart is not None:
+            note += ("  --  this source's columns stand %.1f dB apart "
+                     "(%.1f and %.1f); if one capsule feeds both, that "
+                     "difference will show up as channel asymmetry"
+                     % (apart[1] - apart[0], apart[0], apart[1]))
+        krow.set_text(note)
 
     def _on_gain_edited(self, scale):
         if self._gain_guard:
@@ -3529,10 +3586,17 @@ class MeasureWindow(Adw.Window):
             return
         cubic = scale.get_value() / 100.0
         self._refresh_knee_caption()
+        col = self.mic_of.get(self._selected_ch, 0)
+        route = next((r for r in (src.get("routes") or [])
+                      if r.get("active")), None)
+        per_channel = bool((route or {}).get("channel_volumes"))
 
         def work():
             try:
-                pw_backend.set_gain(nid, cubic)
+                if per_channel:
+                    pw_backend.set_channel_gain(route, col, cubic)
+                else:
+                    pw_backend.set_gain(nid, cubic)
             except Exception as e:
                 debug.log("capture gain: %s" % e)
 
