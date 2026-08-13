@@ -220,15 +220,34 @@ def test_a_control_inside_the_margin_band_is_already_right():
     assert not knee.already_good(-5.5, None)
 
 
-def test_the_caption_says_which_side_of_the_knee_the_control_is_on():
-    above = knee.caption("knee", -8.5, -5.5)
-    assert "above the knee" in above and "-8.5" in above
-    below = knee.caption("knee", -8.5, -13.3)
-    assert "BELOW the knee" in below
-    assert "thrown away" in below                 # the one wrong place
-    # it never promises a QUANTITY of SNR, because the axis is the
-    # control's own and not the card's decibels
-    assert "SNR" not in above
+def test_the_caption_speaks_the_faders_own_units():
+    """The decibels are the CONTROL's axis, and the control is marked
+    in per cent, so "the knee is at -8.9 dB" named a spot the hand had
+    no way to find."""
+    import math
+    here = 60.0 * math.log10(0.20)          # the fader at 20%
+    line = knee.caption("knee", -8.9, here)
+    assert "71%" in line                    # where to drag to
+    assert "-8.9" not in line and "dB below" not in line
+
+
+def test_below_the_knee_the_distance_IS_the_loss():
+    """Below the knee the converter's floor dominates and SNR falls
+    about a decibel per decibel, so the distance below is the SNR
+    being thrown away. Saying so costs nothing and answers the only
+    question worth asking."""
+    import math
+    line = knee.caption("knee", -8.9, 60.0 * math.log10(0.20))
+    assert "33 dB" in line and "thrown away" in line
+
+
+def test_above_the_knee_no_distance_is_printed():
+    """SNR is flat up there, so the distance means nothing; what it
+    costs is headroom, and that is what gets said."""
+    import math
+    line = knee.caption("knee", -8.5, 60.0 * math.log10(0.81))
+    assert "above the knee" in line and "headroom" in line
+    assert "dB of SNR" not in line
 
 
 def test_the_caption_speaks_for_the_other_two_verdicts_too():

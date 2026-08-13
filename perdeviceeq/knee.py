@@ -383,18 +383,32 @@ def caption(kind, knee_db, here_db):
     under the control and not in a status line that the next sweep
     overwrites.
 
-    The decibels are the CONTROL's axis, not the card's -- see the
-    module docstring -- so this says above and below and never promises
-    a quantity of SNR.
+    TWO THINGS IT MUST NOT DO, both learned from a line that did them.
+
+    It must not name a place in decibels. The decibels here are the
+    CONTROL's axis, not the card's, and the control itself is marked
+    in per cent -- so "the knee is at -8.9 dB" named a spot the hand
+    had no way to find. The knee is given as the per cent the fader
+    shows, which is the only number a hand can act on.
+
+    And it must not make the reader do the physics. BELOW the knee the
+    converter's floor dominates, so SNR falls about a decibel for
+    every decibel of gain given up -- which means the distance below
+    the knee IS the SNR being thrown away, and saying so costs nothing
+    and answers the only question worth asking. ABOVE the knee SNR is
+    flat, so the distance means nothing there and is not printed:
+    what it costs is headroom, and that is what gets said.
     """
     if kind == "knee":
         if here_db is None or knee_db is None:
             return None
+        at = 100.0 * (10.0 ** (knee_db / 60.0))
         d = here_db - knee_db
         if d < -0.05:
-            return ("%.1f dB BELOW the knee at %+.1f dB -- SNR is being "
-                    "thrown away" % (-d, knee_db))
-        return "+%.1f dB above the knee at %+.1f dB" % (d, knee_db)
+            return ("about %.0f dB of SNR thrown away -- the knee is "
+                    "at %.0f%%" % (-d, at))
+        return ("above the knee (%.0f%%) -- more gain buys no SNR, only "
+                "lost headroom" % at)
     if kind == "input":
         return ("the input outweighs the converter across this control, "
                 "so every position has the same SNR and this one is free")

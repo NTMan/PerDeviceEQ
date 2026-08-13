@@ -2580,7 +2580,10 @@ class MeasureWindow(Adw.Window):
             # the row above it.
             frow = Adw.PreferencesRow()
             frow.set_activatable(False)
-            fcol = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            # SIX, not two: the audit keeps every spacing on the 6px
+            # grid, and a stray two here was the one finding in the
+            # whole window
+            fcol = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             fbox = Gtk.Box(spacing=6)
             for side in ("start", "end"):
                 getattr(fbox, "set_margin_" + side)(12)
