@@ -317,9 +317,18 @@ class MeasureWindow(Adw.Window):
         # beside it, and two cards on one page must share an edge
         ring_host = b.get_object("ring_host")
         ring_host.set_orientation(Gtk.Orientation.VERTICAL)
-        ring_host.set_spacing(12)
+        # it carries a single child, so this only ever mattered when
+        # it carried more; kept at the page's own eighteen so it
+        # cannot reintroduce a stray gap if something is added
+        ring_host.set_spacing(18)
+        # EIGHTEEN, the same as the outer column puts between slots.
+        # This box used to hold the ring and a label under it, where a
+        # tight six was right; it holds cards now, and the odd one out
+        # was visible at once -- a wide gap above the targets and a
+        # narrow one below them, in a page whose whole point is that
+        # the cards read as one sequence.
         ring_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                           spacing=6)
+                           spacing=18)
         # the ring centers in the space RIGHT of the fader, and
         # the status line below shares that axis (its lead bin
         # is size-grouped with the fader)
