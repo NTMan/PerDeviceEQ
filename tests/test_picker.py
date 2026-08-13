@@ -267,3 +267,118 @@ def test_shell_core_leads_the_callback(monkeypatch):
     assert picks == [("b", "B")]
     assert seen["core"] == "b"           # led, not lagged
     assert p.core.node == "b"
+
+
+# --- the mirror: nothing chosen must show as nothing ---------------------
+
+class MirrorDD:
+    """Only what _sync touches, with GTK's own habit reproduced: a
+    fresh model selects row 0 by itself. Named apart from the
+    FakeDropDown above, which belongs to the pick courts."""
+
+    def __init__(self):
+        self.sel = 0
+        self.model = None
+
+    def set_model(self, m):
+        self.model = m
+        self.sel = 0                       # what GTK does, and the trap
+
+    def get_selected(self):
+        return self.sel
+
+    def set_selected(self, i):
+        self.sel = i
+
+
+class MirrorList(list):
+    pass
+
+
+def _mirror(core):
+    """A NodePicker with the widget stubbed, exercising _sync alone."""
+    from perdeviceeq.picker import NodePicker
+    p = NodePicker.__new__(NodePicker)
+    p.core = core
+    p.dd = MirrorDD()
+    p._shown = None
+    p._guard = False
+    p._in_pick = False
+    p._ellipsis = 0
+    p._Gtk = type("G", (), {"StringList": MirrorList})
+    p._sync()
+    return p
+
+
+def test_an_empty_core_shows_no_selection():
+    """GTK resets a fresh model's selection to row 0, and the
+    placement is what keeps that reset from becoming the choice. With
+    no node there was nothing to place, so row 0 stayed on display
+    over an empty core -- a window naming a microphone in the row
+    while its own status line said the mic was not resolved."""
+    from perdeviceeq.picker import INVALID_POSITION
+    p = _mirror(_core([_s("a", "A"), _s("b", "B")]))
+    assert p.core.node is None
+    assert p.dd.get_selected() == INVALID_POSITION
+
+
+def test_a_chosen_node_is_placed():
+    p = _mirror(_core([_s("a", "A"), _s("b", "B")], "b"))
+    assert p.dd.get_selected() == 1
+
+
+def test_clearing_the_node_clears_the_row():
+    from perdeviceeq.picker import INVALID_POSITION
+    c = _core([_s("a", "A"), _s("b", "B")], "b")
+    p = _mirror(c)
+    assert p.dd.get_selected() == 1
+    c.set_node(None)
+    p._sync()
+    assert p.dd.get_selected() == INVALID_POSITION
+
+
+# --- a row that may hold no choice --------------------------------------
+
+def test_nothing_is_a_row_where_a_choice_may_be_absent():
+    """An AdwComboRow cannot show emptiness: while its model has rows,
+    one of them is displayed. So for a picker that may legitimately
+    hold no choice, "nothing" has to BE a row. Clearing the selection
+    was not enough -- the mic row went on naming a microphone the core
+    had never chosen."""
+    c = PickerCore(placeholder="Not chosen")
+    c.set_sinks([_s("a", "A"), _s("b", "B")])
+    assert c.rows() == [(None, "Not chosen"), ("a", "A"), ("b", "B")]
+    assert c.index_of(c.node) == 0            # and it is what is shown
+
+
+def test_the_placeholder_cannot_be_picked():
+    # picking it means picking what is already current, which the core
+    # already reads as a no-op
+    c = PickerCore(placeholder="Not chosen")
+    c.set_sinks([_s("a", "A")])
+    assert c.pick(0) is None
+    assert c.pick(1) == ("a", "A")
+
+
+def test_the_placeholder_leaves_once_something_is_chosen():
+    c = PickerCore(placeholder="Not chosen")
+    c.set_sinks([_s("a", "A"), _s("b", "B")])
+    c.set_node("b", "B")
+    assert c.rows() == [("a", "A"), ("b", "B")]
+    assert c.index_of(c.node) == 1
+
+
+def test_a_picker_without_one_never_grows_a_placeholder_row():
+    # a sink is always chosen; that row must not offer "nothing"
+    c = PickerCore()
+    c.set_sinks([_s("a", "A")])
+    assert c.rows() == [("a", "A")]
+    assert c.index_of(c.node) == -1
+
+
+def test_the_mirror_shows_the_placeholder():
+    c = PickerCore(placeholder="Not chosen")
+    c.set_sinks([_s("a", "A"), _s("b", "B")])
+    p = _mirror(c)
+    assert p.dd.get_selected() == 0
+    assert p._shown[0] == (None, "Not chosen")

@@ -420,7 +420,11 @@ class MeasureWindow(Adw.Window):
         self.source_dd = source_row
         self.mic_picker = NodePicker(self.source_dd,
                                      self._on_mic_pick,
-                                     ellipsis=34)
+                                     ellipsis=34,
+                                     # this row may legitimately hold
+                                     # no choice, and an AdwComboRow
+                                     # cannot show that by itself
+                                     placeholder="Not chosen")
         self.mic_picker.refresh(self.sources)
         self.source_dd.set_sensitive(bool(self.sources))
         self._tame_scroll(self.source_dd)
@@ -3701,13 +3705,20 @@ class MeasureWindow(Adw.Window):
             elif self.mic_picker.core.node:
                 miss = ("mic offline: %s"
                         % self.mic_picker.core.node)
-            else:
-                # the field's silent lock: a remembered mic
-                # LABEL that never resolved to a live node.
-                # None is not "gone" (you cannot leave without
-                # being born), so the mic banner sleeps -- the
-                # tracer names the state and the way out.
+            elif self.memory.mic_for(self.sink_node):
+                # the field's silent lock: a remembered mic LABEL
+                # that never resolved to a live node. None is not
+                # "gone" (you cannot leave without being born), so
+                # the mic banner sleeps -- this names the state and
+                # the way out.
                 miss = "mic not resolved -- re-pick the mic"
+            else:
+                # NOTHING was ever chosen for this sink, which is not
+                # a failure and must not read as one. "re-pick" says
+                # something was lost; the reflex it earned in the
+                # field was to go looking for the breakage. This is an
+                # invitation, and it is the only line here that is.
+                miss = "pick a measurement mic to start"
             debug.mic_trace("pult %r core=%r"
                          % (miss, self.mic_picker.core.node))
             self._say(miss)

@@ -35,13 +35,23 @@ import sys
 from . import debug
 
 
+INVALID_POSITION = 0xFFFFFFFF   # Gtk.INVALID_LIST_POSITION
+
+
 class PickerCore:
     """Rows, placement and pick semantics, GTK-free."""
 
-    def __init__(self):
+    def __init__(self, placeholder=None):
         self.sinks = []          # [{"name":..., "desc":...}, ...]
         self.node = None
         self.desc = ""
+        # What to show while nothing is chosen. An AdwComboRow cannot
+        # show emptiness -- while its model has rows, one of them is
+        # displayed -- so "nothing" has to BE a row rather than the
+        # absence of one. Only a picker that can legitimately hold no
+        # choice wants this: a sink is always chosen, a measurement
+        # mic is not.
+        self.placeholder = placeholder
 
     def set_sinks(self, sinks):
         """Adopt a fresh graph snapshot; while the node is alive
@@ -76,6 +86,8 @@ class PickerCore:
         rows = [(s["name"], s["desc"]) for s in self.sinks]
         if self.node and all(n != self.node for n, _ in rows):
             rows.insert(0, (self.node, self.desc))
+        if self.node is None and self.placeholder:
+            rows.insert(0, (None, self.placeholder))
         return rows
 
     def index_of(self, name, rows=None):
@@ -114,7 +126,8 @@ class NodePicker:
     after the emission unwinds. on_pick returning False is a
     veto: the core does not move and the row snaps back."""
 
-    def __init__(self, dropdown, on_pick, ellipsis=None):
+    def __init__(self, dropdown, on_pick, ellipsis=None,
+                 placeholder=None):
         # gi arrives here, not at module scope: the core above
         # stays importable in the GTK-less test sandbox (the
         # pipewire.py rule), and by construction time the app
@@ -122,7 +135,7 @@ class NodePicker:
         from gi.repository import Gtk, GLib
         self._Gtk = Gtk
         self._GLib = GLib
-        self.core = PickerCore()
+        self.core = PickerCore(placeholder)
         self.dd = dropdown
         self.on_pick = on_pick
         self._ellipsis = ellipsis
@@ -189,7 +202,22 @@ class NodePicker:
             finally:
                 self._guard = False
         idx = self.core.index_of(self.core.node, rows)
-        if idx >= 0 and self.dd.get_selected() != idx:
+        if idx < 0:
+            # NOTHING is chosen, so nothing may be shown as chosen.
+            # GTK resets a fresh model's selection to row 0, and the
+            # placement below is what keeps that reset from becoming
+            # the choice -- but the placement was skipped when there
+            # was no node to place, which left row 0 on display over
+            # an empty core. The field saw a window naming a
+            # microphone in the row while its own status line said the
+            # mic was not resolved.
+            if self.dd.get_selected() != INVALID_POSITION:
+                self._guard = True
+                try:
+                    self.dd.set_selected(INVALID_POSITION)
+                finally:
+                    self._guard = False
+        elif self.dd.get_selected() != idx:
             self._guard = True
             try:
                 self.dd.set_selected(idx)
