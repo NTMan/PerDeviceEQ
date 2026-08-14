@@ -149,13 +149,26 @@ def test_a_transient_is_marked_and_kept_out_of_the_fit():
     assert v.knee_db == pytest.approx(22.0, abs=4.0)
 
 
-def test_refine_brackets_a_knee_and_declines_without_one():
+def test_refine_brackets_a_knee():
     read = chain(-118.0, -140.0)
     rungs = [knee.Rung(g, read(g)) for g in knee.plan(-40, 40, 8)]
     pts = knee.refine(rungs)
     assert pts and min(pts) < knee.verdict(rungs).knee_db < max(pts)
+
+
+def test_refine_tests_a_one_regime_claim_instead_of_accepting_it():
+    """It used to decline when the coarse pass found no knee, which was
+    circular: a coarse pass that MISSED a knee then never asked for the
+    rungs that would have shown it. The field walked into exactly that
+    -- ten rungs, three of them in the flat stretch, read as one rising
+    line, answered "input", no refinement, done. A claim that one
+    regime covers the whole range is tested by looking harder where
+    the other one would be."""
     flat = [knee.Rung(g, -100.0) for g in knee.plan(-40, 40, 8)]
-    assert knee.refine(flat) == []
+    pts = knee.refine(flat)
+    assert len(pts) == 5
+    assert -40.0 < min(pts) and max(pts) < 40.0     # the middle of it
+    assert knee.refine([knee.Rung(0.0, -100.0)]) == []
 
 
 def test_the_margin_never_walks_off_the_top_of_the_control():
@@ -261,3 +274,34 @@ def test_the_caption_is_silent_when_it_has_nothing_to_say():
     assert knee.caption("knee", -8.5, None) is None
 
 
+
+
+def test_flatness_is_a_slope_and_not_a_total_rise():
+    """A piece with a negligible slope crosses any fixed rise given
+    enough span. One did: a flat stretch of slope 0.18 over 6.7 dB
+    accumulated 1.2 dB, was called rising, merged with its neighbours,
+    and turned an ordinary knee into "the input outweighs the converter
+    everywhere" -- on the same rig that answered -8.9 dB five times
+    running."""
+    data = [(-60, -118.93), (-53.3, -112.18), (-46.7, -105.55),
+            (-40, -98.89), (-33.3, -92.24), (-26.7, -85.61),
+            (-20, -85.65), (-13.3, -84.42), (-6.7, -77.68), (0, -59.37)]
+    rungs = [knee.Rung(g, v, peak_dbfs=-40.0) for g, v in data]
+    v = knee.verdict(rungs)
+    assert v.kind == "knee"
+    assert v.knee_db == pytest.approx(-8.9, abs=1.0)
+    assert [s.kind for s in v.segments] == ["rising", "flat", "rising"]
+
+
+def test_the_slope_threshold_is_the_knee_itself():
+    """Not a constant anyone picked. Slope one means the noise follows
+    the gain exactly, so the input dominates; slope zero means it does
+    not move, so the converter does. Where they contribute equally --
+    which is what a knee IS -- the local slope is one half."""
+    assert knee.SLOPE_MID == 0.5
+    span = [(0.0, 0.0), (10.0, 2.0)]                     # slope 0.2
+    flat = [knee.Rung(g, v) for g, v in span]
+    assert knee.describe(flat)[0][0].kind == "flat"
+    span = [(0.0, 0.0), (10.0, 9.0)]                      # slope 0.9
+    rise = [knee.Rung(g, v) for g, v in span]
+    assert knee.describe(rise)[0][0].kind == "rising"

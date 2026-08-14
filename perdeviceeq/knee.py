@@ -56,6 +56,8 @@ MARGIN_DB = 3.0      # how far above a knee a working point sits
 CREST_SLACK = 12.0   # dB above the median crest that marks a transient
 CREST_NOISE = 4.0    # below this a reading is not noise at all
 FLOOR_DB = 1.0       # no segment counts as rising on less than this
+SLOPE_MID = 0.5      # where the input and the converter contribute
+                     # equally: the knee's own slope, not a guess
 SCATTER_K = 3.0      # a rise must beat this many times the scatter
 LEAST = 2            # rungs a segment needs to be fitted at all
 MAX_K = 5            # three regimes and the two bends between them
@@ -258,7 +260,25 @@ def describe(rungs, max_k=MAX_K):
     for p in parts:
         slope, _, _ = fit(p)
         rise = slope * (p[-1].gain_db - p[0].gain_db)
-        named.append((p, "rising" if rise > need else "flat"))
+        # BY SLOPE, not by total rise. Total rise depends on how long
+        # the piece happens to be, so a piece with a negligible slope
+        # crosses any fixed threshold given enough span -- and one did:
+        # a flat stretch of slope 0.18 over 6.7 dB accumulated 1.2 dB,
+        # was called rising, merged with its neighbours, and turned a
+        # perfectly ordinary knee into "the input outweighs the
+        # converter everywhere".
+        #
+        # The slope is the right quantity and its threshold is not
+        # invented. Slope one means the noise follows the gain exactly,
+        # so the input dominates; slope zero means it does not move at
+        # all, so the converter does. Where they contribute equally --
+        # which is what a knee IS -- the local slope is one half.
+        #
+        # The rise is still consulted for one thing: a piece whose
+        # whole rise is lost in the scatter is flat whatever its
+        # fitted slope says, because that slope was fitted to noise.
+        named.append((p, "rising" if (slope > SLOPE_MID and rise > need)
+                      else "flat"))
     # neighbours that say the same thing are ONE region. A real knee is
     # a curve, not a corner, and least squares happily spends a second
     # boundary inside the bend -- which then leaves the first rising
@@ -289,12 +309,34 @@ def plan(lo_db, hi_db, steps=8):
 
 def refine(rungs, points=5):
     """The fine pass: rungs on either side of the knee, one coarse step
-    out. Empty when there is no knee to bracket."""
+    out.
+
+    When the coarse pass found no knee, it refines the middle of the
+    walk instead of giving up. The old rule -- refine only what is
+    already found -- was circular, and the field walked straight into
+    it: a coarse pass of ten rungs put three in the flat stretch, read
+    them as one rising line, answered "input", and so never asked for
+    the rungs that would have shown the flat stretch to be flat. The
+    same rig with fifteen rungs answered "knee" every time.
+
+    A verdict of input or converter is a claim that ONE regime covers
+    the whole range, and the cheapest way to test that claim is to
+    look harder where the other one would be.
+    """
     v = verdict(rungs)
-    if v.kind != "knee" or v.knee_db is None:
-        return []
     good = sorted([r for r in rungs if not r.suspect],
                   key=lambda r: r.gain_db)
+    if len(good) < 3:
+        return []
+    if v.kind != "knee" or v.knee_db is None:
+        if v.kind not in ("input", "converter"):
+            return []
+        lo, hi = good[0].gain_db, good[-1].gain_db
+        mid = 0.5 * (lo + hi)
+        span = 0.25 * (hi - lo)
+        points = max(2, int(points))
+        return [mid - span + 2 * span * i / (points - 1)
+                for i in range(points)]
     step = (good[-1].gain_db - good[0].gain_db) / max(1, len(good) - 1)
     lo = max(good[0].gain_db, v.knee_db - step)
     hi = min(good[-1].gain_db, v.knee_db + step)
