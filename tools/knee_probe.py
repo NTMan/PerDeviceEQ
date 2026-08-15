@@ -277,7 +277,17 @@ def main():
         for seg in v.segments:
             print("    %-7s %+6.1f .. %+6.1f dB   %5.2f dB per dB"
                   % (seg.kind, seg.lo, seg.hi, seg.slope))
-        print("  scatter between rungs: %.2f dB" % (v.scatter or 0.0))
+        if v.curve is not None:
+            print("  fitted as a floor plus a term riding the gain:")
+            print("    floor      %.2f dBFS" % v.curve.floor_dbfs)
+            print("    rises as   gain**%.2f  (%.1f dB per dB)"
+                  % (v.curve.n, v.curve.n / 2.0))
+            print("    the two are equal at %.1f dB, which IS the knee"
+                  % v.curve.knee_db)
+            print("  the fit misses the rungs by %.2f dB" % v.curve.resid)
+        else:
+            print("  no floor-plus-rise fit; read by its regions")
+            print("  scatter between rungs: %.2f dB" % (v.scatter or 0.0))
     if v.software_below is not None:
         print("  everything below %.1f dB is gain made up in SOFTWARE: it"
               % v.software_below)

@@ -52,12 +52,16 @@ so the threshold comes from the data and not from a constant chosen
 by hand.
 """
 
+import math
+
 MARGIN_DB = 3.0      # how far above a knee a working point sits
 EXCESS_DB = 1.5      # a dwell whose mean stands this far above
                      # its median caught something
 CREST_SLACK = 12.0   # dB above the median crest that marks a transient
 CREST_NOISE = 4.0    # below this a reading is not noise at all
 FLOOR_DB = 1.0       # no segment counts as rising on less than this
+FIT_RESID_DB = 1.0   # a fit that misses the rungs by more than this
+                     # has not described them, and nothing is claimed
 SLOPE_MID = 0.5      # where the input and the converter contribute
                      # equally: the knee's own slope, not a guess
 SCATTER_K = 3.0      # a rise must beat this many times the scatter
@@ -149,10 +153,11 @@ class Verdict:
     """
 
     __slots__ = ("kind", "knee_db", "work_db", "rungs", "segments",
-                 "scatter", "software_below", "note")
+                 "scatter", "software_below", "note", "curve")
 
     def __init__(self, kind, rungs, segments=(), knee_db=None,
-                 work_db=None, scatter=None, software_below=None, note=""):
+                 work_db=None, scatter=None, software_below=None, note="",
+                 curve=None):
         self.kind = kind
         self.rungs = list(rungs)
         self.segments = list(segments)
@@ -161,6 +166,7 @@ class Verdict:
         self.scatter = scatter
         self.software_below = software_below
         self.note = note
+        self.curve = curve
 
     @property
     def usable(self):
@@ -168,6 +174,102 @@ class Verdict:
 
     def __repr__(self):
         return "Verdict(%s, work=%s)" % (self.kind, self.work_db)
+
+
+# ---------------------------------------------------------- the curve fit
+
+class Curve:
+    """A ladder read as the thing it physically is.
+
+    Recorded noise is a converter floor that does not move plus a term
+    that rides the gain: P(g) = C + K*g**n in POWER. Fitting that whole
+    shape uses every rung at once, which is the point -- the knee is
+    where the two terms are EQUAL, and equality is a property of the
+    curve rather than of where a segmentation happened to cut it.
+
+    n is fitted, not assumed. Amplified input noise alone would give
+    n = 2, two decibels of power for two of gain; his CM106 answers
+    5.9 +/- 0.3 across seven runs, about three decibels per decibel, so
+    whatever rises up there is not simply the microphone's own noise
+    being made louder. The mechanism is unknown and is not guessed at:
+    the exponent is measured and reported.
+    """
+
+    __slots__ = ("floor_dbfs", "term_dbfs", "n", "resid")
+
+    def __init__(self, floor_dbfs, term_dbfs, n, resid):
+        self.floor_dbfs = floor_dbfs
+        self.term_dbfs = term_dbfs
+        self.n = n
+        self.resid = resid
+
+    @property
+    def knee_db(self):
+        """Where the two terms are equal, on the control's axis."""
+        return 2.0 * (self.floor_dbfs - self.term_dbfs) / self.n
+
+    def at(self, gain_db):
+        c = 10.0 ** (self.floor_dbfs / 10.0)
+        k = 10.0 ** (self.term_dbfs / 10.0)
+        return 10.0 * math.log10(c + k * (10.0 ** (gain_db / 20.0)) ** self.n)
+
+    def __repr__(self):
+        return ("Curve(floor=%.2f, n=%.2f, knee=%.2f, resid=%.2f)"
+                % (self.floor_dbfs, self.n, self.knee_db, self.resid))
+
+
+def _grid(pts, n, lo_c, hi_c, lo_k, hi_k, steps=48, rounds=7):
+    """Coarse-to-fine over the two levels, in dB, where the scatter is.
+
+    Least squares in dB rather than in power on purpose: the rungs are
+    read with roughly constant error in decibels, so that is the space
+    the residuals should be equal in.
+    """
+    best = None
+    for _ in range(rounds):
+        got = None
+        for i in range(steps):
+            cdb = lo_c + (hi_c - lo_c) * i / (steps - 1.0)
+            c = 10.0 ** (cdb / 10.0)
+            for j in range(steps):
+                kdb = lo_k + (hi_k - lo_k) * j / (steps - 1.0)
+                k = 10.0 ** (kdb / 10.0)
+                e = 0.0
+                for d, v in pts:
+                    e += (10.0 * math.log10(
+                        c + k * (10.0 ** (d / 20.0)) ** n) - v) ** 2
+                if got is None or e < got[0]:
+                    got = (e, cdb, kdb)
+        best = got
+        cw, kw = (hi_c - lo_c) / 8.0, (hi_k - lo_k) / 8.0
+        lo_c, hi_c = best[1] - cw, best[1] + cw
+        lo_k, hi_k = best[2] - kw, best[2] + kw
+    return best
+
+
+def fit_curve(rungs, lo_n=1.0, hi_n=10.0, above_db=None):
+    """Fit floor + K*g**n to the trusted rungs, or None.
+
+    `above_db` drops a leading software stretch. Down there the session
+    manager is multiplying the converter's floor along with everything
+    else, so the rungs do not belong to the chain being fitted and
+    including them would bend the answer toward an artefact.
+    """
+    pts = [(r.gain_db, r.rms_dbfs) for r in rungs if not r.suspect
+           and (above_db is None or r.gain_db >= above_db - 1e-9)]
+    if len(pts) < 5:
+        return None
+    ys = [v for _, v in pts]
+    lo_c, hi_c = min(ys) - 20.0, max(ys) + 5.0
+    best = None
+    n = lo_n
+    while n <= hi_n + 1e-9:
+        e, cdb, kdb = _grid(pts, n, lo_c, hi_c, lo_c - 60.0, hi_c + 20.0)
+        if best is None or e < best[0]:
+            best = (e, cdb, kdb, n)
+        n += 0.25
+    e, cdb, kdb, n = best
+    return Curve(cdb, kdb, n, math.sqrt(e / len(pts)))
 
 
 # ------------------------------------------------------------ the fitting
@@ -495,6 +597,52 @@ def verdict(rungs, margin_db=MARGIN_DB, max_k=MAX_K):
     software_below = None
     if len(segs) >= 2 and kinds[0] == "rising" and kinds[1] == "flat":
         software_below = segs[0].hi
+
+    # THE CURVE, not the corner. Two straight lines meet at a shallow
+    # angle here, so moving the boundary one rung moves their crossing
+    # by decibels -- seven ladders on one rig, nearly identical curves,
+    # gave working points from 0.769 to 0.893 that way. The fit uses
+    # every rung at once and answered the same seven within 1.3 dB. On
+    # a synthetic chain whose crossing is known it returns it exactly.
+    #
+    # The segments stay. They still say what the fit cannot -- which
+    # stretch is software, and whether the shape was read at all -- and
+    # they are the FALLBACK when the fit has too little to work with:
+    # three parameters need rungs, and a coarse ladder above a software
+    # stretch can have four. Better a segmented answer than none.
+    #
+    # The fit starts at the first rung of the stretch AFTER the software
+    # one, not at the last rung of the software one itself: that rung is
+    # still on the multiplier, and including it took a residual from
+    # 0.16 dB to 1.79.
+    from_db = segs[1].lo if software_below is not None and len(segs) > 1 \
+        else None
+    curve = fit_curve(rungs, above_db=from_db)
+    lo = from_db if from_db is not None else rungs[0].gain_db
+    hi = rungs[-1].gain_db
+    if curve is not None and curve.resid <= FIT_RESID_DB:
+        k = curve.knee_db
+        if k <= lo:
+            # equal below the bottom rung: the input already outweighs
+            # the converter everywhere that was walked
+            return Verdict("input", rungs, segs, work_db=lo,
+                           scatter=curve.resid, curve=curve,
+                           software_below=software_below, note=_INPUT_NOTE)
+        if k >= hi:
+            return Verdict("converter", rungs, segs, work_db=hi,
+                           scatter=curve.resid, curve=curve,
+                           software_below=software_below,
+                           note=_CONVERTER_NOTE)
+        return Verdict("knee", rungs, segs, knee_db=k,
+                       work_db=min(k + margin_db, hi),
+                       scatter=curve.resid, curve=curve,
+                       software_below=software_below,
+                       note="below the knee the converter is what is "
+                            "being measured and SNR falls with the "
+                            "signal; above it SNR no longer improves "
+                            "and headroom is spent for nothing")
+
+    # -- the fallback: read it by its regions ---------------------------
 
     last_knee = None
     for i in range(len(segs) - 1):

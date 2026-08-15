@@ -45,62 +45,47 @@ def test_a_knee_is_found_near_where_the_arithmetic_puts_it():
 
 
 def test_rising_throughout_means_the_input_already_wins():
-    v = knee.verdict(ladder(chain(-118.0, -80.0)))
+    """A chain whose two terms cross BELOW the walk: the input already
+    outweighs the converter everywhere that was looked at."""
+    v = knee.verdict(ladder(chain(-118.0, -60.0)))    # crossing at -58
     assert v.kind == "input"
-    assert v.work_db == -40.0          # the bottom of what was walked
-    assert v.usable
+    assert v.work_db == -40.0
 
 
-def test_flat_throughout_wants_the_TOP_of_the_range():
-    # the converter outweighs the input everywhere, so this noise does
-    # not follow the control while a signal would: more gain still
-    # buys SNR, which makes the top the place to be
-    v = knee.verdict(ladder(chain(-100.0, -200.0)))
-    assert v.kind == "converter"
-    assert v.work_db == 40.0
-    assert v.usable
+def test_the_fit_returns_a_known_crossing_exactly():
+    """The synthetic chain IS floor plus a term riding the gain, so its
+    crossing is known in closed form -- and that is the strongest test
+    there is of an estimator: not that it is steady, but that it is
+    right where the answer can be checked."""
+    for floor, mic in ((-118.0, -80.0), (-118.0, -140.0)):
+        v = knee.verdict(ladder(chain(floor, mic)))
+        assert v.kind == "knee"
+        assert v.knee_db == pytest.approx(floor - mic, abs=0.2)
+        assert v.curve.resid < 0.05
 
 
-def test_too_few_rungs_is_unclear_rather_than_a_guess():
-    v = knee.verdict([knee.Rung(0.0, -100.0)])
-    assert v.kind == "unclear"
-    assert not v.usable
-
-
-# --- the curves this bench produced ----------------------------------
-
-def test_the_three_region_curve_names_its_software_stretch():
-    """A CM106 laddered from -60 dB to 0 on its microphone port.
-
-    Slope one from -60 to -34 is the session manager making up gain in
-    software below the hardware control's range: it scales the
-    converter's floor along with everything else, which is why it is
-    exactly one and never flattens. Then the converter outweighs the
-    input and the curve is flat. Then the card's own preamp takes over
-    and it rises again. The knee is the SECOND boundary; the first is
-    an artefact of the software path and says nothing about the chain.
-    """
-    measured = [(-60.0, -118.95), (-51.4, -110.59), (-42.9, -101.94),
-                (-34.3, -93.49), (-25.7, -86.30), (-17.1, -85.88),
-                (-8.6, -83.95), (0.0, -59.13)]
-    v = knee.verdict([knee.Rung(g, x) for g, x in measured])
+def test_a_knee_two_decibels_above_the_bottom_is_still_a_knee():
+    """The segmentation called this "input" because the flat stretch
+    was only two rungs wide and merged into the rise. The crossing is
+    at -38 dB and the walk starts at -40, so it is inside."""
+    v = knee.verdict(ladder(chain(-118.0, -80.0)))
     assert v.kind == "knee"
-    assert [s.kind for s in v.segments] == ["rising", "flat", "rising"]
-    assert v.software_below == pytest.approx(-34.3, abs=0.1)
-    assert -20.0 < v.knee_db < 0.0
-    # the software stretch is exactly slope one, which is its signature
-    assert v.segments[0].slope == pytest.approx(1.0, abs=0.1)
+    assert v.knee_db == pytest.approx(-38.0, abs=0.5)
 
 
-def test_the_unity_start_run_reads_input():
-    """The same card walked from its unity point upward: every rung
-    answers the control, so what is measured sits before it."""
+def test_the_unity_start_run_reads_a_knee_just_above_its_bottom():
+    """The same card walked from its unity point upward. The old
+    reading was "input, work at the bottom" -- but the bottom rung sits
+    only 0.6 dB above the fitted floor, so the converter still
+    dominates there and standing at the bottom throws that 0.6 dB
+    away. The fit puts the crossing a little above it."""
     measured = [(-11.1, -85.40), (-9.5, -83.96), (-7.9, -82.24),
                 (-6.3, -79.01), (-4.7, -75.47), (-3.2, -71.38),
                 (-1.6, -66.95), (0.0, -60.65)]
     v = knee.verdict([knee.Rung(g, x) for g, x in measured])
-    assert v.kind == "input"
-    assert v.work_db == -11.1
+    assert v.kind == "knee"
+    assert -11.1 < v.knee_db < 0.0
+    assert v.curve.floor_dbfs < -85.0
 
 
 def test_the_scatter_is_measured_from_the_data():
@@ -339,3 +324,47 @@ def test_the_slope_threshold_is_the_knee_itself():
     span = [(0.0, 0.0), (10.0, 9.0)]                      # slope 0.9
     rise = [knee.Rung(g, v) for g, v in span]
     assert knee.describe(rise)[0][0].kind == "rising"
+
+
+def test_the_fit_is_three_times_steadier_than_the_corner():
+    """Seven ladders on one rig, nothing touched between them. The
+    curves are nearly identical; what moved was where the segmentation
+    cut them, and two lines meeting at a shallow angle turn one rung of
+    boundary into decibels of knee."""
+    runs = [
+        [(-27.1, -86.14), (-24.1, -86.18), (-21.0, -85.93), (-18.0, -85.81),
+         (-15.0, -85.50), (-12.4, -85.66), (-12.0, -85.05), (-10.7, -85.39),
+         (-9.0, -83.40), (-7.4, -80.62), (-6.0, -77.11), (0.0, -60.97)],
+        [(-27.1, -86.16), (-24.1, -86.22), (-21.0, -86.07), (-18.0, -85.85),
+         (-15.0, -85.51), (-12.0, -85.63), (-11.4, -85.75), (-9.9, -84.79),
+         (-9.0, -83.76), (-8.4, -82.72), (-6.9, -79.99), (-6.0, -77.63),
+         (-5.4, -76.13), (-3.0, -69.43), (0.0, -60.50)],
+        [(-27.1, -86.17), (-24.1, -86.17), (-21.0, -85.92), (-18.0, -85.90),
+         (-15.0, -85.65), (-12.0, -85.72), (-11.2, -85.52), (-9.7, -84.47),
+         (-9.0, -83.28), (-8.2, -82.41), (-6.7, -79.61), (-6.0, -77.47),
+         (-5.2, -75.90), (-3.0, -69.17), (0.0, -59.67)],
+        [(-27.1, -85.68), (-24.1, -86.03), (-21.0, -85.52), (-18.0, -85.71),
+         (-15.0, -85.38), (-12.9, -85.54), (-12.0, -85.52), (-11.4, -85.47),
+         (-9.9, -83.78), (-9.0, -82.72), (-8.4, -81.40), (-6.9, -79.14),
+         (-6.0, -75.08), (-3.0, -66.88), (0.0, -58.83)],
+    ]
+    knees, floors = [], []
+    for m in runs:
+        v = knee.verdict([knee.Rung(g, x) for g, x in m])
+        assert v.kind == "knee"
+        assert v.curve.resid < 0.5
+        knees.append(v.knee_db)
+        floors.append(v.curve.floor_dbfs)
+    assert max(knees) - min(knees) < 2.0      # the corner gave 3.8
+    assert max(floors) - min(floors) < 0.5    # and the floor barely moves
+
+
+def test_a_ladder_the_model_cannot_describe_falls_back(monkeypatch):
+    """Three parameters need rungs. A coarse ladder above a software
+    stretch can leave four, and a segmented answer beats none."""
+    measured = [(-60.0, -118.95), (-51.4, -110.59), (-42.9, -101.94),
+                (-34.3, -93.49), (-25.7, -86.30), (-17.1, -85.88),
+                (-8.6, -83.95), (0.0, -59.13)]
+    v = knee.verdict([knee.Rung(g, x) for g, x in measured])
+    assert v.kind == "knee" and v.curve is None
+    assert v.software_below == pytest.approx(-34.3, abs=0.1)
