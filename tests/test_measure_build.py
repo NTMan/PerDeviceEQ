@@ -618,3 +618,41 @@ def test_the_census_bar_and_floor_agree_with_the_meter():
     assert ic.bar(-60.0, 10) == ""
     assert ic.bar(-90.0, 10) == ""          # below the scale, not negative
     assert len(ic.bar(-30.0, 10)) == 5
+
+
+# --- the headline distortion says whether it is a measurement --------
+
+class _Rec:
+    def __init__(self, thd, noise):
+        self.freq_hz = [500.0, 1000.0, 2000.0]
+        self.thd_db = [thd] * 3
+        self.thd_noise_db = [noise] * 3
+
+
+def test_a_headline_above_its_own_floor_says_nothing():
+    """Nothing to warn about: the rig can see under the device."""
+    assert measure_build.thd_bound_note(_Rec(-66.0, -95.0)) is None
+
+
+def test_a_headline_sitting_on_the_floor_is_named_a_ceiling():
+    """The level is chosen for a reproducible recorded peak, which is
+    what makes two devices comparable -- but that aim cannot promise
+    the rig sees under the device. When it does not, the figure is a
+    bound and the take says so rather than printing a number that
+    invites confidence."""
+    note = measure_build.thd_bound_note(_Rec(-66.0, -67.0))
+    assert note is not None
+    assert "CEILING" in note and "1000 Hz" in note
+
+
+def test_the_headline_band_is_one_kilohertz():
+    """Two reasons that agree, which is rare: it is what manufacturers
+    publish, and it is where the ear is most sensitive to distortion.
+    The bass carries the largest figures on this rig and the least
+    meaning -- across four field runs it wandered 17 per cent against
+    the midband's 7."""
+    rec = _Rec(-66.0, -95.0)
+    rec.thd_db = [-40.0, -66.0, -66.0]          # a bass-heavy take
+    rec.freq_hz = [50.0, 1000.0, 2000.0]
+    rec.thd_noise_db = [-95.0, -67.0, -95.0]    # only 1 kHz is on its floor
+    assert measure_build.thd_bound_note(rec) is not None

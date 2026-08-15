@@ -40,21 +40,76 @@ BANDS = ((20.0, 200.0, "20-200"), (200.0, 2000.0, "200-2k"),
          (2000.0, 10000.0, "2k-10k"))
 
 
-def band_thd_pct(take, lo, hi):
-    """Worst THD in a band, as a percentage of the fundamental.
+def _word(got):
+    """A percentage, marked when it is only a ceiling."""
+    if got is None:
+        return "-"
+    pct, clamped = got
+    return ("<=%.3f" % pct) if clamped else ("%.3f" % pct)
 
-    WORST, not average: a transducer that bends only at 40 Hz is bent,
-    and a mean over the band would hide it behind the clean decades
-    on either side.
+
+MIN_SNR_DB = 6.0      # below this the sweep did not arrive
+FUND_OVER_NOISE = 20.0   # a THD figure needs a fundamental to be a
+                         # fraction OF; without one it is a ratio to
+                         # nothing and prints as nothing
+
+
+def usable(take):
+    """Did the sweep arrive at all? Returns None or a plain reason.
+
+    Asked before any number is computed. The first field run of this
+    tool printed distortion figures of ten to the fourteenth per cent
+    -- a ratio to a fundamental that was not there -- and a peak that
+    sat at -34.7 dBFS on EVERY level from a fifth to full, which is
+    this card's own fixed spikes and not a sweep. The arithmetic was
+    right; printing it at all was the fault.
+    """
+    if take.snr_db is None or not math.isfinite(float(take.snr_db)):
+        return "no SNR: the analysis found no sweep in the recording"
+    if float(take.snr_db) < MIN_SNR_DB:
+        return ("SNR %.1f dB -- nothing recognisable arrived"
+                % float(take.snr_db))
+    return None
+
+
+def band_thd_pct(take, lo, hi, floor_gap=3.0):
+    """Distortion in a band as a percentage, and whether it is a
+    CEILING rather than a measurement.
+
+    `thd_db` is ALREADY in dB re the fundamental -- measure_build.thd_at
+    turns it straight into a percentage -- and the first version of this
+    subtracted the fundamental again. That added the fundamental's own
+    level to every figure: thousands of per cent where the sweep was
+    quiet, and about eight where the truth was a few tenths.
+
+    MEDIAN over the band, following thd_at rather than my own instinct
+    for the worst point. The reason is written there and the field
+    taught it: one narrow interference tone that lands in the band
+    would otherwise buy the whole number, and the drawn line, smoothed
+    a twelfth of an octave, would disagree with the figure above it.
+
+    Returns (percent, clamped) or None. Clamped means the reading sits
+    within floor_gap of the measurement's OWN noise, so it is a bound
+    the rig cannot see under -- exactly the "<=" the app already draws.
     """
     f = np.asarray(take.freq_hz, dtype=float)
-    thd = np.asarray(take.thd_db, dtype=float)
-    mag = np.asarray(take.mag_db, dtype=float)
-    m = (f >= lo) & (f <= hi) & np.isfinite(thd) & np.isfinite(mag)
-    if not m.any():
+    thd = np.array([np.nan if v is None else float(v)
+                    for v in take.thd_db], dtype=float)
+    if len(thd) != len(f):
         return None
-    rel = thd[m] - mag[m]              # harmonics against the fundamental
-    return 100.0 * (10.0 ** (float(np.max(rel)) / 20.0))
+    band = (f >= lo) & (f <= hi) & np.isfinite(thd)
+    if not band.any():
+        return None
+    v = float(np.median(thd[band]))
+    clamped = False
+    nz = getattr(take, "thd_noise_db", None)
+    if nz is not None and len(nz) == len(f):
+        na = np.array([np.nan if x is None else float(x)
+                       for x in nz], dtype=float)
+        nok = band & np.isfinite(na)
+        if nok.any() and v - float(np.median(na[nok])) < floor_gap:
+            clamped = True
+    return 100.0 * (10.0 ** (v / 20.0)), clamped
 
 
 def find_sink(needle):
@@ -112,11 +167,26 @@ def main():
         start_volume=None)
 
     rungs = []
-    print("  %-7s %-9s %-7s %s" % ("level", "peak", "SNR", "worst THD %"))
     print("  %-7s %-9s %-7s %s"
           % ("", "dBFS", "dB", "  ".join(n for _, _, n in BANDS)))
     try:
         with ms.MeasureSession(cfg) as s:
+            # SAY WHAT WAS DONE ABOUT THE EQ, because the alternative
+            # is the operator wondering. A session bypasses this
+            # project's own profile on the way in and puts it back on
+            # the way out -- but a correction living in the DEVICE, in
+            # its maker's app, is beyond any of that, and the two look
+            # identical from here unless the run says which it did.
+            eq = getattr(s, "eq_state", None) or {}
+            if eq.get("profile") is not None:
+                print("  profile: %s -- BYPASSED for this run, restored "
+                      "after" % (eq.get("profile_source") or "found"))
+            else:
+                print("  profile: none on this output")
+            print("  anything the DEVICE applies to itself is outside "
+                  "this and stays on.\n")
+            print("  %-7s %-9s %-7s %s"
+                  % ("level", "peak", "SNR", "worst THD %"))
             for pct in knee.plan(a.lo, a.hi, a.steps):
                 s.set_level(pct / 100.0)
                 out = s.take(0, analyze=a.column)
@@ -127,12 +197,24 @@ def main():
                     print("  %-7.0f  refused: %s" % (pct, out.kind))
                     continue
                 t = out.take
+                why = usable(t)
+                if why is not None:
+                    print("  %-7.0f  %s" % (pct, why))
+                    if not rungs:
+                        print("\n  STOPPING: the first level produced no "
+                              "sweep, so nothing below it will either.")
+                        print("  Check that the earphone is in the coupler "
+                              "and playing, that the")
+                        print("  output picked is the one it is on, and "
+                              "that the capture channel")
+                        print("  is the one the microphone arrives on.")
+                        break
+                    continue
                 thds = [band_thd_pct(t, lo, hi) for lo, hi, _ in BANDS]
                 rungs.append((pct, t, thds))
                 print("  %-7.0f %-9.1f %-7.1f %s"
                       % (pct, t.peak_dbfs, t.snr_db,
-                         "  ".join("%7s" % ("%.3f" % v if v is not None
-                                            else "-") for v in thds)))
+                         "  ".join("%10s" % _word(v) for v in thds)))
     except KeyboardInterrupt:
         print("\nstopped.")
     except Exception as e:                              # noqa: BLE001
@@ -148,11 +230,14 @@ def main():
     if len(rungs) >= 3:
         print("\n  the bass band, level against distortion:")
         for pct, t, thds in rungs:
-            v = thds[0]
-            bar = "#" * int(max(0, min(40, 8 + 8 * math.log10(v))))\
-                if v else ""
-            print("    %3.0f%%  %8s  %s"
-                  % (pct, "%.3f" % v if v else "-", bar))
+            v = thds[0][0] if thds[0] else None
+            if not v:
+                print("    %3.0f%%  %8s" % (pct, "-"))
+                continue
+            # a decade of THD per eight columns, so 0.01% and 1% are
+            # visibly different rather than both "full"
+            bar = "#" * int(max(1, min(40, 24 + 8 * math.log10(v))))
+            print("    %3.0f%%  %8.4f  %s" % (pct, v, bar))
     return 0
 
 

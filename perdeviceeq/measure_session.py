@@ -120,6 +120,7 @@ import numpy as np
 from . import debug
 from scipy.stats import chi2
 
+from . import measure_build as mb
 from . import measure_core as mc
 from .pw_backend import playback_channels, sink_channels
 from . import pw_backend
@@ -1575,6 +1576,12 @@ class MeasureSession:
                          h2_db=t.h2_db, h3_db=t.h3_db,
                          thd_db=t.thd_db,
                          thd_noise_db=t.thd_noise_db)
+        # whether the headline figure is a measurement or a bound is
+        # a fact about the take, so it rides with the take rather than
+        # a status line the next sweep wipes
+        bound = mb.thd_bound_note(rec)
+        if bound:
+            notes.append(bound)
         self._takes.setdefault(channel, []).append((rec, chan))
         return TakeOutcome("take", take=rec,
                            spread_db=self.spread_db(channel), notes=notes)

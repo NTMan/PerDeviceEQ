@@ -223,6 +223,46 @@ def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0,
     return 100.0 * (10.0 ** (v / 20.0)), clamped
 
 
+def thd_bound_note(rec, f0=1000.0, floor_gap=3.0):
+    """One sentence when the take's headline distortion is a BOUND
+    rather than a measurement, or None when it is a measurement.
+
+    The level is a condition of the experiment, and the app already
+    picks it for a reproducible recorded peak -- same rig, same peak,
+    same sound in the coupler, which is what makes two devices
+    comparable at all. What that aim does NOT guarantee is that the
+    rig can see under the device: if the distortion at f0 sits within
+    floor_gap of the measurement's own noise, the figure printed is a
+    ceiling and no amount of confidence in it is warranted.
+
+    ONE KILOHERTZ, for two reasons that agree, which is rare. It is
+    what manufacturers publish -- Tanchjim's "<0.056% @1kHz 94dB" is
+    the number a reader will compare against -- and it is where the
+    ear is most sensitive to distortion. The bass carries the largest
+    figures on this rig and the least meaning: its harmonics fall
+    where masking is strong, and across four field runs it wandered
+    17 per cent against the midband's 7. Big and loose and quiet is
+    not a band to hang a verdict on.
+
+    Said rather than fixed, because there may be nothing to fix: on a
+    quiet device the floor is reached honestly, and the answer is
+    then a better rig, not a louder sweep.
+    """
+    got = thd_at(getattr(rec, "freq_hz", None), getattr(rec, "thd_db", None),
+                 getattr(rec, "thd_noise_db", None), f0=f0,
+                 floor_gap=floor_gap)
+    if not got:
+        return None
+    pct, clamped = got
+    if not clamped:
+        return None
+    word = pct_word(pct)
+    return ("distortion at %g Hz is a CEILING, not a measurement: %s%% is "
+            "as far under as this rig can see. A louder sweep would lower "
+            "it only by measuring the device harder, not better."
+            % (f0, word if word is not None else "%.3g" % pct))
+
+
 def mean_confession(records):
     """Power-averaged distortion of a channel's takes for the
     takes-panel graph: (thd, h2, h3, noise) arrays in dB re the
