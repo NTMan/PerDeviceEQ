@@ -368,3 +368,38 @@ def test_a_ladder_the_model_cannot_describe_falls_back(monkeypatch):
     v = knee.verdict([knee.Rung(g, x) for g, x in measured])
     assert v.kind == "knee" and v.curve is None
     assert v.software_below == pytest.approx(-34.3, abs=0.1)
+
+
+def test_a_piece_too_short_to_have_a_slope_is_not_described():
+    """Least squares hands back a slope for two rungs three tenths of a
+    decibel apart, and the field printed two: "flat -6.0 .. -5.7, -0.62
+    dB per dB" and "flat -6.0 .. -6.0, -9.11 dB per dB". A flat stretch
+    descending at nine decibels per decibel is not a reading.
+
+    The bar follows from what the slope is FOR: it is compared against
+    SLOPE_MID, so it must be determined to better than that, and the
+    uncertainty of a fitted slope is about the scatter over the span.
+    """
+    measured = [(-27.1, -86.32), (-24.1, -86.21), (-21.0, -86.08),
+                (-18.0, -85.96), (-15.0, -85.39), (-12.0, -85.81),
+                (-10.5, -85.18), (-9.0, -83.53), (-7.5, -81.17),
+                (-6.0, -77.08), (-6.0, -77.58), (-3.0, -68.63),
+                (0.0, -60.31)]
+    v = knee.verdict([knee.Rung(g, x) for g, x in measured])
+    assert [s.kind for s in v.segments] == ["flat", "rising"]
+    for s in v.segments:
+        assert s.hi - s.lo > 1.0
+        assert -1.0 < s.slope < 4.0        # no arithmetic on noise
+    assert v.knee_db == pytest.approx(-8.7, abs=0.5)
+
+
+def test_ten_field_ladders_agree_to_half_a_decibel():
+    """His CM106, ten runs with nothing touched between them, read with
+    the fit. The segmentation gave working points from 0.769 to 0.893;
+    these span 0.013."""
+    knees = [-8.6, -8.6, -8.6, -8.5, -8.3, -8.4, -8.4, -8.5, -8.5, -8.7]
+    floors = [-86.11, -86.02, -86.01, -86.02, -86.09,
+              -86.06, -86.13, -86.12, -86.11, -86.09]
+    # recorded here as the acceptance the estimator was built to meet
+    assert max(knees) - min(knees) <= 0.5
+    assert max(floors) - min(floors) <= 0.2

@@ -365,6 +365,30 @@ def describe(rungs, max_k=MAX_K):
         return [], 0.0
     scatter = scatter_of(parts)
     need = max(FLOOR_DB, SCATTER_K * scatter)
+
+    # A PIECE MUST SPAN FAR ENOUGH FOR ITS SLOPE TO EXIST. Least
+    # squares will hand back a slope for two rungs three tenths of a
+    # decibel apart, and the field printed two of them: "flat -6.0 ..
+    # -5.7, -0.62 dB per dB" and "flat -6.0 .. -6.0, -9.11 dB per dB".
+    # A flat stretch descending at nine decibels per decibel is not a
+    # reading, it is arithmetic on noise.
+    #
+    # The bar follows from what the slope is FOR. It is compared
+    # against SLOPE_MID, so it has to be determined to better than
+    # that, and the uncertainty of a least-squares slope is about the
+    # scatter over the span -- so the span must beat scatter divided
+    # by the threshold, twice over for the two ends. Below that a
+    # piece is not described; it joins its neighbour, which is what
+    # the merge below would have done had the labels agreed.
+    thin = 2.0 * scatter / SLOPE_MID
+    merged = []
+    for p in parts:
+        if merged and p[-1].gain_db - p[0].gain_db < thin:
+            merged[-1] = merged[-1] + p
+        else:
+            merged.append(list(p))
+    parts = merged
+
     named = []
     for p in parts:
         slope, _, _ = fit(p)
