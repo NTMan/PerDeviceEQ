@@ -611,6 +611,56 @@ def active_input_route(node_name, dump=None):
 
 
 
+def route_channel_cubic(route, channel):
+    """What a route's channel is standing at, as a cubic volume.
+
+    READ WHERE IT IS WRITTEN. The node's Props do not follow a Route
+    write, so anything that writes the route must read the route --
+    the ladder was reading the node, so it restored a gain that had
+    never been there and reported "unknown" for a card plainly set.
+    """
+    for o in pw_dump():
+        if o.get("id") != route.get("device_id"):
+            continue
+        for rt in ((o.get("info") or {}).get("params") or {}).get(
+                "Route") or []:
+            if (not isinstance(rt, dict)
+                    or rt.get("index") != route.get("index")):
+                continue
+            cv = (rt.get("props") or {}).get("channelVolumes") or []
+            if channel < len(cv):
+                return float(cv[channel]) ** (1.0 / 3.0)
+    return None
+
+
+def route_hw_position(route, channel):
+    """Where the CARD's own control is standing, as a linear volume.
+
+    channelVolumes is what was asked for; softVolumes is what the graph
+    is making up on top; their quotient is the hardware itself. Below
+    the card's floor the quotient stops moving while the request goes
+    on falling, which is how the floor is found -- measured on a CM106
+    as 0.04436 from five different requests, agreeing to a part in
+    three thousand.
+    """
+    for o in pw_dump():
+        if o.get("id") != route.get("device_id"):
+            continue
+        for rt in ((o.get("info") or {}).get("params") or {}).get(
+                "Route") or []:
+            if (not isinstance(rt, dict)
+                    or rt.get("index") != route.get("index")):
+                continue
+            p = rt.get("props") or {}
+            cv = p.get("channelVolumes") or []
+            sv = p.get("softVolumes") or []
+            if channel >= len(cv):
+                return None
+            soft = float(sv[channel]) if channel < len(sv) else 1.0
+            return float(cv[channel]) / (soft or 1.0)
+    return None
+
+
 def set_route_volumes(route, cubics):
     """Set every capture column of a route at once.
 

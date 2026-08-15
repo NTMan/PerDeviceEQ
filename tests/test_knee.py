@@ -276,6 +276,40 @@ def test_the_caption_is_silent_when_it_has_nothing_to_say():
 
 
 
+# --- a dwell that caught something --------------------------------------
+
+def test_a_power_mean_is_the_wrong_estimator_for_a_floor():
+    """Thirty-five blocks at -78 dBFS and ONE that caught an event at
+    -50 come to -65.3 as a power mean. That is not a near miss: it is
+    exactly the twelve decibel error a rung showed in the field, and
+    it moved a knee from -9 to -19 by sending the refinement to the
+    wrong end of the ladder."""
+    from perdeviceeq.knee_run import _median, power_mean
+    blocks = [-78.0] * 35 + [-50.0]
+    assert power_mean(blocks) == pytest.approx(-65.33, abs=0.05)
+    assert _median(blocks) == pytest.approx(-78.0)
+
+
+def test_a_stationary_floor_reads_the_same_either_way():
+    from perdeviceeq.knee_run import _median, power_mean
+    blocks = [-78.0 + (i % 5) * 0.1 for i in range(36)]
+    assert abs(power_mean(blocks) - _median(blocks)) < 0.3
+
+
+def test_the_excess_marks_what_the_crest_cannot():
+    """On a card whose peaks are pinned by fixed spikes, a contaminated
+    dwell LOWERS the crest instead of raising it, so the crest test
+    passes it. The excess does not care about peaks."""
+    good = [knee.Rung(-20.0 + i, -85.0, peak_dbfs=-34.5) for i in range(4)]
+    for r in good:
+        r.excess = 0.05
+    bad = knee.Rung(-16.0, -66.0, peak_dbfs=-34.1)   # a LOWER crest
+    bad.excess = 12.7
+    rungs = good + [bad]
+    hit = knee.mark_transients(rungs)
+    assert hit == [bad] and bad.suspect
+    assert not any(r.suspect for r in good)
+
 def test_flatness_is_a_slope_and_not_a_total_rise():
     """A piece with a negligible slope crosses any fixed rise given
     enough span. One did: a flat stretch of slope 0.18 over 6.7 dB

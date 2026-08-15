@@ -28,6 +28,8 @@ from . import inmeter, knee, pw_backend
 SETTLE_S = 0.35      # after a write, before believing what is heard
 POLL_S = 0.02        # faster than the meter publishes, so none is missed
 DWELL_S = 1.5        # silence averaged per rung
+FLOOR_PROBE = 0.05   # cubic: low enough that any card's own control
+                     # has bottomed out, and not zero, which is mute
 
 
 def cubic_to_db(cubic):
@@ -53,6 +55,27 @@ def db_to_cubic(db):
     return min(1.0, 10.0 ** (float(db) / 60.0))
 
 
+def _median(xs):
+    """The middle value. In decibels or in linear units it is the same
+    sample, since the median only cares about order."""
+    ys = sorted(xs)
+    n = len(ys)
+    if not n:
+        return None
+    if n % 2:
+        return ys[n // 2]
+    return 0.5 * (ys[n // 2 - 1] + ys[n // 2])
+
+
+def power_mean(xs):
+    """What the dwell used to be read with, kept for one purpose: how
+    far it stands above the median says the dwell caught an event."""
+    if not xs:
+        return None
+    return 10.0 * math.log10(
+        sum(10.0 ** (x / 10.0) for x in xs) / float(len(xs)))
+
+
 def gain_of(source):
     """The cubic gain a source record is standing at, or None."""
     return (source.get("gain") or (None, None))[0]
@@ -63,24 +86,6 @@ def active_route(source):
     return next((r for r in (source.get("routes") or [])
                  if r.get("active")), None)
 
-
-def channel_gain(node_name, channel):
-    """One column's own gain, as a cubic, or None.
-
-    A source record folds its channels into one number, which is right
-    while they agree and wrong the moment they do not -- and they are
-    independent in the hardware. Anything that speaks for one column
-    reads that column.
-    """
-    for o in pw_backend.pw_dump():
-        if o.get("type") != "PipeWire:Interface:Node":
-            continue
-        p = (o.get("info") or {}).get("props") or {}
-        if p.get("node.name") != node_name:
-            continue
-        gains = pw_backend.channel_gains_of_node(o)
-        return gains[channel] if 0 <= channel < len(gains) else None
-    return None
 
 
 def read_back(node_name):
@@ -121,7 +126,9 @@ class Walk:
         # window is the only writer, so the list it starts with is the
         # list that stays true.
         self.others = [float(v) ** (1.0 / 3.0) for v in (cv or [])]
-        self.before = (channel_gain(source["name"], self.column)
+        self.floor_db = None            # the card's own, when it has one
+        self.before = (pw_backend.route_channel_cubic(self.route,
+                                                      self.column)
                        if self.per_channel else gain_of(source))
         self.rungs = []
         self.restored = None            # True, False, or None if untouched
@@ -136,6 +143,53 @@ class Walk:
     def __exit__(self, *exc):
         self.close()
         return False
+
+    def hardware_floor_db(self, restore=True):
+        """Where the card's own control stops, on the ladder's axis, or
+        None when it does not stop inside the walk.
+
+        Asked rather than assumed: set the column as low as it goes and
+        read back what the HARDWARE took. channelVolumes is the
+        request, softVolumes is what the graph is making up on top, and
+        their quotient is the card. Below the floor the request keeps
+        falling while the quotient stands still.
+
+        This is worth one extra write because of what it saves. On a
+        CM106 the floor is at -27 dB, so a walk from -60 spends five of
+        its fifteen rungs below it -- measuring PipeWire's own
+        multiplier, not the chain. Those are exactly the rungs that
+        produce a stretch of slope one, which is the thing the reading
+        has twice had to be taught to discount.
+        """
+        if not self.per_channel or self.column >= len(self.others):
+            return None
+        want = list(self.others)
+        # NOT zero. Zero is mute, and a muted channel reports a
+        # hardware position of zero rather than a floor -- the first
+        # version of this asked for zero, got zero, and concluded the
+        # card had no floor on every card it was ever run on.
+        want[self.column] = FLOOR_PROBE
+        pw_backend.set_route_volumes(self.route, want)
+        time.sleep(self.settle)
+        hw = pw_backend.route_hw_position(self.route, self.column)
+        # and put the column back, unless a rung is about to set it
+        # anyway. Restoring between the probe and the first rung is
+        # visible on the card as a pointless round trip -- down to the
+        # floor, back up to where it was, straight back down -- and it
+        # showed up in the route watch as an anomaly before it showed
+        # up as a thought. The caller that walks immediately says so.
+        if restore and self.before is not None:
+            pw_backend.set_route_volumes(
+                self.route, [self.before if i == self.column else v
+                             for i, v in enumerate(self.others)])
+            time.sleep(self.settle)
+        if not hw or hw <= 0.0:
+            return None
+        floor = 20.0 * math.log10(min(1.0, hw))
+        # a card that took what it was asked for has not shown a floor:
+        # it may simply go lower than the probe
+        asked = 20.0 * math.log10(FLOOR_PROBE ** 3)
+        return None if floor <= asked + 0.2 else floor
 
     def open(self):
         if self.column >= self.width:
@@ -183,31 +237,48 @@ class Walk:
         heard."""
         self._set(db_to_cubic(db))
         time.sleep(self.settle)
-        got = (channel_gain(self.source["name"], self.column)
+        got = (pw_backend.route_channel_cubic(self.route, self.column)
                if self.per_channel else read_back(self.source["name"]))
         real = cubic_to_db(got)
-        rms, peak, _dc, blocks = self._gather(self.dwell, with_blocks=True)
+        rms, peak, _dc, blocks, excess = self._gather(
+            self.dwell, with_blocks=True)
         if rms is None:
             return None
         rung = knee.Rung(real if real is not None else db, rms,
                          peak_dbfs=peak, raw=got, blocks=blocks)
+        rung.excess = excess
         self.rungs.append(rung)
         return rung
 
     # -- the worker ------------------------------------------------------
 
     def _gather(self, seconds, with_blocks=False):
-        """Average the dwell rather than sample its end.
+        """Read the dwell with the MEDIAN of its blocks, not their mean.
 
-        One block is 43 ms and a noise floor read off 43 ms wanders by
-        more than a dB: two runs of one ladder on one card disagreed by
-        3.8 dB on the top rung, and that disagreement flipped a
-        verdict. Power averages, peaks take the highest, and the poll
-        runs faster than the meter publishes so no block is missed.
+        One block is 43 ms and a floor read off 43 ms wanders by more
+        than a dB, so the dwell has to be read whole. But averaging it
+        in POWER is the worst possible way to do that, and the field
+        proved it: thirty-five blocks at -78 dBFS and ONE that caught
+        an event at -50 come to -65.3 as a power mean, which is
+        exactly the 12 dB error a rung showed. A power mean is
+        dominated by its loudest sample by construction.
+
+        A noise floor is stationary, so the median is the estimator
+        that fits it, and one bad block in thirty-six moves it not at
+        all. The mean is kept only to tell that something happened:
+        far above the median means the dwell caught an event, and that
+        is a better transient test than the crest factor, which on
+        this card cannot work -- its peaks are pinned by fixed spikes
+        near -34.5 dBFS, so a contaminated block LOWERS the crest
+        instead of raising it.
+
+        Peaks still take the highest: a peak is a maximum by
+        definition, and the point of it is to catch the loudest thing
+        that happened.
         """
         deadline = time.time() + seconds
-        power = dcpow = 0.0
-        count = 0
+        vals = []
+        dcs = []
         top = None
         seen = None
         while time.time() < deadline:
@@ -221,16 +292,21 @@ class Walk:
             if v == seen:
                 continue                    # the same block twice
             seen = v
-            power += 10.0 ** (v / 10.0)
-            dcpow += 10.0 ** (dc[self.column] / 10.0)
-            count += 1
+            vals.append(v)
+            dcs.append(dc[self.column])
             p = peak[self.column]
             top = p if top is None else max(top, p)
-        if not count:
-            return (None, None, None, 0) if with_blocks else (None, None, None)
-        mean = 10.0 * math.log10(power / count)
-        off = 10.0 * math.log10(dcpow / count)
-        return (mean, top, off, count) if with_blocks else (mean, top, off)
+        if not vals:
+            return ((None, None, None, 0, None) if with_blocks
+                    else (None, None, None))
+        mid = _median(vals)
+        off = _median(dcs)
+        # how far the old estimator stands above the new one: for a
+        # stationary floor they agree, and a gap means the dwell
+        # caught something
+        excess = power_mean(vals) - mid
+        return ((mid, top, off, len(vals), excess) if with_blocks
+                else (mid, top, off))
 
 
 def unity_db(source):
@@ -250,14 +326,24 @@ def unity_db(source):
 
 
 def ladder(source, column=0, lo_db=-60.0, hi_db=0.0, steps=10,
-           dwell=DWELL_S, refine=True, on_rung=None, should_stop=None):
+           dwell=DWELL_S, refine=True, on_rung=None, should_stop=None,
+           from_floor=True):
     """Walk the whole thing and read it.
+
+    The walk starts at the CARD's floor when it has one, not at the
+    number passed in: below that point the card is standing still and
+    the graph is making up the difference, so those rungs measure a
+    multiplier rather than a chain.
 
     `on_rung(rung, done, total)` is called after every step, and
     `should_stop()` is asked before each; a walk that stops early
     still puts the gain back and still returns what it has.
     """
     with Walk(source, column, dwell=dwell) as w:
+        floor = w.hardware_floor_db(restore=False) if from_floor else None
+        if floor is not None and floor > lo_db:
+            w.floor_db = floor
+            lo_db = floor
         points = knee.plan(lo_db, hi_db, steps)
         total = len(points)
         for i, db in enumerate(points):

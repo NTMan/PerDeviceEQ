@@ -53,6 +53,8 @@ by hand.
 """
 
 MARGIN_DB = 3.0      # how far above a knee a working point sits
+EXCESS_DB = 1.5      # a dwell whose mean stands this far above
+                     # its median caught something
 CREST_SLACK = 12.0   # dB above the median crest that marks a transient
 CREST_NOISE = 4.0    # below this a reading is not noise at all
 FLOOR_DB = 1.0       # no segment counts as rising on less than this
@@ -67,7 +69,7 @@ class Rung:
     """One step of the ladder: what was asked, what was heard."""
 
     __slots__ = ("gain_db", "raw", "rms_dbfs", "peak_dbfs", "suspect",
-                 "blocks")
+                 "blocks", "excess")
 
     def __init__(self, gain_db, rms_dbfs, peak_dbfs=None, raw=None,
                  blocks=None):
@@ -80,6 +82,11 @@ class Rung:
         # average over the dwell, and a rung backed by three blocks
         # deserves less trust than one backed by thirty-six
         self.blocks = blocks
+        # how far this dwell's power mean stood above its median. A
+        # stationary floor gives nearly zero; a gap says the dwell
+        # caught an event, and that is the transient test that works
+        # on a card whose peaks are pinned by fixed spikes
+        self.excess = None
 
     @property
     def crest(self):
@@ -346,19 +353,33 @@ def refine(rungs, points=5):
     return [lo + (hi - lo) * i / (points - 1) for i in range(points)]
 
 
-def mark_transients(rungs, slack=CREST_SLACK):
-    """A rung whose crest factor stands far above its neighbours caught
-    an event -- a door, a chair, a notification. Silence is the whole
-    method here, so such a rung is marked rather than believed."""
-    crests = [r.crest for r in rungs if r.peak_dbfs is not None]
-    if len(crests) < 3:
-        return []
-    typical = sorted(crests)[len(crests) // 2]
+def mark_transients(rungs, slack=CREST_SLACK, excess_db=EXCESS_DB):
+    """A rung whose dwell caught an event is marked rather than
+    believed. Silence is the whole method here.
+
+    TWO TESTS, because one of them cannot work everywhere. A crest
+    factor far above the others says a peak arrived -- but only where
+    the peaks are free to move, and on a card whose peaks are pinned
+    by fixed spikes a contaminated dwell LOWERS the crest instead of
+    raising it. The second test does not care: it asks how far the
+    dwell's power mean stood above its median, which for a stationary
+    floor is nothing and for a dwell that caught something is large.
+    That one found a rung reading twelve decibels high that the crest
+    test had passed.
+    """
     hit = []
     for r in rungs:
-        if r.peak_dbfs is not None and r.crest > typical + slack:
+        if r.excess is not None and r.excess > excess_db:
             r.suspect = True
             hit.append(r)
+    crests = [r.crest for r in rungs if r.peak_dbfs is not None]
+    if len(crests) >= 3:
+        typical = sorted(crests)[len(crests) // 2]
+        for r in rungs:
+            if (r.peak_dbfs is not None and r.crest > typical + slack
+                    and not r.suspect):
+                r.suspect = True
+                hit.append(r)
     return hit
 
 

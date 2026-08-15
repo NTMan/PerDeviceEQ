@@ -262,11 +262,132 @@ def test_the_ladder_moves_only_its_own_column(card, monkeypatch):
     monkeypatch.setattr(pw_backend, "set_gain",
                         lambda *a: (_ for _ in ()).throw(
                             AssertionError("the whole node must not move")))
-    monkeypatch.setattr(knee_run, "channel_gain",
-                        lambda name, ch: card.cubic)
+    # the ladder reads the ROUTE, the same object it writes -- the
+    # node's Props do not follow a Route write
+    monkeypatch.setattr(pw_backend, "route_channel_cubic",
+                        lambda r, ch: r["channel_volumes"][ch] ** (1 / 3.0))
+    monkeypatch.setattr(pw_backend, "route_hw_position",
+                        lambda r, ch: r["channel_volumes"][ch])
     knee_run.ladder(card.src, 1, lo_db=-40.0, hi_db=0.0, steps=4,
                     dwell=0.05, refine=False)
     assert written, "the ladder wrote nothing"
     assert all(ch == 1 for ch, _ in written)
     # and it put ITS channel back, leaving the other where it was
     assert card.src["routes"][0]["channel_volumes"][0] == pytest.approx(0.5)
+
+
+# --- the walk starts where the card does --------------------------------
+
+def test_the_card_is_asked_where_its_control_stops(monkeypatch):
+    """channelVolumes is the request, softVolumes is what the graph makes
+    up on top, and their quotient is the hardware. Below the floor the
+    request keeps falling while the quotient stands still -- measured on
+    a CM106 as 0.04436 from five different requests."""
+    floor = 0.04436
+    route = Route([0.5, 0.5])
+
+    def set_route_volumes(r, cubics):
+        r["channel_volumes"] = [max(0.0, min(1.0, c)) ** 3 for c in cubics]
+        return r["channel_volumes"]
+
+    monkeypatch.setattr(pw_backend, "set_route_volumes", set_route_volumes)
+    monkeypatch.setattr(pw_backend, "route_hw_position",
+                        lambda r, ch: max(floor, r["channel_volumes"][ch]))
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w.route, w.column, w.settle = route, 0, 0.0
+    w.per_channel, w.others, w.before = True, [0.5, 0.5], 0.5
+    assert w.hardware_floor_db() == pytest.approx(-27.06, abs=0.05)
+
+
+def test_a_card_that_does_not_stop_gives_no_floor(monkeypatch):
+    route = Route([0.5, 0.5])
+    monkeypatch.setattr(pw_backend, "set_route_volumes",
+                        lambda r, c: r.__setitem__(
+                            "channel_volumes", [x ** 3 for x in c]))
+    monkeypatch.setattr(pw_backend, "route_hw_position",
+                        lambda r, ch: r["channel_volumes"][ch])
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w.route, w.column, w.settle = route, 0, 0.0
+    w.per_channel, w.others, w.before = True, [0.5, 0.5], 0.5
+    # it took the probe value exactly, so it has not shown a floor: it
+    # may simply go lower than the probe
+    assert w.hardware_floor_db() is None
+
+
+def test_a_route_without_channels_has_no_floor_to_ask_for():
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w.route, w.column, w.settle = {}, 0, 0.0
+    w.per_channel, w.others, w.before = False, [], 0.5
+    assert w.hardware_floor_db() is None
+
+
+def test_starting_at_the_floor_spends_no_rung_below_it():
+    """A walk from -60 on a card whose control stops at -27 puts five of
+    its ten coarse rungs where the card is standing still and the graph
+    is multiplying -- which is exactly the stretch of slope one the
+    reading has twice had to be taught to discount."""
+    floor = -27.06
+    wasted = [p for p in knee.plan(-60.0, 0.0, 10) if p < floor]
+    assert len(wasted) == 5
+    assert all(p >= floor - 1e-9 for p in knee.plan(floor, 0.0, 10))
+
+
+def test_the_floor_probe_asks_for_something_the_card_can_hold(monkeypatch):
+    """Zero is MUTE, not a floor. The first version asked for zero, got
+    zero back, and concluded every card it ever ran on had no floor."""
+    route = Route([0.125, 0.125])
+    monkeypatch.setattr(pw_backend, "set_route_volumes",
+                        lambda r, c: r.__setitem__(
+                            "channel_volumes", [x ** 3 for x in c]))
+    monkeypatch.setattr(pw_backend, "route_hw_position",
+                        lambda r, ch: max(0.04436, r["channel_volumes"][ch]))
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w.route, w.column, w.settle = route, 0, 0.0
+    w.per_channel, w.others, w.before = True, [0.5, 0.5], 0.5
+    assert knee_run.FLOOR_PROBE > 0.0
+    assert w.hardware_floor_db() == pytest.approx(-27.06, abs=0.05)
+
+
+def test_the_floor_probe_puts_the_column_back(monkeypatch):
+    """The silence check runs next. Left at the probe value it measured
+    the probe rather than the room -- and read digital zero, which is
+    how a rig with a 33 dB DC offset came back reporting -200 dBFS."""
+    route = Route([0.125, 0.125])
+    monkeypatch.setattr(pw_backend, "set_route_volumes",
+                        lambda r, c: r.__setitem__(
+                            "channel_volumes", [x ** 3 for x in c]))
+    monkeypatch.setattr(pw_backend, "route_hw_position",
+                        lambda r, ch: max(0.04436, r["channel_volumes"][ch]))
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w.route, w.column, w.settle = route, 0, 0.0
+    w.per_channel, w.others, w.before = True, [0.5, 0.5], 0.732
+    w.hardware_floor_db()
+    assert route["channel_volumes"][0] == pytest.approx(0.732 ** 3)
+    assert route["channel_volumes"][1] == pytest.approx(0.5 ** 3)
+
+
+def test_the_floor_probe_can_hand_straight_over_to_the_walk(monkeypatch):
+    """Restoring between the probe and the first rung is a round trip
+    the card can be watched making: down to the floor, back up to where
+    it was, straight back down. The caller that walks immediately says
+    so, and the route watch showed the trip before anyone thought to
+    look for it."""
+    route = Route([0.125, 0.125])
+    seen = []
+
+    def set_route_volumes(r, cubics):
+        r["channel_volumes"] = [x ** 3 for x in cubics]
+        seen.append(round(cubics[0], 4))
+        return r["channel_volumes"]
+
+    monkeypatch.setattr(pw_backend, "set_route_volumes", set_route_volumes)
+    monkeypatch.setattr(pw_backend, "route_hw_position",
+                        lambda r, ch: max(0.04436, r["channel_volumes"][ch]))
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w.route, w.column, w.settle = route, 0, 0.0
+    w.per_channel, w.others, w.before = True, [0.5, 0.5], 0.732
+    w.hardware_floor_db(restore=False)
+    assert seen == [knee_run.FLOOR_PROBE], "it went somewhere else as well"
+    seen.clear()
+    w.hardware_floor_db(restore=True)
+    assert seen == [knee_run.FLOOR_PROBE, 0.732], "it did not come back"

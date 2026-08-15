@@ -171,9 +171,12 @@ def main():
     print("NOTHING IS PLAYED. Keep the room quiet until this finishes.\n")
 
     def say(rung, done, total):
-        print("  %7.1f dB   rms %8.2f   peak %8.2f   (%d blocks, %d/%d)"
+        ex = getattr(rung, "excess", None)
+        print("  %7.1f dB   rms %8.2f   peak %8.2f   (%d blocks, %d/%d)%s"
               % (rung.gain_db, rung.rms_dbfs, rung.peak_dbfs,
-                 getattr(rung, "blocks", 0), done, total))
+                 getattr(rung, "blocks", 0), done, total,
+                 "   CAUGHT SOMETHING (+%.1f dB over the median)" % ex
+                 if ex is not None and ex > knee.EXCESS_DB else ""))
 
     rungs = []
     try:
@@ -208,6 +211,19 @@ def main():
                     if not args.force:
                         return 1
                 print("")
+            # LISTENED TO FIRST, at his own gain, and only then is the
+            # card asked where its control stops -- which hands
+            # straight over to the walk. The other order put the
+            # column down to the floor, back up to where it was, and
+            # straight back down again, and the route watch showed
+            # that round trip before anyone thought to look for it
+            floor = w.hardware_floor_db(restore=False)
+            if floor is not None and floor > args.lo:
+                print("floor    : %.1f dB (cubic %.3f) -- the CARD's own "
+                      "control stops here;" % (floor, db_to_cubic(floor)))
+                print("           below it the graph makes up the "
+                      "difference, so the walk starts here\n")
+                args.lo = floor
             print("  %-10s %-16s %-11s %s" % ("gain", "", "noise", "peak"))
             for db in knee.plan(args.lo, args.hi, args.steps):
                 r = w.visit(db)
