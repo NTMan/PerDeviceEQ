@@ -241,10 +241,15 @@ def main():
                             say(r, len(w.rungs), args.steps + len(fine))
                     knee.mark_transients(w.rungs)
             rungs = w.rungs
-        if w.restored:
-            print("\nrestored the gain to %.3f" % w.before)
-        elif w.restored is False:
-            print("\nCOULD NOT RESTORE the gain; set it back by hand")
+            # THE ANSWER IS LEFT ON THE CARD. This tool does one thing
+            # and its whole life is the walk, so there is nowhere else
+            # for the working point to live: putting the old gain back
+            # would erase the only thing the run produced.
+            v = knee.verdict(w.rungs) if w.rungs else None
+            if v is not None and v.work_db is not None:
+                w.leave_at(db_to_cubic(v.work_db))
+                print("\nleft the gain at %.3f (cubic) -- the working "
+                      "point" % db_to_cubic(v.work_db))
     except KeyboardInterrupt:
         print("\nstopped.")
         rungs = rungs or []

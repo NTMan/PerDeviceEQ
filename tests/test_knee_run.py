@@ -105,46 +105,18 @@ def test_unity_is_read_off_the_active_route(card):
 
 # --- the walk ---------------------------------------------------------
 
-def test_a_whole_ladder_finds_the_knee_and_puts_the_gain_back(card):
+def test_a_whole_ladder_finds_the_knee(card):
     v, w = knee_run.ladder(card.src, 0, lo_db=-60.0, hi_db=0.0,
                            steps=10, dwell=0.05)
     assert v.kind == "knee"
     assert v.knee_db == pytest.approx(card.knee_db, abs=5.0)
-    assert w.restored is True
-    assert card.cubic == pytest.approx(0.5)       # exactly where it was
+    # NOT put back: a walk leaves the column where its last rung set
+    # it, and the caller places the working point
     assert len(w.rungs) >= 10
     assert all(r.blocks for r in w.rungs)
 
 
-def test_a_walk_that_is_stopped_still_puts_the_gain_back(card):
-    seen = {"n": 0}
 
-    def should_stop():
-        seen["n"] += 1
-        return seen["n"] > 4
-
-    v, w = knee_run.ladder(card.src, 0, lo_db=-60.0, hi_db=0.0,
-                           steps=10, dwell=0.05, should_stop=should_stop)
-    assert len(w.rungs) == 4
-    assert w.restored is True
-    assert card.cubic == pytest.approx(0.5)
-
-
-def test_a_walk_that_raises_still_puts_the_gain_back(card):
-    with pytest.raises(RuntimeError):
-        with knee_run.Walk(card.src, 0, dwell=0.05) as w:
-            w.visit(-30.0)
-            raise RuntimeError("something went wrong mid-ladder")
-    assert card.cubic == pytest.approx(0.5)
-
-
-def test_the_caller_is_told_when_the_gain_could_not_be_put_back(
-        card, monkeypatch):
-    with knee_run.Walk(card.src, 0, dwell=0.05) as w:
-        w.visit(-30.0)
-        monkeypatch.setattr(pw_backend, "set_gain",
-                            lambda *a: (_ for _ in ()).throw(OSError("no")))
-    assert w.restored is False
 
 
 def test_a_column_the_source_does_not_have_is_refused(card):
@@ -391,3 +363,35 @@ def test_the_floor_probe_can_hand_straight_over_to_the_walk(monkeypatch):
     seen.clear()
     w.hardware_floor_db(restore=True)
     assert seen == [knee_run.FLOOR_PROBE, 0.732], "it did not come back"
+
+
+def test_a_walk_can_leave_its_answer_on_the_card(monkeypatch):
+    """The point of a walk is the working point it finds, and in a
+    caller whose whole life IS the walk there is nowhere else for that
+    answer to live. Restoring would erase the only thing the run
+    produced."""
+    route = Route([0.125, 0.125])
+    monkeypatch.setattr(pw_backend, "set_route_volumes",
+                        lambda r, c: r.__setitem__(
+                            "channel_volumes", [x ** 3 for x in c]))
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w.route, w.column, w.settle = route, 0, 0.0
+    w.per_channel, w.others, w.before = True, [0.5, 0.5], 0.732
+    w._meter = type("M", (), {"stop": lambda self: None})()
+    w.leave_at(0.806)
+    w.close()
+    assert route["channel_volumes"][0] == pytest.approx(0.806 ** 3)
+
+
+
+
+def test_a_walk_puts_nothing_back(card):
+    """It exists to find a working point that something afterwards will
+    use, so restoring the old gain would erase the only thing the run
+    produced. Both callers set the point themselves. A run stopped
+    halfway leaves the column on the rung it halted on, which is the
+    price of not having a hidden second policy."""
+    with knee_run.Walk(card.src, 0, dwell=0.05) as w:
+        w.visit(-30.0)
+    assert card.cubic == pytest.approx(knee_run.db_to_cubic(-30.0), abs=1e-3)
+    assert not hasattr(w, "restored")

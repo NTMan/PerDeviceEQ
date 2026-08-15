@@ -127,11 +127,14 @@ class Walk:
         # list that stays true.
         self.others = [float(v) ** (1.0 / 3.0) for v in (cv or [])]
         self.floor_db = None            # the card's own, when it has one
+        # where the column stood when the walk began. NOT a value to
+        # go back to when the walk ends -- the walk exists to replace
+        # it -- but the floor probe borrows the column for a moment
+        # and has to hand it back before anything else looks at it
         self.before = (pw_backend.route_channel_cubic(self.route,
                                                       self.column)
                        if self.per_channel else gain_of(source))
         self.rungs = []
-        self.restored = None            # True, False, or None if untouched
         self._meter = inmeter.InputMeter()
 
     # -- lifecycle ------------------------------------------------------
@@ -201,18 +204,21 @@ class Walk:
             self._meter.stop()
             raise RuntimeError("the capture did not start")
 
+    def leave_at(self, cubic):
+        """Put the column at the working point the walk found."""
+        self._set(cubic)
+
     def close(self):
+        """A walk does not put anything back.
+
+        It exists to find a working point that something afterwards
+        will use, so restoring the old gain would erase the only thing
+        the run produced. Both callers set the point themselves: the
+        window applies it, the tool leaves it. A run that is stopped
+        halfway leaves the column on the rung it halted on, which is
+        the price of not having a hidden second policy.
+        """
         self._meter.stop()
-        if self.before is None:
-            return
-        try:
-            self._set(self.before)
-            self.restored = True
-        except Exception:                              # noqa: BLE001
-            # said, not swallowed: a walk that could not put the gain
-            # back has left the card somewhere the operator did not
-            # choose, and the caller has to be able to say so
-            self.restored = False
 
     # -- the two things it can do ---------------------------------------
 

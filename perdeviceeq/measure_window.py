@@ -3547,17 +3547,14 @@ class MeasureWindow(Adw.Window):
         self._busy = False
         self._set_row_sensitive(True)
         self._update_pult()
-        walk = out["walk"]
         if out["error"] is not None:
             self._say("Could not walk the gain: %s" % out["error"])
             return
-        if walk is not None and walk.restored is False:
-            # the one failure that must not pass quietly: the card is
-            # standing somewhere nobody chose
-            self._say("The gain could not be put back -- set it by hand.")
-            return
         if self._knee_stop:
-            self._say("Stopped. The gain is back where it was.")
+            # a walk does not put anything back, so a stopped one has
+            # left the fader on the rung it halted on. Said plainly
+            # rather than left for the eye to notice
+            self._say("Stopped. The gain is on the last step walked.")
             return
         v = out["verdict"]
         if v is None or not v.usable:
