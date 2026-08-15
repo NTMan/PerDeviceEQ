@@ -178,15 +178,6 @@ class ChannelTabs:
         lbl.set_text(str(text))
         lbl.set_visible(True)
 
-    def clear_status(self):
-        for key in self._counts:
-            self.set_status(key, None)
-
-    def set_tooltip(self, key, text):
-        btn = self._buttons.get(key)
-        if btn is not None:
-            btn.set_tooltip_text(text)
-
     # ---- plumbing ------------------------------------------------------
     def _on_toggled(self, btn, key):
         if self._quiet or not btn.get_active():

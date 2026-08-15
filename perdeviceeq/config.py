@@ -14,7 +14,6 @@ CONFIG_DIR        = os.path.expanduser("~/.config/per-device-eq")
 USER_PROFILES_DIR = os.path.join(CONFIG_DIR, "profiles")
 BINDINGS_FILE     = os.path.join(CONFIG_DIR, "bindings.json")
 UI_STATE_FILE     = os.path.join(CONFIG_DIR, "ui-state.json")
-LEGACY_CONFIG     = os.path.join(CONFIG_DIR, "config.json")
 
 # Data root: the directory that holds wireplumber/, data/ and profiles/ as
 # siblings of this `perdeviceeq` package -- i.e. the repo root when running from
@@ -53,7 +52,6 @@ HOOK_SRC_CANDIDATES = [os.path.join(_DATA_ROOT, "wireplumber", WP_SCRIPT_NAME),
                        "/usr/share/per-device-eq/wireplumber/" + WP_SCRIPT_NAME]
 # where the hook persists graphs; used to drive a one-time migration from
 # bindings.json into WpState (after that the hook owns the file)
-WPSTATE_FILE   = os.path.expanduser("~/.local/state/wireplumber/" + METADATA_NAME)
 
 # desktop integration (so the launcher/dock shows our name + icon). The window's
 # Wayland app_id equals APP_ID, so the .desktop must be named <APP_ID>.desktop

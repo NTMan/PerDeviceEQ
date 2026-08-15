@@ -742,17 +742,6 @@ def resolve_sink_id(name, dump=None):
     _, nid = node_params(name, dump)
     return nid
 
-def graph_loaded(name, dump=None):
-    """Best-effort: a loaded in-node graph shows up as an extra Props block
-    whose only key is 'params'."""
-    params, _ = node_params(name, dump)
-    if not params:
-        return False
-    for d in params.get("Props", []):
-        if isinstance(d, dict) and list(d.keys()) == ["params"]:
-            return True
-    return False
-
 def metadata_set(node_name, graph):
     """Write a device's graph into the 'per-device-eq' metadata. The WP hook is
     subscribed and applies it to the live node (and on every later reconnect).
@@ -1296,10 +1285,6 @@ class PipeWireBackend(AudioBackend):
         out = (r.stdout or "") + (r.stderr or "")
         m = re.search(r"key:'protocol'\s+value:'([^']*)'", out)
         return ("Found" in out), (m.group(1) if m else None)
-
-    def output_channels(self, device):
-        """Channel positions of an output device."""
-        return sink_channels(device)
 
     def monitor_positions(self, device):
         """What a capture on this node's monitor must ask for."""

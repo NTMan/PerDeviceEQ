@@ -75,10 +75,6 @@ SPEAKER_NAMES = {
 }
 
 
-def _db(x):
-    return "?" if x is None else "%+.1f dB" % x
-
-
 def _speaker_name(key):
     return SPEAKER_NAMES.get(key, key)
 
@@ -95,13 +91,6 @@ def _stride_idx(n, cap=240):
     if idx[-1] != n - 1:
         idx.append(n - 1)
     return idx
-
-
-def _log_x(freq, x0, w):
-    """x pixel for a frequency on a log axis spanning FMIN..FMAX_PLOT."""
-    lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
-    f = min(max(float(freq), FMIN_PLOT), FMAX_PLOT)
-    return x0 + (math.log10(f) - lo) / (hi - lo) * w
 
 
 def _ui_path():
@@ -1319,12 +1308,6 @@ class MeasureWindow(Adw.Window):
     def _source_name(self):
         s = self._selected_source()
         return s["name"] if s else None
-
-    def _query_volume(self):
-        try:
-            return pw_backend.backend().volume_of(self.sink_node)
-        except Exception:
-            return None
 
     def _set_volume_display(self, v):
         if self._sink_gone or v is None:
@@ -2662,7 +2645,6 @@ class MeasureWindow(Adw.Window):
             # fader row it read as a property of the card, and that row
             # cannot say which column a knee was measured on -- this
             # row's own title does, so the line under it stays short.
-        self._keep_act_last()
         self._ensure_cal_manage_row()
         self._refresh_cal_manage()
         self._sync_cal_labels()
@@ -2695,17 +2677,6 @@ class MeasureWindow(Adw.Window):
             if r.get_parent() is not None:
                 self.mic_group.remove(r)
                 self.mic_group.add(r)
-
-    def _keep_act_last(self):
-        """Nothing to keep any more: play and stop have a card of
-        their own at the bottom of the page, so no row can land under
-        them however the cards above are rebuilt.
-
-        Kept as a name rather than deleted because it was called from
-        two builders and this says why it now does nothing, which the
-        next reader will want more than a missing function.
-        """
-        return
 
     def _rebuild_map_slots(self):
         """The MICROPHONE's rows: which channel it arrives on, what
@@ -2759,7 +2730,6 @@ class MeasureWindow(Adw.Window):
             self.map_dds[ch] = row
             self.cal_group = grp
             self._rebuild_cal_row()
-        self._keep_act_last()
         self._dress_act_row()
 
     def _say(self, text):

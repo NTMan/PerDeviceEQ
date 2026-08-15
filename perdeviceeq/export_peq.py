@@ -503,9 +503,6 @@ def parse_graphiceq(text):
     return [], []
 
 
-_TYPE_NAMES = {"PK": "Peak", "LSC": "Low shelf", "HSC": "High shelf"}
-
-
 def _step_decimals(step):
     if not step:
         return 2
