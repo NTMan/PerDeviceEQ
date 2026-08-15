@@ -403,3 +403,31 @@ def test_ten_field_ladders_agree_to_half_a_decibel():
     # recorded here as the acceptance the estimator was built to meet
     assert max(knees) - min(knees) <= 0.5
     assert max(floors) - min(floors) <= 0.2
+
+
+def test_the_exponent_is_the_card_and_not_the_physics():
+    """A tone played into the coupler and walked up the same ladder rose
+    3.06 dB per dB of this axis while the noise rose 3.08 -- within one
+    per cent, so the noise follows the REAL gain one for one, which is
+    ordinary amplified input noise. A CM106's exponent near six is this
+    axis stretched threefold by the card's taper.
+
+    Recorded as a court because the fit must keep MEASURING it: a card
+    with an honest taper answers near two, and nothing here may assume
+    either number.
+    """
+    import math
+
+    def chain(floor_db, mic0, stretch):
+        """noise that follows the REAL gain, on an axis stretched by
+        `stretch` decibels of gain per decibel of control"""
+        return lambda g: 10 * math.log10(
+            10 ** (floor_db / 10.0)
+            + 10 ** ((mic0 + stretch * g) / 10.0))
+
+    for stretch, want in ((1.0, 2.0), (3.0, 6.0)):
+        rungs = [knee.Rung(g, chain(-118.0, -100.0, stretch)(g))
+                 for g in knee.plan(-40.0, 20.0, 15)]
+        v = knee.verdict(rungs)
+        assert v.curve is not None
+        assert v.curve.n == pytest.approx(want, abs=0.3)

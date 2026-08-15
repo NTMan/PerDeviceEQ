@@ -187,12 +187,23 @@ class Curve:
     where the two terms are EQUAL, and equality is a property of the
     curve rather than of where a segmentation happened to cut it.
 
-    n is fitted, not assumed. Amplified input noise alone would give
-    n = 2, two decibels of power for two of gain; his CM106 answers
-    5.9 +/- 0.3 across seven runs, about three decibels per decibel, so
-    whatever rises up there is not simply the microphone's own noise
-    being made louder. The mechanism is unknown and is not guessed at:
-    the exponent is measured and reported.
+    n IS FITTED, AND IT MEASURES THE CARD, NOT THE PHYSICS. Noise
+    riding the gain would give n = 2 -- two decibels of power for two
+    of gain -- and a CM106 answers 5.9 +/- 0.3. The difference is the
+    card's own taper, and a tone settled it: played into the coupler
+    and walked up the same ladder, it rose 3.06 dB per dB of this axis
+    while the noise rose 3.08. Within one per cent the noise follows
+    the REAL gain one for one, which is exactly amplified input noise.
+    The sixth power is an axis stretched threefold, not a strange
+    preamp.
+
+    So this axis is the control's position and nothing more, which is
+    why nothing here assumes a slope. The same tone showed the card
+    covering 38.98 dB where its ALSA element declares 27.06, three
+    pairs of adjacent rungs landing on one hardware step, and
+    softVolumes at 1.0 throughout -- the graph believing it got what
+    it asked for. On a card with an honest taper n will come out near
+    two, and this fit will not notice the difference.
     """
 
     __slots__ = ("floor_dbfs", "term_dbfs", "n", "resid")
