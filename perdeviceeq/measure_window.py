@@ -3891,23 +3891,27 @@ class MeasureWindow(Adw.Window):
                 if not quiet:
                     self._error("Pick a measurement mic first.")
                 return False
-            # THE FADER LAW, the architect's stomach cure:
-            # the sweep plays the fader's number, always --
-            # the fader is always set to something, so the
-            # behaviour is always predictable. The hunt lives
-            # ONLY behind its own button (level_only runs),
-            # and its whole job is to move the fader.
-            hunt = bool(getattr(self, "_level_only", False))
+            # AUTO_LEVEL IS ALWAYS TRUE HERE, and it is not the
+            # decision. This window can always hunt -- the button is
+            # right there -- so the session is built able to, which is
+            # what the flag really controls: the preflight requires
+            # wpctl, __enter__ prepares a quiet start, and the state
+            # block reports a hunt when one happens.
+            #
+            # WHETHER a given sweep hunts is decided at TAKE time, in
+            # one place: no level given means hunt. It used to be
+            # decided here as well, from the fader and the previous
+            # run's level_only flag -- but a session is built ONCE, in
+            # the constructor, so that reading was stale before it was
+            # used and could only be right by accident.
             _t = time.monotonic()
             cfg = ms.SessionConfig(
                 sink=self.sink_node,
                 source=pw_backend.entry_node(mic),
-                channels=self.mic_ch, auto_level=hunt,
+                channels=self.mic_ch, auto_level=True,
                 mute_others=True, device=self.sink_desc,
                 play_map=self._play_map(),
-                start_volume=(None if hunt else
-                              self.vol_spin.get_value()
-                              / 100.0))
+                start_volume=None)
             try:
                 # an absent home births the session unresolved:
                 # the canvas adopts, statistics and refits run,
@@ -3959,7 +3963,14 @@ class MeasureWindow(Adw.Window):
         # setting the session level to the fader's number, read
         # on the main thread here, applied by the worker after
         # the session is entered. One door, zero shield flags.
-        self._take_level = (None if level_only
+        # ZERO MEANS HUNT, so it must not go through the door: the
+        # session's set_level FREEZES the auto-level, which is right
+        # for a number a hand chose and fatal for the one number that
+        # means "nobody has chosen yet". 0191 added the hunt-at-zero
+        # rule and this line quietly cancelled it -- the sweep played
+        # silence at the level it was told to play.
+        self._take_level = (None
+                            if level_only or self.vol_spin.get_value() <= 0
                             else self.vol_spin.get_value() / 100.0)
         # the input gain rides the SAME door, read here on the main
         # thread: baking it into the session let a stale number from
