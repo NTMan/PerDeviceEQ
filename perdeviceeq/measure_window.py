@@ -1345,6 +1345,16 @@ class MeasureWindow(Adw.Window):
         under the fader names the level's source, so a remembered 33
         and a pending hunt can never wear the same face again."""
         if self.session is not None:
+            # A LEVEL MID-HUNT IS NOT ESTABLISHED, which is what this
+            # promises to show. relevel() drops the session to the
+            # hunt's quiet start, so any refresh between the button and
+            # the answer dragged the fader to fifteen -- and _refresh_all
+            # calls this, so plugging one caller was never going to be
+            # enough. While the search is running the fader keeps the
+            # last number anyone actually established.
+            if getattr(self.session, "_leveled", True) is False:
+                debug.mic_trace("refresh skipped: hunt in flight")
+                return
             v = getattr(self.session, "_v_cur", None)
             debug.mic_trace("refresh session_v=%r" % v)
             if v is not None:
@@ -1366,10 +1376,11 @@ class MeasureWindow(Adw.Window):
     def _on_relevel(self, _btn):
         """Measure the level here and now: forget the remembered
         value, re-arm the leveling and run probe sweeps immediately on
-        the selected channel. The spin follows the hunt live and ends
-        at the found level -- the number is always the last one
-        established, no captions needed. The locking sweep is
-        discarded (this button measures the LEVEL, not a take)."""
+        the selected channel. The spin STANDS STILL through the hunt
+        and lands on the found level at the end -- the search narrates
+        itself in the status line, and the control shows a decision
+        rather than a process. The locking sweep is discarded (this
+        button measures the LEVEL, not a take)."""
         if self._busy:
             return
         src = self._source_name()
@@ -1380,7 +1391,11 @@ class MeasureWindow(Adw.Window):
                 self.session.relevel()
             except Exception:
                 pass
-        self._refresh_volume()
+        # NOT _refresh_volume() here. relevel() has just dropped the
+        # session's level to the hunt's quiet START, and showing that
+        # drags the fader to fifteen before a single sweep has run --
+        # which is the search's first step, not anybody's setting. The
+        # fader learns the answer when there is one, in _measure_done.
         self._refresh_all()
         self._start_measure(self._selected_ch, level_only=True)
 
@@ -3974,6 +3989,15 @@ class MeasureWindow(Adw.Window):
             self._assert_capture_gain()
             if getattr(self, "_take_level", None) is not None:
                 self.session.set_level(self._take_level)
+            else:
+                # NO LEVEL GIVEN MEANS HUNT, and the session has to be
+                # told so at TAKE time. auto_level is frozen into the
+                # config when the session is built -- at window open --
+                # so a fader zeroed afterwards left a session that
+                # believed it was already levelled, ran one sweep and
+                # stopped. That is 0191's hole returning through
+                # another door, and relevel() is the door's own key.
+                self.session.relevel()
             guard = 0
             while True:
                 guard += 1
@@ -3982,17 +4006,38 @@ class MeasureWindow(Adw.Window):
                 if out.kind == "level_probe" and guard < 12:
                     lv = out.level or {}
                     snr = lv.get("snr_db")
+                    # THD IS WHAT THE HUNT STEERS BY NOW, so it is on
+                    # the line. Without it the operator watches a
+                    # number climb for reasons the window keeps to
+                    # itself -- and that is how a change that did
+                    # nothing went unnoticed until a screenshot.
+                    pct = lv.get("thd_pct")
+                    thd = ("n/a" if pct is None else
+                           "%s%s%%" % ("<=" if lv.get("thd_bound")
+                                       else "",
+                                       measure_build.pct_word(pct)))
                     self._post_status(
                         "%s: leveling %d%% → %d%%  "
-                        "(peak %.1f dBFS, SNR %s, step %d/%d)"
+                        "(%s, peak %.1f dBFS, SNR %s, THD@1k %s, "
+                        "step %d/%d)"
                         % (self.ch_keys[ch],
                            round(100 * lv.get("volume_from", 0)),
                            round(100 * lv.get("volume_to", 0)),
+                           lv.get("phase", "?"),
                            lv.get("peak_dbfs", float("nan")),
                            "%.1f" % snr if snr is not None else "n/a",
+                           thd,
                            lv.get("step", 0), lv.get("max_steps", 0)))
-                    GLib.idle_add(self._set_volume_display,
-                                  lv.get("volume_to"))
+                    # THE FADER DOES NOT FOLLOW THE HUNT. Every probe
+                    # used to drag it, so a search that ramps and then
+                    # comes back down looked like the control being
+                    # thrown about -- and an intermediate level is not
+                    # a setting anyone chose. The sensitivity hunt has
+                    # always behaved this way: its fader stands still
+                    # through the ladder and lands on the answer. The
+                    # search narrates itself in the status line, which
+                    # is where a process belongs; the control shows a
+                    # decision.
                     continue
                 if out.kind == "level_stuck":
                     lv = out.level or {}
@@ -4044,6 +4089,8 @@ class MeasureWindow(Adw.Window):
         src = self._source_name()
         if v is not None and src:
             self.memory.remember(self.sink_node, source=src, volume=v)
+        # AND NOW THE FADER LANDS: _refresh_all ends in _refresh_volume,
+        # which no longer refuses because the hunt has finished.
         self._refresh_all()
         return False
 

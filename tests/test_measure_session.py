@@ -1022,3 +1022,168 @@ def test_a_take_that_heard_nothing_is_not_a_clean_take():
     # testified() has known this all along; the judge just never asked
     assert ms.testified(_q_rec(snr_db=None)) is False
     assert ms.testified(_q_rec(snr_db=40.0)) is True
+
+
+# --- the auto-level's third question ---------------------------------
+
+def test_hot_and_clean_is_not_enough_while_the_figure_is_a_bound():
+    """Peak and SNR say the capture is usable. They cannot say whether
+    the distortion figure is a MEASUREMENT -- on his rig the midband
+    stayed a bound until a recorded peak near -16 dBFS, well inside
+    the old window, so the hunt stopped early and every THD number
+    afterwards was a ceiling."""
+    hot_and_clean = dict(peak=-8.0, snr=55.0)
+    assert ms.AutoLevel.verdict(thd_bound=False, **hot_and_clean) == "ok"
+    assert ms.AutoLevel.verdict(thd_bound=True, **hot_and_clean) == "quiet"
+    assert ms.AutoLevel.verdict(thd_bound=None, **hot_and_clean) == "ok"
+
+
+def test_at_the_ceiling_a_bound_is_accepted_rather_than_chased():
+    """There is nowhere left to climb, and a take that says its figure
+    is a bound beats no take at all."""
+    at_ceiling = ms.AUTO_PEAK_CEIL - 0.5
+    assert ms.AutoLevel.verdict(at_ceiling, 55.0, thd_bound=True) == "ok"
+
+
+def test_past_the_ceiling_is_loud_whatever_the_figure_says():
+    assert ms.AutoLevel.verdict(ms.AUTO_PEAK_CEIL + 1.0, 55.0,
+                                thd_bound=False) == "loud"
+
+
+def test_a_quiet_probe_stays_quiet():
+    assert ms.AutoLevel.verdict(-40.0, 20.0, thd_bound=False) == "quiet"
+
+
+def test_the_crossing_outranks_the_peak_floor():
+    """The first cut asked the third question INSIDE the old peak
+    window, and on his rig the crossing happens at a peak of -13.6
+    dBFS -- below AUTO_PEAK_FLOOR. So the level that answered it was
+    rejected as not hot enough before the question was reached, and
+    the hunt sailed past to full volume. He caught it from a
+    screenshot; this is the court that keeps it caught.
+
+    His own ladder, Liberty 5 Pro into the coupler.
+    """
+    ladder = [(-22.8, 38.8, True), (-19.6, 42.4, True),
+              (-19.6, 42.6, True), (-16.2, 46.9, True),
+              (-13.6, 50.0, False), (-7.5, 56.2, False)]
+    said = [ms.AutoLevel.verdict(pk, snr, False, b) for pk, snr, b in ladder]
+    assert said == ["quiet", "quiet", "quiet", "quiet", "ok", "ok"]
+
+
+def test_without_a_judgement_the_peak_floor_still_rules():
+    """Nothing is said about the figure on a clipped probe, or before
+    an analysis exists. The old behaviour has to survive there."""
+    assert ms.AutoLevel.verdict(-13.6, 50.0, False, None) == "quiet"
+    assert ms.AutoLevel.verdict(-7.5, 56.2, False, None) == "ok"
+
+
+def test_a_dirty_probe_is_quiet_whatever_the_figure_says():
+    """SNR is the lower guard and it comes first: a figure that looks
+    like a measurement under a noisy capture is not one."""
+    assert ms.AutoLevel.verdict(-13.6, 20.0, False, False) == "quiet"
+
+
+def test_the_hunt_closes_on_the_lowest_ok_not_the_first():
+    """The ramp doubles, so it steps straight over the crossing: 4, 8,
+    16, 32, 64 walks past a crossing at 79 and lands on full volume --
+    the old behaviour wearing new clothes, which is what he saw in a
+    screenshot. An ok level is a CEILING to close on."""
+    def judge(v):
+        return ((-25.0, 45.0, True) if v < 0.76 else (-13.0, 50.0, False))
+
+    a = ms.AutoLevel()
+    v, seen = 0.04, []
+    for _ in range(14):
+        pk, snr, bound = judge(v)
+        a.observe(v, pk, snr, False, bound)
+        seen.append(round(v * 100))
+        if a.settled():
+            break
+        v = a.next_volume(v, pk)
+    assert a.settled()
+    assert 76 <= round(a.ok[0] * 100) <= 84, seen
+    assert max(seen) >= 90 or a.ok[0] < 0.9   # it did come back down
+
+
+def test_settling_needs_a_quiet_below_the_ok():
+    """Ok on the very first probe: nothing to close on, take it."""
+    a = ms.AutoLevel()
+    a.observe(0.5, -10.0, 50.0, False, False)
+    assert a.settled() and a.ok[0] == 0.5
+
+
+def test_a_wide_bracket_is_not_settled():
+    a = ms.AutoLevel()
+    a.observe(0.10, -30.0, 45.0, False, True)
+    a.observe(0.80, -12.0, 50.0, False, False)
+    assert not a.settled()
+
+
+def test_the_hunt_steers_by_the_analysed_snr_not_the_quick_one():
+    """The quick estimate finds the sweep's onset as the first crossing
+    of ten times the pre-roll RMS. That cannot work on a card whose
+    pre-roll carries fixed spikes: his CM106 sits at -34 dBFS there, so
+    the threshold lands at -14 and every probe quieter than that
+    reports no onset at all.
+
+    The field showed what that costs: SNR n/a on every ramp step, the
+    hunt steering with no lower guard, ramping to the ceiling and
+    declaring the rig hopeless -- on a take the analysis scored at
+    50 dB. Two estimators, two verdicts about one recording.
+    """
+    import numpy as np
+    fs = 48000
+    chan = np.zeros(fs, dtype=np.float64)
+    chan[::4096] = 10 ** (-34.0 / 20.0)          # the fixed spikes
+    chan[fs // 2:] += 10 ** (-25.0 / 20.0)       # a sweep quieter than 10x
+    ses = ms.MeasureSession.__new__(ms.MeasureSession)
+    ses.sweep = type("S", (), {"fs": fs})()
+    snr, noise = ms.MeasureSession._quick_snr(ses, chan)
+    assert snr is None, "the quick estimate is expected to fail here"
+
+
+def test_a_closed_bracket_ends_the_hunt_even_on_a_quiet_probe():
+    """The stop must not require THIS probe to be the ok one. As the
+    bracket narrows the probes land on the QUIET side, and demanding
+    both left his hunt circling 69, 64, 67, 68, 69 until it ran out of
+    steps and stopped short on a bound -- with the answer, 69, already
+    in hand three sweeps earlier."""
+    a = ms.AutoLevel()
+    for v, bound in ((0.15, True), (0.30, True), (0.60, True),
+                     (0.80, False), (0.69, False), (0.64, True)):
+        a.observe(v, -20.0, 45.0, False, bound)
+    assert a.settled()
+    assert a.ok[0] == pytest.approx(0.69)
+    # and the probe that closed it was judged quiet, not ok
+    assert a.verdict(-20.0, 45.0, False, True) == "quiet"
+
+
+def test_a_take_warns_from_the_snr_it_reports():
+    """One recording, one figure. The take prints the analysed SNR and
+    used to warn from the quick estimate, so his run showed "SNR 46.1
+    dB" over "WARNING: low SNR (2.9 dB)" about the same sweep. The
+    quick one is the wrong of the two on a card whose pre-roll carries
+    fixed spikes."""
+    import inspect
+    src = inspect.getsource(ms.MeasureSession._accept)
+    head = src[:src.index("notes.append(\"WARNING: low SNR")]
+    assert "analyze_take" in head, "the analysis must come first"
+    assert "t.snr_db" in head, "the warning must read the analysed SNR"
+
+
+def test_a_hunt_never_starts_from_zero():
+    """A multiplicative ramp cannot move from zero: it doubles to zero,
+    sees no change and stops after one sweep. relevel() took the MIN of
+    the current level and the quiet start -- meant as "do not jump UP
+    if we are already quieter" -- and a new rig shows ZERO on the
+    fader. Zero is not quieter, it is nothing.
+    """
+    for start in (None, 0.0, 0.5, 1.0):
+        ses = ms.MeasureSession.__new__(ms.MeasureSession)
+        ses._v_cur = start
+        ses._pending = None
+        ms.MeasureSession.relevel(ses)
+        assert ses._v_cur == pytest.approx(ms.AUTO_START_VOLUME)
+        nxt = ses._auto_ctl.next_volume(ses._v_cur, -30.0)
+        assert abs(nxt - ses._v_cur) > 1e-3, "the ramp must be able to move"

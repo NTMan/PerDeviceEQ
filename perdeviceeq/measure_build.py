@@ -223,6 +223,20 @@ def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0,
     return 100.0 * (10.0 ** (v / 20.0)), clamped
 
 
+def thd_is_bound(freqs, thd, noise, f0=1000.0, floor_gap=3.0):
+    """True when the distortion at f0 is a CEILING rather than a
+    measurement, False when it is a measurement, None when there is
+    nothing to say.
+
+    The auto-level's third question, beside hot enough and clean
+    enough: can the rig see UNDER the device at all. A level that
+    satisfies peak and SNR while this stays True is a level at which
+    every distortion figure printed is a bound.
+    """
+    got = thd_at(freqs, thd, noise, f0=f0, floor_gap=floor_gap)
+    return None if not got else bool(got[1])
+
+
 def thd_bound_note(rec, f0=1000.0, floor_gap=3.0):
     """One sentence when the take's headline distortion is a BOUND
     rather than a measurement, or None when it is a measurement.
