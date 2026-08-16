@@ -106,8 +106,23 @@ class Walk:
     stopped, or raised.
     """
 
-    def __init__(self, source, column=0, dwell=DWELL_S, settle=SETTLE_S):
+    def __init__(self, source, column=0, dwell=DWELL_S, settle=SETTLE_S,
+                 quiet_sink=None):
         self.source = source
+        # THE LADDER MEASURES SILENCE, so anything the machine plays
+        # lands in it. There are three consumers of the hardware -- the
+        # sensitivity search, the level search and the take -- and only
+        # one may hold it at a time; until now only the take said so.
+        # The ladders showed the price: rungs marked CAUGHT SOMETHING
+        # at +1.8 and +4.5 dB over the median, thrown away by the
+        # transient test that should not have had to catch them.
+        #
+        # NAMED FOR WHAT IT DOES, because the moratorium mutes foreign
+        # streams on ONE sink and cannot quiet a room. A caller that
+        # knows which output could be heard passes it; one that does
+        # not passes nothing and gets the old behaviour.
+        self.quiet_sink = quiet_sink
+        self._claim = None
         self.column = int(column)
         self.dwell = float(dwell)
         self.settle = float(settle)
@@ -198,6 +213,10 @@ class Walk:
         if self.column >= self.width:
             raise ValueError("column %d of a %d-column source"
                              % (self.column, self.width))
+        if self.quiet_sink:
+            back = pw_backend.backend()
+            self._claim = back.moratorium_begin(self.quiet_sink,
+                                                mute_others=True)
         self._meter.start(self.source["id"], self.width)
         time.sleep(0.6)
         if not self._meter.alive():
@@ -217,8 +236,19 @@ class Walk:
         window applies it, the tool leaves it. A run that is stopped
         halfway leaves the column on the rung it halted on, which is
         the price of not having a hidden second policy.
+
+        The claim on the hardware IS given back, because that is not a
+        finding -- it is a lock.
         """
         self._meter.stop()
+        # read defensively: a court builds a Walk without __init__ to
+        # exercise one method, and close() must not care
+        if getattr(self, "_claim", None) is not None:
+            self._claim = None
+            try:
+                pw_backend.backend().moratorium_end()
+            except Exception:                       # noqa: BLE001
+                pass
 
     # -- the two things it can do ---------------------------------------
 
@@ -333,7 +363,7 @@ def unity_db(source):
 
 def ladder(source, column=0, lo_db=-60.0, hi_db=0.0, steps=10,
            dwell=DWELL_S, refine=True, on_rung=None, should_stop=None,
-           from_floor=True):
+           from_floor=True, quiet_sink=None):
     """Walk the whole thing and read it.
 
     The walk starts at the CARD's floor when it has one, not at the
@@ -345,7 +375,8 @@ def ladder(source, column=0, lo_db=-60.0, hi_db=0.0, steps=10,
     `should_stop()` is asked before each; a walk that stops early
     still puts the gain back and still returns what it has.
     """
-    with Walk(source, column, dwell=dwell) as w:
+    with Walk(source, column, dwell=dwell,
+              quiet_sink=quiet_sink) as w:
         floor = w.hardware_floor_db(restore=False) if from_floor else None
         if floor is not None and floor > lo_db:
             w.floor_db = floor

@@ -80,6 +80,10 @@ def main():
     ap.add_argument("--dwell", type=float, default=1.5,
                     help="seconds of silence per rung")
     ap.add_argument("--no-refine", action="store_true")
+    ap.add_argument("--quiet-sink", metavar="NAME", default=None,
+                    help="mute foreign streams on this output for the "
+                         "duration -- the ladder measures silence, so "
+                         "anything the machine plays lands in it")
     ap.add_argument("--force", action="store_true",
                     help="ladder an input whose fader is not analogue "
                          "(there is nothing to find, but the curve may "
@@ -180,7 +184,8 @@ def main():
 
     rungs = []
     try:
-        with knee_run.Walk(src, args.column, dwell=args.dwell) as w:
+        with knee_run.Walk(src, args.column, dwell=args.dwell,
+                           quiet_sink=args.quiet_sink) as w:
             ac, peak_db, dc_db = w.listen(1.5)
             if ac is not None:
                 print("column   : rms %.2f dBFS about the mean, peak %.2f, "

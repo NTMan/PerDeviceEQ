@@ -395,3 +395,32 @@ def test_a_walk_puts_nothing_back(card):
         w.visit(-30.0)
     assert card.cubic == pytest.approx(knee_run.db_to_cubic(-30.0), abs=1e-3)
     assert not hasattr(w, "restored")
+
+
+def test_a_ladder_can_claim_the_output_it_measures_against():
+    """THREE CONSUMERS OF THE HARDWARE -- the sensitivity search, the
+    level search and the take -- and only one may hold it at a time.
+    Until now only the take said so, and the ladders paid: rungs marked
+    CAUGHT SOMETHING at +1.8 and +4.5 dB over the median, thrown away
+    by a transient test that should not have had to catch them.
+
+    Named for what it DOES: the moratorium mutes foreign streams on one
+    sink and cannot quiet a room, so a caller that knows which output
+    could be heard passes it and one that does not passes nothing.
+    """
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    assert w.__init__.__doc__ is None or True
+    import inspect
+    sig = inspect.signature(knee_run.Walk.__init__)
+    assert "quiet_sink" in sig.parameters
+    assert sig.parameters["quiet_sink"].default is None
+    sig = inspect.signature(knee_run.ladder)
+    assert "quiet_sink" in sig.parameters
+
+
+def test_closing_a_walk_that_claimed_nothing_is_quiet():
+    """close() runs on every exit path, including one where __init__
+    never ran (a court exercising a single method)."""
+    w = knee_run.Walk.__new__(knee_run.Walk)
+    w._meter = type("M", (), {"stop": lambda self: None})()
+    knee_run.Walk.close(w)

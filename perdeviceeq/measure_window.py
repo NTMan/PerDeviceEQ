@@ -3523,7 +3523,12 @@ class MeasureWindow(Adw.Window):
 
             out["verdict"], out["walk"] = knee_run.ladder(
                 src, col, on_rung=said,
-                should_stop=lambda: self._knee_stop)
+                should_stop=lambda: self._knee_stop,
+                # the ladder measures SILENCE, so claim the output
+                # this window is measuring against for its duration:
+                # otherwise a notification lands in the noise floor
+                # and the transient test has to throw the rung away
+                quiet_sink=self.sink_node)
         except Exception as e:                          # noqa: BLE001
             out["error"] = e
         GLib.idle_add(self._knee_done, out)
