@@ -223,6 +223,42 @@ def thd_at(freqs, thd, noise=None, f0=1000.0, floor_gap=3.0,
     return 100.0 * (10.0 ** (v / 20.0)), clamped
 
 
+THD_FLOOR_GAP_DB = 3.0        # a figure this far above its own noise is
+                              # a measurement; nearer, a ceiling
+
+
+def thd_margin_db(freqs, thd, noise, f0=1000.0, frac=1.0 / 12.0):
+    """How far the distortion figure stands ABOVE its own noise floor,
+    in dB, or None when either side abstains.
+
+    THE CONTINUOUS QUANTITY BEHIND THE BOUND. Whether a figure is a
+    measurement is this margin against a three-decibel bar, and a bar
+    turns a smooth number into a coin wherever the number sits near
+    it: two consecutive ladders on one earphone read 0.25 and 0.23 per
+    cent at the same level, one called a measurement and the other a
+    bound, and the hunt went in opposite directions on the strength of
+    it -- 4.8 dB apart in the level it chose.
+
+    A control loop must not steer by a threshold when it can steer by
+    the thing being thresholded. Same band and same median as thd_at,
+    so the margin and the mark can never disagree.
+    """
+    if thd is None or noise is None or freqs is None or not len(freqs):
+        return None
+    fa = np.asarray(freqs, float)
+    ta = np.array([np.nan if v is None else float(v) for v in thd], float)
+    na = np.array([np.nan if v is None else float(v) for v in noise], float)
+    if len(ta) != len(fa) or len(na) != len(fa):
+        return None
+    lo = f0 * (2.0 ** (-frac / 2.0))
+    hi = f0 * (2.0 ** (frac / 2.0))
+    m = (fa >= lo) & (fa <= hi)
+    ok = m & np.isfinite(ta) & np.isfinite(na)
+    if not ok.any():
+        return None
+    return float(np.median(ta[ok]) - np.median(na[ok]))
+
+
 def thd_is_bound(freqs, thd, noise, f0=1000.0, floor_gap=3.0):
     """True when the distortion at f0 is a CEILING rather than a
     measurement, False when it is a measurement, None when there is

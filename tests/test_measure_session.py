@@ -1187,3 +1187,35 @@ def test_a_hunt_never_starts_from_zero():
         assert ses._v_cur == pytest.approx(ms.AUTO_START_VOLUME)
         nxt = ses._auto_ctl.next_volume(ses._v_cur, -30.0)
         assert abs(nxt - ses._v_cur) > 1e-3, "the ramp must be able to move"
+
+
+def test_the_ramp_stops_doubling_once_the_margin_says_it_is_close():
+    """Doubling the cubic volume is EIGHTEEN decibels a step, which
+    guarantees an overshoot at the crossing -- and then a coin flip in
+    the bound test decides whether the hunt closes DOWN from eighty or
+    UP from a hundred. Two consecutive ladders on one earphone chose 74
+    and 89 that way, 4.8 dB apart, on readings of 0.25 and 0.23 per
+    cent at the same level."""
+    far = ms.AutoLevel()
+    far.observe(0.60, -22.0, 45.0, False, True, margin_db=-30.0)
+    assert not far.near
+    assert far.next_volume(0.60, -22.0) == pytest.approx(0.80)   # ceiling
+
+    close = ms.AutoLevel()
+    close.observe(0.60, -22.0, 45.0, False, True, margin_db=-1.0)
+    assert close.near
+    assert close.next_volume(0.60, -22.0) == pytest.approx(0.672, abs=1e-3)
+
+
+def test_the_margin_and_the_mark_cannot_disagree():
+    """Same band, same median, one bar between them."""
+    import numpy as np
+    from perdeviceeq import measure_build as mb
+    f = np.array([980.0, 1000.0, 1020.0])
+    for gap in (0.5, 2.9, 3.1, 12.0):
+        thd = np.full(3, -60.0)
+        noise = np.full(3, -60.0 - gap)
+        margin = mb.thd_margin_db(f, thd, noise)
+        bound = mb.thd_is_bound(f, thd, noise)
+        assert margin == pytest.approx(gap)
+        assert bound == (margin < 3.0)

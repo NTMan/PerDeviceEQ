@@ -72,8 +72,8 @@ def config_for(sink, src, width, hunt=True):
 
 def watch_the_hunt(cfg, column, guard=14):
     """Drive the session's own auto-level and report every probe."""
-    print("  %-6s %-10s %-9s %-7s %-11s %s"
-          % ("step", "phase", "peak", "SNR", "THD@1k", "level"))
+    print("  %-6s %-10s %-9s %-7s %-11s %-7s %s"
+          % ("step", "phase", "peak", "SNR", "THD@1k", "margin", "level"))
     with ms.MeasureSession(cfg) as s:
         for _ in range(guard):
             out = s.take(0, analyze=column)
@@ -83,7 +83,8 @@ def watch_the_hunt(cfg, column, guard=14):
                 thd = ("n/a" if pct is None else
                        "%s%s%%" % ("<=" if lv.get("thd_bound") else "",
                                    mb.pct_word(pct)))
-                print("  %-6s %-10s %-9.1f %-7s %-11s %.0f%% -> %.0f%%"
+                mar = lv.get("thd_margin_db")
+                print("  %-6s %-10s %-9.1f %-7s %-11s %-7s %.0f%% -> %.0f%%"
                       % ("%d/%d" % (lv.get("step", 0),
                                     lv.get("max_steps", 0)),
                          lv.get("phase", "?"),
@@ -91,6 +92,7 @@ def watch_the_hunt(cfg, column, guard=14):
                          ("%.1f" % lv["snr_db"]) if lv.get("snr_db")
                          is not None else "n/a",
                          thd,
+                         "n/a" if mar is None else "%+.1f dB" % mar,
                          100 * lv.get("volume_from", 0),
                          100 * lv.get("volume_to", 0)))
                 continue

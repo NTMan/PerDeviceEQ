@@ -4012,10 +4012,13 @@ class MeasureWindow(Adw.Window):
                     # itself -- and that is how a change that did
                     # nothing went unnoticed until a screenshot.
                     pct = lv.get("thd_pct")
+                    mar = lv.get("thd_margin_db")
                     thd = ("n/a" if pct is None else
-                           "%s%s%%" % ("<=" if lv.get("thd_bound")
-                                       else "",
-                                       measure_build.pct_word(pct)))
+                           "%s%s%%%s"
+                           % ("<=" if lv.get("thd_bound") else "",
+                              measure_build.pct_word(pct),
+                              "" if mar is None else
+                              " (%+.0f dB over its floor)" % mar))
                     self._post_status(
                         "%s: leveling %d%% → %d%%  "
                         "(%s, peak %.1f dBFS, SNR %s, THD@1k %s, "

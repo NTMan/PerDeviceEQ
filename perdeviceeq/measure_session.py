@@ -129,7 +129,13 @@ METADATA_NAME = "per-device-eq"          # same object the app + WP hook use
 PLAY_NODE = pw_backend.PLAY_NODE
 CAPTURE_NODE = pw_backend.CAPTURE_NODE
 SINK_API_PREFIXES = ("alsa", "bluez")    # "real device" whitelist
-AUTO_MAX_ADJUST = 8                      # ramp-up + a few bisection steps
+AUTO_MAX_ADJUST = 12                     # was 8, and eight is not enough
+                                         # once the ramp creeps: four to
+                                         # climb, three to creep and
+                                         # three to close is ten. A sweep
+                                         # is 8.5 s, so the ceiling only
+                                         # costs anything on a rig that
+                                         # needs it
 AUTO_START_VOLUME = 0.15                 # cubic; "start quiet"
 AUTO_RAMP = 2.0                          # geometric step up while hunting
 AUTO_EXPLORE_CEIL = 0.8                  # don't slam full volume while probing
@@ -139,6 +145,18 @@ HOT_DBFS = -1.0                          # peak above this = low headroom
 AUTO_PEAK_FLOOR = -12.0                  # quieter wastes capture robustness
 AUTO_PEAK_CEIL = HOT_DBFS - 1.0          # aim strictly below the hot flag
 AUTO_SNR_MARGIN_DB = 1.0                 # aim past clean, not onto its edge
+AUTO_RAMP_NEAR = 1.12                    # the step once the margin says
+                                         # the crossing is close: about
+                                         # 3 dB, matching the settle
+                                         # tolerance below, since there
+                                         # is no sense stepping finer
+                                         # than the answer is resolved
+AUTO_NEAR_DB = 6.0                       # "close" = the figure is within
+                                         # this of clearing its own floor
+AUTO_NEAR_STEPS = 3                      # creep at most this many times:
+                                         # if the crossing is not found
+                                         # there it is not nearby, and
+                                         # reaching the top matters more
 AUTO_SETTLE_RATIO = 1.12                 # stop closing on the lowest ok
                                          # within this much volume: about
                                          # a dB, finer than the crossing's
@@ -524,6 +542,8 @@ class AutoLevel:
         self.lo = None            # (v, peak): highest too-quiet probe
         self.hi = None            # (v, peak): lowest too-loud / clipped
         self.ok = None            # (v, peak): LOWEST probe judged ok
+        self.near = False         # the margin says the crossing is close
+        self.crept = 0            # fine steps spent looking for it
         self.ceil = AUTO_EXPLORE_CEIL   # soft: lifts if stuck too quiet
 
     @staticmethod
@@ -592,7 +612,35 @@ class AutoLevel:
             return None
         return snr + (AUTO_PEAK_CEIL - peak)
 
-    def observe(self, v, peak, snr, clipped, thd_bound=None):
+    def observe(self, v, peak, snr, clipped, thd_bound=None,
+                margin_db=None):
+        # THE RAMP STOPS DOUBLING NEAR THE ANSWER. Six decibels a step
+        # guarantees an overshoot at the crossing, and then a coin flip
+        # in the bound test decides whether the hunt closes DOWN from
+        # eighty or UP from a hundred: two consecutive ladders on one
+        # earphone chose 74 and 89 that way. Approached gently, a flip
+        # costs one small step instead of forking the search.
+        # ONLY WHEN APPROACHING FROM BELOW. A margin already past the
+        # bar means the crossing is behind us and the closing phase
+        # owns the search; creeping there only burns adjustments, which
+        # is how the first cut of this failed two courts outright.
+        # ONLY WHEN APPROACHING FROM BELOW, AND ONLY ONCE THE CAPTURE
+        # IS WORTH BELIEVING, AND ONLY A FEW TIMES. A margin past the
+        # bar means the crossing is behind us and the closing phase
+        # owns the search; a margin under a capture too noisy to trust
+        # means nothing; and a margin that hovers at the bar without
+        # ever clearing it -- a device quieter than the rig at every
+        # level -- would be crept after forever. All three cost REACH:
+        # the fine step is about three decibels against a ramp allowed
+        # eight adjustments, so an unbounded creep never arrives at the
+        # top, where such a rig has to end up to say so.
+        self.near = (margin_db is not None and snr is not None
+                     and not clipped and snr >= mc.SNR_WARN_DB
+                     and self.crept < AUTO_NEAR_STEPS
+                     and mb.THD_FLOOR_GAP_DB - AUTO_NEAR_DB < margin_db
+                     < mb.THD_FLOOR_GAP_DB)
+        if self.near:
+            self.crept += 1
         verdict = self.verdict(peak, snr, clipped, thd_bound)
         if verdict == "loud":
             p = 0.0 if clipped else peak
@@ -650,7 +698,8 @@ class AutoLevel:
         elif self.hi:                            # too loud, no floor yet
             nv = self.hi[0] * AUTO_CLIP_BACKOFF
         else:                                    # hunt up for the loud end
-            nv = min(v * AUTO_RAMP, self.ceil)
+            step = AUTO_RAMP_NEAR if self.near else AUTO_RAMP
+            nv = min(v * step, self.ceil)
         return _clamp_vol(nv)
 
 
@@ -1567,13 +1616,15 @@ class MeasureSession:
             # verdict asks. The cost is an analysis per probe sweep,
             # against a sweep that already takes five and a half
             # seconds to play.
-            bound, thd_pct = None, None
+            bound, thd_pct, margin = None, None, None
             if not clipped:
                 probe = mc.analyze_take(chan, self.sweep, self.freqs)
                 got = mb.thd_at(self.freqs, probe.thd_db,
                                 probe.thd_noise_db)
                 if got:
                     thd_pct, bound = got
+                margin = mb.thd_margin_db(self.freqs, probe.thd_db,
+                                          probe.thd_noise_db)
                 # AND THE ANALYSED SNR, not the quick one. The quick
                 # estimate finds the sweep's onset as the first
                 # crossing of ten times the pre-roll RMS, which cannot
@@ -1590,7 +1641,7 @@ class MeasureSession:
                     if probe.noise_dbfs is not None:
                         noise_q = float(probe.noise_dbfs)
             self._auto_ctl.observe(self._v_cur, pk, snr_q, bool(clipped),
-                                   bound)
+                                   bound, margin)
             v_new = self._auto_ctl.next_volume(self._v_cur, pk)
             stuck = abs(v_new - self._v_cur) < 1e-3
             ceiling = (None if clipped
@@ -1659,6 +1710,7 @@ class MeasureSession:
                          # so the status line can say it instead of
                          # leaving the operator to infer it
                          "thd_pct": thd_pct, "thd_bound": bound,
+                         "thd_margin_db": margin,
                          "phase": self._auto_ctl.phase()}
                 self._v_cur = v_new             # next sweep sets the sink
                 return TakeOutcome("level_probe", level=level, notes=notes)
