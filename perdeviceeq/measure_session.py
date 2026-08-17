@@ -129,38 +129,8 @@ METADATA_NAME = "per-device-eq"          # same object the app + WP hook use
 PLAY_NODE = pw_backend.PLAY_NODE
 CAPTURE_NODE = pw_backend.CAPTURE_NODE
 SINK_API_PREFIXES = ("alsa", "bluez")    # "real device" whitelist
-AUTO_MAX_ADJUST = 12                     # was 8, and eight is not enough
-                                         # once the ramp creeps: four to
-                                         # climb, three to creep and
-                                         # three to close is ten. A sweep
-                                         # is 8.5 s, so the ceiling only
-                                         # costs anything on a rig that
-                                         # needs it
-AUTO_START_VOLUME = 0.15                 # cubic; "start quiet"
-AUTO_RAMP = 2.0                          # geometric step up while hunting
-AUTO_EXPLORE_CEIL = 0.8                  # don't slam full volume while probing
-AUTO_CLIP_BACKOFF = 0.85                 # stay this far below a clipping level
 FULLSCALE = 0.999                        # |sample| >= this = clipped
 HOT_DBFS = -1.0                          # peak above this = low headroom
-AUTO_PEAK_FLOOR = -12.0                  # quieter wastes capture robustness
-AUTO_PEAK_CEIL = HOT_DBFS - 1.0          # aim strictly below the hot flag
-AUTO_SNR_MARGIN_DB = 1.0                 # aim past clean, not onto its edge
-AUTO_RAMP_NEAR = 1.12                    # the step once the margin says
-                                         # the crossing is close: about
-                                         # 3 dB, matching the settle
-                                         # tolerance below, since there
-                                         # is no sense stepping finer
-                                         # than the answer is resolved
-AUTO_NEAR_DB = 6.0                       # "close" = the figure is within
-                                         # this of clearing its own floor
-AUTO_NEAR_STEPS = 3                      # creep at most this many times:
-                                         # if the crossing is not found
-                                         # there it is not nearby, and
-                                         # reaching the top matters more
-AUTO_SETTLE_RATIO = 1.12                 # stop closing on the lowest ok
-                                         # within this much volume: about
-                                         # a dB, finer than the crossing's
-                                         # own 2.6 dB of wobble
 AUTO_TRUST_FLOOR_PK = -20.0              # trust the room's floor read only
 #                                          on a probe at least this hot
 BT_WARM_S = 2.0                          # silence played to a bluez sink
@@ -521,188 +491,6 @@ def _clamp_vol(v):
     return max(0.02, min(1.0, v))
 
 
-class AutoLevel:
-    """Drive the sink volume until the capture is both hot enough
-    (peak in AUTO_PEAK_FLOOR..AUTO_PEAK_CEIL) and CLEAN enough (SNR at
-    least SNR_WARN_DB + AUTO_SNR_MARGIN_DB, so takes don't straddle
-    the clean threshold), with no assumption about the device's
-    volume->gain law (a BT sink's is nothing like the software cube
-    law). It brackets and then bisects: ramp up cautiously (never
-    straight to full volume, which would blast a coupler) until a
-    probe is too loud, then halve the interval in log-volume between
-    the loudest-too-quiet and quietest-too-loud probe. Bisection needs
-    only that louder means louder. The peak/SNR trade is law-free too:
-    both rise dB-for-dB with the volume while the acoustic noise floor
-    stays put, so one hot-enough probe predicts the best SNR the rig
-    can reach below the safe ceiling (snr_ceiling) -- when that is
-    under SNR_WARN_DB, no volume produces a clean take and the caller
-    should refuse honestly instead of hunting."""
-
-    def __init__(self):
-        self.lo = None            # (v, peak): highest too-quiet probe
-        self.hi = None            # (v, peak): lowest too-loud / clipped
-        self.ok = None            # (v, peak): LOWEST probe judged ok
-        self.near = False         # the margin says the crossing is close
-        self.crept = 0            # fine steps spent looking for it
-        self.ceil = AUTO_EXPLORE_CEIL   # soft: lifts if stuck too quiet
-
-    @staticmethod
-    def verdict(peak, snr, clipped=False, thd_bound=None):
-        """'loud' past the safe peak ceiling, 'ok' when hot enough AND
-        clean enough AND the rig can see under the device, else
-        'quiet'.
-
-        THE THIRD QUESTION is thd_bound, and it is what a field ladder
-        settled. Peak and SNR say the capture is usable; they cannot
-        say whether the distortion figure is a MEASUREMENT. On his
-        rig the midband stayed a bound until a recorded peak near
-        -16 dBFS, well inside the old window -- so the hunt would stop
-        early and every THD number afterwards would be a ceiling.
-        Climbing until it becomes a measurement is also, by
-        construction, the level of least measured distortion: below
-        the crossing the reading is the rig's own floor, above it the
-        device is climbing.
-
-        Within the last dB below the ceiling both the SNR margin and
-        this are waived -- there is nowhere left to climb, and a take
-        that says its figure is a bound beats no take at all.
-
-        NOT A PRECISE OPTIMUM, and the code should not pretend
-        otherwise: three ladders on one earphone put the crossing at
-        75, 75 and 79 per cent, a wobble of 2.6 dB, because the test
-        is a yes/no asked where the curve is flat. It is chosen once
-        per rig and remembered; every take records the level it used.
-        """
-        if clipped or peak > AUTO_PEAK_CEIL:
-            return "loud"
-        if snr is None:
-            return "quiet"
-        last_dB = peak >= AUTO_PEAK_CEIL - 1.0
-        if not (snr >= mc.SNR_WARN_DB + AUTO_SNR_MARGIN_DB
-                or (snr >= mc.SNR_WARN_DB and last_dB)):
-            return "quiet"
-
-        # ORDER MATTERS, and the first cut of this got it backwards.
-        # The third question was asked INSIDE the old peak window, and
-        # on his rig the crossing happens at a peak of -13.6 dBFS --
-        # below AUTO_PEAK_FLOOR. So the level that answers it was
-        # rejected as "not hot enough" before the question was
-        # reached, the hunt sailed past to full volume, and the change
-        # did nothing at all. He spotted it from a screenshot.
-        #
-        # So the crossing decides where it can, and the peak floor is
-        # what remains when nothing can be said about the figure. That
-        # is the right precedence anyway: the floor exists to keep a
-        # capture robust, and an SNR near fifty with a distortion
-        # figure that is a MEASUREMENT is not a fragile capture.
-        if thd_bound is False:
-            return "ok"
-        if thd_bound is True:
-            return "ok" if last_dB else "quiet"
-        return "ok" if peak >= AUTO_PEAK_FLOOR else "quiet"
-
-    @staticmethod
-    def snr_ceiling(peak, snr):
-        """Best SNR reachable at the safe peak ceiling, predicted from
-        one probe: peak and SNR rise together dB-for-dB with volume.
-        None when SNR is unknown or the probe is too quiet to trust
-        that its floor read is the room's (and not electronics under
-        a nearly-silent capture)."""
-        if snr is None or peak < AUTO_TRUST_FLOOR_PK:
-            return None
-        return snr + (AUTO_PEAK_CEIL - peak)
-
-    def observe(self, v, peak, snr, clipped, thd_bound=None,
-                margin_db=None):
-        # THE RAMP STOPS DOUBLING NEAR THE ANSWER. Six decibels a step
-        # guarantees an overshoot at the crossing, and then a coin flip
-        # in the bound test decides whether the hunt closes DOWN from
-        # eighty or UP from a hundred: two consecutive ladders on one
-        # earphone chose 74 and 89 that way. Approached gently, a flip
-        # costs one small step instead of forking the search.
-        # ONLY WHEN APPROACHING FROM BELOW. A margin already past the
-        # bar means the crossing is behind us and the closing phase
-        # owns the search; creeping there only burns adjustments, which
-        # is how the first cut of this failed two courts outright.
-        # ONLY WHEN APPROACHING FROM BELOW, AND ONLY ONCE THE CAPTURE
-        # IS WORTH BELIEVING, AND ONLY A FEW TIMES. A margin past the
-        # bar means the crossing is behind us and the closing phase
-        # owns the search; a margin under a capture too noisy to trust
-        # means nothing; and a margin that hovers at the bar without
-        # ever clearing it -- a device quieter than the rig at every
-        # level -- would be crept after forever. All three cost REACH:
-        # the fine step is about three decibels against a ramp allowed
-        # eight adjustments, so an unbounded creep never arrives at the
-        # top, where such a rig has to end up to say so.
-        self.near = (margin_db is not None and snr is not None
-                     and not clipped and snr >= mc.SNR_WARN_DB
-                     and self.crept < AUTO_NEAR_STEPS
-                     and mb.THD_FLOOR_GAP_DB - AUTO_NEAR_DB < margin_db
-                     < mb.THD_FLOOR_GAP_DB)
-        if self.near:
-            self.crept += 1
-        verdict = self.verdict(peak, snr, clipped, thd_bound)
-        if verdict == "loud":
-            p = 0.0 if clipped else peak
-            if self.hi is None or v < self.hi[0]:
-                self.hi = (v, p)
-        elif verdict == "quiet":
-            if self.lo is None or v > self.lo[0]:
-                self.lo = (v, peak)
-            if v >= self.ceil - 1e-3:     # at the ceiling, still quiet
-                self.ceil = 1.0           # -> the device needs more
-        else:                             # ok
-            if self.ok is None or v < self.ok[0]:
-                self.ok = (v, peak)
-        return verdict
-
-    def settled(self):
-        """True once the LOWEST ok level is known well enough to stop.
-
-        The first ok is not the answer. The ramp doubles, so it can
-        step straight over the crossing -- 4, 8, 16, 32, 64, 100 walks
-        past a crossing at 79 and lands on full volume, which is
-        exactly the old behaviour wearing new clothes. He said so from
-        a screenshot before any test did.
-
-        So an ok level is a CEILING to close on, not a destination:
-        keep halving between the highest quiet and the lowest ok until
-        the gap is smaller than a step worth taking. AUTO_SETTLE_RATIO
-        is that gap in volume, about a decibel of level -- finer than
-        that is below the wobble the crossing itself has.
-        """
-        if self.ok is None:
-            return False
-        if self.lo is None:
-            return True                   # ok at the first probe
-        return self.ok[0] / max(self.lo[0], 1e-6) <= AUTO_SETTLE_RATIO
-
-    def phase(self):
-        """What the hunt is doing, in one word, for the operator.
-
-        A search that shows only numbers leaves the reader guessing
-        whether the widening steps are a ramp or a fault -- and he
-        asked exactly that, twice, about exactly this loop.
-        """
-        if self.ok is not None:
-            return "closing"
-        if self.hi is not None:
-            return "bracketed"
-        return "ramp"
-
-    def next_volume(self, v, peak):
-        if self.ok and self.lo:                  # closing on the lowest ok
-            nv = math.sqrt(self.lo[0] * self.ok[0])
-        elif self.lo and self.hi:                # bracketed: bisect
-            nv = math.sqrt(self.lo[0] * self.hi[0])
-        elif self.hi:                            # too loud, no floor yet
-            nv = self.hi[0] * AUTO_CLIP_BACKOFF
-        else:                                    # hunt up for the loud end
-            step = AUTO_RAMP_NEAR if self.near else AUTO_RAMP
-            nv = min(v * step, self.ceil)
-        return _clamp_vol(nv)
-
-
 def peak_dbfs(x):
     if not len(x):
         return float("-inf")
@@ -994,9 +782,8 @@ class SessionConfig:
     mic: str = None
     save_dir: str = None    # None -> throwaway tempdir, wiped on exit
     mute_others: bool = False
-    auto_level: bool = False
     raw_capture_dump: bool = False  # also forced on by DEBUG_RAW_ENV
-    start_volume: float = None      # applied on enter when not auto_level
+    start_volume: float = None      # the level sweeps play at
     # One SINK CHANNEL INDEX per profile channel, or None for a channel
     # that is paired with no output. The caller owns the pairing -- a
     # profile channel names a side of a transducer and a sink channel
@@ -1152,12 +939,9 @@ class TakeOutcome:
     kind == "take": `take` is the accepted TakeRecord and `spread_db`
     the per-frequency std (ddof=1) across the channel's accepted takes
     (None until there are two) -- the live fan and its width.
-    kind == "level_probe": auto-level moved the sink volume and threw
-    the capture away; `level` says from/to/step. Just take() again.
-    kind == "level_stuck": auto-level cannot reach the target window;
-    the capture is held pending. accept_level() keeps it as a take at
-    the current level (the old confirm() path); the next take() drops
-    it instead.
+    A take() has ONE outcome now. Searching for a level is a different
+    job with a different owner -- level_run.hunt -- and this class used
+    to carry two more kinds because the two jobs shared a method.
     `notes` are printable warnings in the CLI's exact wording.
     """
     kind: str
@@ -1175,8 +959,8 @@ class MeasureSession:
     -- into a throwaway tempdir when cfg.save_dir is unset, wiped again
     on __exit__: the canvas in the profile is the artifact, not the
     wavs -- and engages foreign-stream muting and the profile bypass
-    (restored on ANY exit) and, with auto_level, sets the quiet start
-    volume. take(channel) runs one physical sweep and returns a
+    (restored on ANY exit). take(channel) runs one physical sweep and
+    returns a
     TakeOutcome; discard() drops a bad take from the accumulation (the
     wav stays on disk for the session's lifetime, ids are never
     reused); finalize(channel) assembles the channel's result via
@@ -1189,8 +973,6 @@ class MeasureSession:
         if cfg.channels < 1:
             raise RefusalError("channels must be >= 1")
         tools = ["pw-dump", "pw-metadata", "pw-play", "pw-record"]
-        if cfg.auto_level:
-            tools.append("wpctl")
         if cfg.mute_others:
             tools.append("pw-cli")
         require_tools(tools)
@@ -1269,19 +1051,9 @@ class MeasureSession:
         self._v_cur = (cfg.start_volume
                        if cfg.start_volume is not None
                        else self.volume_start)
-        self._leveled = not cfg.auto_level
-        self._auto_ctl = AutoLevel()
-        # where the current sweep level came from: "remembered" (a
-        # stored per-source level), "pending" (auto-level will find it
-        # on the next sweep), "auto" (auto-level locked it), "manual"
-        # (the user set or accepted it) -- the wizard shows this, so
-        # the number in the spin is never a mystery
-        self._auto_state = {"enabled": bool(cfg.auto_level),
-                            "adjustments": 0, "initial": None,
-                            "final": None, "in_window": None}
+        self._level_found = None            # a search's own words, if any
         self._take_seq = 0                  # take%02d numbers, never reused
         self._takes = {}                    # channel -> [(record, samples)]
-        self._pending = None                # capture awaiting accept_level
 
     def _resolve(self, dump):
         """Consult the live graph: identities, layout, volume,
@@ -1351,13 +1123,7 @@ class MeasureSession:
                                      self.cfg.pre_silence,
                                      self.cfg.post_silence)
         with ExitStack() as stack:
-            if self.cfg.auto_level:
-                v = min(self.volume_start
-                        if self.volume_start is not None else 1.0,
-                        AUTO_START_VOLUME)
-                self._auto_state["initial"] = round(v, 4)
-                self._v_cur = v
-            elif self.cfg.start_volume is not None:
+            if self.cfg.start_volume is not None:
                 self._v_cur = self.cfg.start_volume
             self._stack = stack.pop_all()
         return self
@@ -1382,11 +1148,21 @@ class MeasureSession:
         when nothing is playing -- take() clears the flag as it starts."""
         self._cancel.set()
 
-    def set_level(self, cubic):
-        """Manual override of the measurement level (the wizard's editable
-        %); freezes auto-level so the chosen level sticks for the sweep."""
+    def set_level(self, cubic, found=None):
+        """The level this session's sweeps play at.
+
+        Nothing to freeze: a session records takes and does not search.
+        Whoever wants a level searched runs level_run.hunt and passes
+        the number it returns.
+
+        `found` is that search's own description of itself, carried
+        verbatim into the passport. The session does not read it --
+        interpreting it would put the search back inside here through
+        the schema.
+        """
         self._v_cur = max(0.0, min(1.0, float(cubic)))
-        self._leveled = True
+        if found is not None:
+            self._level_found = dict(found)
 
 
 
@@ -1603,152 +1379,11 @@ class MeasureSession:
         elif pk >= HOT_DBFS:
             notes.append("WARNING: capture peak %.1f dBFS leaves little "
                          "headroom (risk of inter-sample clipping); "
-                         "consider a lower level or --auto-level (targets "
-                         "SNR >= %g dB at a peak below %g dBFS)."
-                         % (pk, mc.SNR_WARN_DB, AUTO_PEAK_CEIL))
+                         "consider a lower level, or let the level "
+                         "search choose one." % pk)
 
-        if not self._leveled:
-            auto = self._auto_state
-            snr_q, noise_q = self._quick_snr(chan)
-            # THE PROBE IS ANALYSED IN FULL. A peak and a quick SNR
-            # cannot say whether the distortion figure is a
-            # measurement, and that is now one of the three things the
-            # verdict asks. The cost is an analysis per probe sweep,
-            # against a sweep that already takes five and a half
-            # seconds to play.
-            bound, thd_pct, margin = None, None, None
-            if not clipped:
-                probe = mc.analyze_take(chan, self.sweep, self.freqs)
-                got = mb.thd_at(self.freqs, probe.thd_db,
-                                probe.thd_noise_db)
-                if got:
-                    thd_pct, bound = got
-                margin = mb.thd_margin_db(self.freqs, probe.thd_db,
-                                          probe.thd_noise_db)
-                # AND THE ANALYSED SNR, not the quick one. The quick
-                # estimate finds the sweep's onset as the first
-                # crossing of ten times the pre-roll RMS, which cannot
-                # work on a card whose pre-roll carries fixed spikes:
-                # his CM106 sits at -34 dBFS there, so the threshold
-                # lands at -14 and every probe quieter than that
-                # reports no onset at all. The hunt then steered with
-                # no lower guard, ramped to the ceiling, and declared
-                # the rig hopeless on a take the analysis scored at
-                # 50 dB. Two estimators, two verdicts about one
-                # recording -- the take's own is the one to trust.
-                if probe.snr_db is not None:
-                    snr_q = float(probe.snr_db)
-                    if probe.noise_dbfs is not None:
-                        noise_q = float(probe.noise_dbfs)
-            self._auto_ctl.observe(self._v_cur, pk, snr_q, bool(clipped),
-                                   bound, margin)
-            v_new = self._auto_ctl.next_volume(self._v_cur, pk)
-            stuck = abs(v_new - self._v_cur) < 1e-3
-            ceiling = (None if clipped
-                       else AutoLevel.snr_ceiling(pk, snr_q))
-            hopeless = (ceiling is not None
-                        and ceiling < mc.SNR_WARN_DB)
-            # THE LOWEST ok, not the first: stopping at the first let
-            # the doubling ramp step straight over the crossing. But
-            # the stop must not require THIS probe to be the ok one --
-            # as the bracket narrows the probes land on the QUIET side,
-            # and demanding both left the hunt circling 69, 64, 67, 68,
-            # 69 until it ran out of steps and stopped short on a
-            # bound. When the bracket has closed, go to the lowest ok
-            # and take the sweep there.
-            said = (None if clipped
-                    else self._auto_ctl.verdict(pk, snr_q, False, bound))
-            ok = False
-            if said == "ok" and self._auto_ctl.settled():
-                ok = True                      # this capture IS the one
-            elif self._auto_ctl.settled():
-                best = self._auto_ctl.ok[0]
-                if abs(best - self._v_cur) < 1e-3:
-                    ok = True
-                else:
-                    v_new, stuck = best, False
-                    self._leveled = True       # no more hunting
-                    auto["in_window"] = True
-            if ok:
-                self._leveled, auto["in_window"] = True, True
-            elif hopeless or auto["adjustments"] >= AUTO_MAX_ADJUST \
-                    or stuck:
-                auto["in_window"] = False
-                if hopeless:
-                    why = ("the noise floor (%.0f dBFS) tops out near "
-                           "SNR %.0f dB at any safe peak -- kill the "
-                           "noise source or move the rig"
-                           % (noise_q if noise_q is not None
-                              else float("nan"), ceiling))
-                elif stuck:
-                    why = ("the level cannot be moved further (at %.0f%%)"
-                           % (100 * self._v_cur))
-                else:
-                    why = "%d adjustments" % AUTO_MAX_ADJUST
-                snr_txt = ("%.1f dB" % snr_q if snr_q is not None
-                           else "n/a")
-                notes.append("WARNING: auto-level gave up: %s (peak %.1f "
-                             "dBFS, SNR %s; target SNR >= %g dB at a "
-                             "peak below %g dBFS)"
-                             % (why, pk, snr_txt, mc.SNR_WARN_DB,
-                                AUTO_PEAK_CEIL))
-                self._pending = (channel, a, data, chan, pk, clipped,
-                                 bad, gains)
-                return TakeOutcome(
-                    "level_stuck", notes=notes,
-                    level={"peak_dbfs": pk, "snr_db": snr_q,
-                           "noise_dbfs": noise_q,
-                           "achievable_snr": ceiling,
-                           "volume": self._v_cur, "why": why})
-            else:
-                auto["adjustments"] += 1
-                level = {"peak_dbfs": pk, "snr_db": snr_q,
-                         "volume_from": self._v_cur,
-                         "volume_to": v_new, "step": auto["adjustments"],
-                         "max_steps": AUTO_MAX_ADJUST,
-                         # what the hunt is actually steering by now,
-                         # so the status line can say it instead of
-                         # leaving the operator to infer it
-                         "thd_pct": thd_pct, "thd_bound": bound,
-                         "thd_margin_db": margin,
-                         "phase": self._auto_ctl.phase()}
-                self._v_cur = v_new             # next sweep sets the sink
-                return TakeOutcome("level_probe", level=level, notes=notes)
         return self._accept(channel, data, chan, pk, clipped, bad, notes,
                             gains, capture=a)
-
-    def accept_level(self):
-        """Keep the pending level_stuck capture as a take at the current
-        level -- the caller's 'continue anyway' decision."""
-        if self._pending is None:
-            raise MeasureError("no leveling decision is pending")
-        (channel, capture, data, chan, pk, clipped, repaired,
-         gains) = self._pending
-        self._pending = None
-        self._leveled = True
-        return self._accept(channel, data, chan, pk, clipped, repaired,
-                            [], gains, capture=capture)
-
-    def relevel(self):
-        """Re-arm auto-level: the next take() ramps from a safe-low volume
-        and finds the level again -- the wizard's 're-measure the level',
-        for when the remembered level no longer fits (mic moved, fit on
-        the rig changed). Existing takes are kept; only future sweeps
-        re-level. Only valid inside the session (after __enter__)."""
-        self._leveled = False
-        self._pending = None
-        self._auto_ctl = AutoLevel()
-        self._auto_state = {"enabled": True, "adjustments": 0,
-                            "initial": None, "final": None,
-                            "in_window": None}
-        # A MULTIPLICATIVE RAMP CANNOT START AT ZERO. The min was
-        # meant as "do not jump UP if we are already quieter", and a
-        # new rig shows zero on the fader -- so the hunt began at zero,
-        # doubled it to zero, saw no movement and stopped after one
-        # sweep. Zero is not quieter, it is nothing.
-        v = min(self._v_cur or AUTO_START_VOLUME, AUTO_START_VOLUME)
-        self._auto_state["initial"] = round(v, 4)
-        self._v_cur = v
 
     def _accept(self, channel, data, chan, pk, clipped, repaired, notes,
                 gains=(None, None), capture=None):
@@ -2074,12 +1709,12 @@ class MeasureSession:
                 v_report = cv ** (1.0 / 3.0)
         if v_report is None:
             v_report = self._v_cur if self._v_cur is not None else v_final
-        auto = dict(self._auto_state)
-        # gate on the live auto state, not cfg: relevel() re-arms the
-        # leveling on a session constructed with a remembered volume,
-        # and its final level is just as real
-        auto["final"] = (round(v_report, 4) if auto.get("enabled")
-                         else None)
+        auto = dict(getattr(self, "_level_found", None)
+                    or {"enabled": False, "adjustments": 0,
+                        "initial": None, "final": None,
+                        "in_window": None})
+        if auto.get("enabled") and auto.get("final") is None:
+            auto["final"] = round(v_report, 4)
 
         def _r6(v):
             return None if v is None else round(v, 6)

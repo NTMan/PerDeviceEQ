@@ -37,6 +37,7 @@ from . import chantabs                               # noqa: E402
 from . import inmeter                                # noqa: E402
 from . import knee                                   # noqa: E402
 from . import knee_run                               # noqa: E402
+from . import level_run                              # noqa: E402
 from . import eq                                     # noqa: E402
 from . import debug
 from .picker import NodePicker                       # noqa: E402
@@ -1345,16 +1346,6 @@ class MeasureWindow(Adw.Window):
         under the fader names the level's source, so a remembered 33
         and a pending hunt can never wear the same face again."""
         if self.session is not None:
-            # A LEVEL MID-HUNT IS NOT ESTABLISHED, which is what this
-            # promises to show. relevel() drops the session to the
-            # hunt's quiet start, so any refresh between the button and
-            # the answer dragged the fader to fifteen -- and _refresh_all
-            # calls this, so plugging one caller was never going to be
-            # enough. While the search is running the fader keeps the
-            # last number anyone actually established.
-            if getattr(self.session, "_leveled", True) is False:
-                debug.mic_trace("refresh skipped: hunt in flight")
-                return
             v = getattr(self.session, "_v_cur", None)
             debug.mic_trace("refresh session_v=%r" % v)
             if v is not None:
@@ -1374,28 +1365,19 @@ class MeasureWindow(Adw.Window):
                                      else 0.0)
 
     def _on_relevel(self, _btn):
-        """Measure the level here and now: forget the remembered
-        value, re-arm the leveling and run probe sweeps immediately on
-        the selected channel. The spin STANDS STILL through the hunt
-        and lands on the found level at the end -- the search narrates
-        itself in the status line, and the control shows a decision
-        rather than a process. The locking sweep is discarded (this
-        button measures the LEVEL, not a take)."""
+        """Measure the level here and now: forget the remembered value
+        and run the level search on the selected channel.
+
+        The spin STANDS STILL through it and lands on the answer at the
+        end -- the search narrates itself in the status line, and the
+        control shows a decision rather than a process. Nothing has to
+        be discarded afterwards: the search plays its own sweeps and
+        produces no takes to pretend away."""
         if self._busy:
             return
         src = self._source_name()
         if src:
             self.memory.forget_volume(self.sink_node, src)
-        if self.session is not None:
-            try:
-                self.session.relevel()
-            except Exception:
-                pass
-        # NOT _refresh_volume() here. relevel() has just dropped the
-        # session's level to the hunt's quiet START, and showing that
-        # drags the fader to fifteen before a single sweep has run --
-        # which is the search's first step, not anybody's setting. The
-        # fader learns the answer when there is one, in _measure_done.
         self._refresh_all()
         self._start_measure(self._selected_ch, level_only=True)
 
@@ -3999,89 +3981,61 @@ class MeasureWindow(Adw.Window):
                              daemon=True)
         t.start()
 
+    def _hunt_level(self, ch):
+        """Find the level, on the worker thread, and return it.
+
+        The search is a DIFFERENT JOB with a different owner. It plays
+        its own sweeps, claims the hardware for each, and hands back a
+        number; nothing it does is a take, so nothing has to be
+        discarded afterwards to pretend it was not one.
+        """
+        def said(p):
+            thd = ("n/a" if p.thd_pct is None else
+                   "%s%s%%%s" % ("<=" if p.thd_bound else "",
+                                 measure_build.pct_word(p.thd_pct),
+                                 "" if p.margin_db is None else
+                                 " (%+.0f dB over its floor)" % p.margin_db))
+            self._post_status(
+                "%s: leveling %d%%  (%s, peak %.1f dBFS, SNR %s, "
+                "THD@1k %s, step %d)"
+                % (self.ch_keys[ch], round(100 * p.volume), p.phase,
+                   p.peak_dbfs,
+                   "%.1f" % p.snr_db if p.snr_db is not None else "n/a",
+                   thd, p.step))
+
+        vol, probes = level_run.hunt(
+            self.session.sink, self.session.source,
+            self.session.cfg.channels,
+            sink_name=self.session.sink_ident["name"],
+            analyze=self.mic_of.get(ch, 0),
+            sweep=self.session.sweep, freqs=self.session.freqs,
+            pre_silence=self.session.cfg.pre_silence,
+            post_silence=self.session.cfg.post_silence,
+            play_map=self.session._channel_map(ch),
+            on_probe=said, should_stop=lambda: self._knee_stop)
+        return vol, level_run.summary(vol, probes)
+
     def _measure_worker(self, ch):
-        """Runs one accepted take on a worker thread: loop through
-        auto-level probes (each already moved the volume), and if the
-        level gets stuck accept it so a take is always produced (its
-        quality is flagged for the user). Result marshalled to the UI."""
-        result = {"error": None, "outcome": None}
+        """One take on a worker thread, or one level search.
+
+        THE FADER DOES NOT FOLLOW A SEARCH: an intermediate level is
+        not a setting anyone chose, so the search narrates itself in
+        the status line and the control learns the answer at the end.
+        """
+        result = {"error": None, "outcome": None, "level": None,
+                  "found": None}
         try:
             self._assert_entry_route()
             self._assert_capture_gain()
-            # ONE VARIABLE, ONE THING. _take_level is the fader's
-            # number; whether this run hunts is the MODE, and the mode
-            # already has a name. A session is built once, at window
-            # open, so neither can be baked into it: both are told at
-            # take time.
             if self._level_only:
-                self.session.relevel()
+                result["level"], result["found"] = self._hunt_level(ch)
+                self._post_status(
+                    "%s: level %d%%"
+                    % (self.ch_keys[ch], round(100 * result["level"])))
             else:
                 self.session.set_level(self._take_level)
-            guard = 0
-            while True:
-                guard += 1
-                out = self.session.take(
+                result["outcome"] = self.session.take(
                     ch, analyze=self.mic_of.get(ch, 0))
-                if out.kind == "level_probe" and guard < 12:
-                    lv = out.level or {}
-                    snr = lv.get("snr_db")
-                    # THD IS WHAT THE HUNT STEERS BY NOW, so it is on
-                    # the line. Without it the operator watches a
-                    # number climb for reasons the window keeps to
-                    # itself -- and that is how a change that did
-                    # nothing went unnoticed until a screenshot.
-                    pct = lv.get("thd_pct")
-                    mar = lv.get("thd_margin_db")
-                    thd = ("n/a" if pct is None else
-                           "%s%s%%%s"
-                           % ("<=" if lv.get("thd_bound") else "",
-                              measure_build.pct_word(pct),
-                              "" if mar is None else
-                              " (%+.0f dB over its floor)" % mar))
-                    self._post_status(
-                        "%s: leveling %d%% → %d%%  "
-                        "(%s, peak %.1f dBFS, SNR %s, THD@1k %s, "
-                        "step %d/%d)"
-                        % (self.ch_keys[ch],
-                           round(100 * lv.get("volume_from", 0)),
-                           round(100 * lv.get("volume_to", 0)),
-                           lv.get("phase", "?"),
-                           lv.get("peak_dbfs", float("nan")),
-                           "%.1f" % snr if snr is not None else "n/a",
-                           thd,
-                           lv.get("step", 0), lv.get("max_steps", 0)))
-                    # THE FADER DOES NOT FOLLOW THE HUNT. Every probe
-                    # used to drag it, so a search that ramps and then
-                    # comes back down looked like the control being
-                    # thrown about -- and an intermediate level is not
-                    # a setting anyone chose. The sensitivity hunt has
-                    # always behaved this way: its fader stands still
-                    # through the ladder and lands on the answer. The
-                    # search narrates itself in the status line, which
-                    # is where a process belongs; the control shows a
-                    # decision.
-                    continue
-                if out.kind == "level_stuck":
-                    lv = out.level or {}
-                    why = lv.get("why") or "level stuck"
-                    self._post_status(
-                        "%s: auto-level gave up -- %s; keeping %d%% "
-                        "(peak %.1f dBFS)"
-                        % (self.ch_keys[ch], why,
-                           round(100 * lv.get("volume", 0)),
-                           lv.get("peak_dbfs", float("nan"))))
-                    out = self.session.accept_level()
-                if getattr(self, "_level_only", False) \
-                        and out.kind == "take" and out.take is not None:
-                    # this button measures the LEVEL; the locking
-                    # sweep is evidence, not a take
-                    self.session.discard(ch, out.take.id)
-                    self._post_status(
-                        "%s: level %d%% (probe sweeps only)"
-                        % (self.ch_keys[ch],
-                           round(100 * (self.session._v_cur or 0))))
-                result["outcome"] = out
-                break
         except Exception as e:
             result["error"] = e
         GLib.idle_add(self._measure_done, ch, result)
@@ -4104,9 +4058,16 @@ class MeasureWindow(Adw.Window):
             return False
         out = result.get("outcome")
         if (out is not None and getattr(out, "kind", "") == "take"
-                and out.take is not None
-                and not getattr(self, "_level_only", False)):
+                and out.take is not None):
             self._commit_live_take(ch, out.take)
+        # A SEARCH RETURNS A NUMBER, and this is where it lands: on the
+        # session, on the fader and in the memory, in that order. It
+        # was never on the hardware to begin with -- the moratorium
+        # takes the measurement volume as a parameter, so whoever
+        # sweeps next passes this number to their own claim.
+        found = result.get("level")
+        if found is not None:
+            self.session.set_level(found, found=result.get("found"))
         v = getattr(self.session, "_v_cur", self.session.volume_start)
         src = self._source_name()
         if v is not None and src:

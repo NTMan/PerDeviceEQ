@@ -165,59 +165,7 @@ def test_two_channels_accumulate_side_by_side(shim_state, tmp_path):
 
 # --- auto-level: probes move the volume and are not accumulated ------------
 
-def test_auto_level_probes_not_accumulated(shim_state, tmp_path):
-    ses = ms.MeasureSession(make_cfg(tmp_path, samples=65536,
-                                     auto_level=True))
-    kinds = []
-    with ses:
-        for _ in range(ms.AUTO_MAX_ADJUST + 2):
-            out = ses.take(0)
-            kinds.append(out.kind)
-            if out.kind == "take":
-                break
-    assert kinds[-1] == "take"
-    assert "level_probe" in kinds                     # started too quiet
-    assert [r.id for r in ses.takes_of(0)] == [out.take.id]
-    assert ms.AUTO_PEAK_FLOOR <= out.take.peak_dbfs \
-        <= ms.AUTO_PEAK_CEIL
-    r = ses.finalize(0, str(tmp_path / "result.json"))
-    auto = r["levels"]["auto_level"]
-    assert auto["enabled"] is True
-    assert auto["in_window"] is True
-    assert auto["initial"] == pytest.approx(ms.AUTO_START_VOLUME, abs=1e-3)
-    assert 1 <= auto["adjustments"] <= ms.AUTO_MAX_ADJUST
-    vol = json.loads((shim_state / "volume.json").read_text())["cubic"]
-    assert vol == pytest.approx(0.30, abs=1e-3)       # restored to listening
-    assert auto["final"] > 0.30                       # the sweep ran hotter
 
-
-def test_level_stuck_is_a_caller_decision(shim_state, tmp_path,
-                                           monkeypatch):
-    # no adjustments allowed: the very first too-quiet probe is "stuck"
-    monkeypatch.setattr(ms, "AUTO_MAX_ADJUST", 0)
-    ses = ms.MeasureSession(make_cfg(tmp_path, samples=65536,
-                                     auto_level=True))
-    with ses:
-        with pytest.raises(ms.RefusalError):
-            ses.take(5)                               # out of range: no
-        out = ses.take(0)                             # sound was played
-        assert out.kind == "level_stuck"
-        assert out.level["why"] == "0 adjustments"
-        assert any("gave up" in n for n in out.notes)
-        assert ses.takes_of(0) == []                  # nothing accumulated
-        kept = ses.accept_level()                     # "continue anyway"
-        assert kept.kind == "take"
-        assert kept.take.peak_dbfs == out.level["peak_dbfs"]
-        assert [r.id for r in ses.takes_of(0)] == [kept.take.id]
-        with pytest.raises(ms.MeasureError):
-            ses.accept_level()                        # nothing pending now
-    r = ses.finalize(0, str(tmp_path / "result.json"))
-    auto = r["levels"]["auto_level"]
-    assert auto["in_window"] is False
-    assert auto["final"] == pytest.approx(ms.AUTO_START_VOLUME, abs=1e-3)
-
-
-# --- refusals happen before any sound ---------------------------------------
 
 def test_foreign_stream_refuses_in_the_constructor(shim_state, tmp_path,
                                                    monkeypatch):
@@ -308,28 +256,16 @@ def test_finalize_cal_override_per_channel(shim_state, tmp_path):
 
 # --- start_volume (apply a remembered level) and relevel() -----------------
 
-def test_start_volume_applied_when_not_autolevel(shim_state, tmp_path):
-    ses = ms.MeasureSession(make_cfg(tmp_path, auto_level=False,
-                                     start_volume=0.5))
+def test_start_volume_is_what_sweeps_play_at(shim_state, tmp_path):
+    ses = ms.MeasureSession(make_cfg(tmp_path, start_volume=0.5))
     with ses:
         assert ses._v_cur == pytest.approx(0.5)
 
 
-def test_relevel_rearms_autolevel(shim_state, tmp_path):
-    ses = ms.MeasureSession(make_cfg(tmp_path, auto_level=True))
-    with ses:
-        ses._leveled = True          # pretend a level was already found
-        ses._v_cur = 0.9
-        ses.relevel()
-        assert ses._leveled is False
-        assert ses._v_cur <= ms.AUTO_START_VOLUME
-        assert ses._auto_state["adjustments"] == 0
-        assert ses._auto_state["enabled"] is True
-
 
 def test_take_analyze_column_decoupled(shim_state, tmp_path):
     # analyze capture column 1 but store the take under profile channel 0
-    ses = ms.MeasureSession(make_cfg(tmp_path, channels=2, auto_level=False))
+    ses = ms.MeasureSession(make_cfg(tmp_path, channels=2))
     with ses:
         out = ses.take(0, analyze=1)
         assert out.kind == "take"
@@ -433,73 +369,8 @@ def test_level_move_between_takes_is_compensated(shim_state, tmp_path):
 
 # --- SNR-targeted leveling: verdicts, ceiling prediction, refusal ----------
 
-def test_autolevel_verdict_and_snr_ceiling():
-    v = ms.AutoLevel.verdict
-    ok = ms.mc.SNR_WARN_DB + ms.AUTO_SNR_MARGIN_DB
-    assert v(-6.0, ok) == "ok"
-    assert v(-6.0, ms.mc.SNR_WARN_DB - 5.0) == "quiet"   # clean SNR miss
-    assert v(-6.0, None) == "quiet"                       # unknown SNR
-    assert v(-20.0, ok + 20.0) == "quiet"                 # below the floor
-    assert v(-1.5, ok, clipped=False) == "loud"           # past the ceil
-    assert v(-6.0, ok, clipped=True) == "loud"
-    # within the last dB below the ceiling plain-clean is accepted
-    assert v(ms.AUTO_PEAK_CEIL - 0.5, ms.mc.SNR_WARN_DB + 0.2) == "ok"
-    # law-free prediction: peak and SNR rise together
-    c = ms.AutoLevel.snr_ceiling
-    assert c(-10.0, 30.0) == pytest.approx(
-        30.0 + (ms.AUTO_PEAK_CEIL + 10.0))
-    assert c(-40.0, 10.0) is None          # too quiet to trust the floor
-    assert c(-10.0, None) is None
 
 
-def test_auto_level_refuses_when_the_floor_is_too_high(shim_state,
-                                                       tmp_path,
-                                                       monkeypatch):
-    """A noise floor that cannot yield a clean take below the hot
-    threshold must produce an honest refusal with the numbers, not a
-    silent landing on a level that only makes flagged takes."""
-    monkeypatch.setenv("PDE_SHIM_NOISE", "0.02")   # ~-34 dBFS RMS floor
-    ses = ms.MeasureSession(make_cfg(tmp_path, samples=65536,
-                                     auto_level=True))
-    with ses:
-        out = None
-        for _ in range(ms.AUTO_MAX_ADJUST + 2):
-            out = ses.take(0)
-            if out.kind != "level_probe":
-                break
-        assert out.kind == "level_stuck"
-        assert "noise" in out.level["why"]
-        assert out.level["achievable_snr"] is not None
-        assert out.level["achievable_snr"] < ms.mc.SNR_WARN_DB
-        assert out.level["noise_dbfs"] is not None
-        assert any("gave up" in n for n in out.notes)
-        assert ses.takes_of(0) == []
-    r_auto = ses._auto_state
-    assert r_auto["in_window"] is False
-
-
-def test_relevel_final_is_reported(shim_state, tmp_path):
-    """relevel() re-arms leveling on a session built with a remembered
-    volume; the metadata must then report the final level instead of
-    None (the old gate looked at cfg.auto_level only)."""
-    ses = ms.MeasureSession(make_cfg(tmp_path, samples=65536,
-                                     start_volume=0.6))
-    with ses:
-        ses.relevel()
-        for _ in range(ms.AUTO_MAX_ADJUST + 2):
-            out = ses.take(0)
-            if out.kind == "take":
-                break
-        assert out.kind == "take"
-    r = ses.finalize(0, str(tmp_path / "result.json"))
-    auto = r["levels"]["auto_level"]
-    assert auto["enabled"] is True
-    assert auto["final"] is not None
-    assert len(r["levels"]["take_noise_dbfs"]) == 1
-    assert r["levels"]["take_noise_dbfs"][0] is not None
-    assert r["sink_api"] == "alsa"
-
-# --- the trusted ceiling that drives the auto EQ-range handle ---------------
 
 def _inject_pair(ses, ch, delta, lo_hz=0.0, hi_hz=1e9, base_id=1):
     """Two takes at one gain whose curves differ by `delta` dB inside
@@ -1022,200 +893,3 @@ def test_a_take_that_heard_nothing_is_not_a_clean_take():
     # testified() has known this all along; the judge just never asked
     assert ms.testified(_q_rec(snr_db=None)) is False
     assert ms.testified(_q_rec(snr_db=40.0)) is True
-
-
-# --- the auto-level's third question ---------------------------------
-
-def test_hot_and_clean_is_not_enough_while_the_figure_is_a_bound():
-    """Peak and SNR say the capture is usable. They cannot say whether
-    the distortion figure is a MEASUREMENT -- on his rig the midband
-    stayed a bound until a recorded peak near -16 dBFS, well inside
-    the old window, so the hunt stopped early and every THD number
-    afterwards was a ceiling."""
-    hot_and_clean = dict(peak=-8.0, snr=55.0)
-    assert ms.AutoLevel.verdict(thd_bound=False, **hot_and_clean) == "ok"
-    assert ms.AutoLevel.verdict(thd_bound=True, **hot_and_clean) == "quiet"
-    assert ms.AutoLevel.verdict(thd_bound=None, **hot_and_clean) == "ok"
-
-
-def test_at_the_ceiling_a_bound_is_accepted_rather_than_chased():
-    """There is nowhere left to climb, and a take that says its figure
-    is a bound beats no take at all."""
-    at_ceiling = ms.AUTO_PEAK_CEIL - 0.5
-    assert ms.AutoLevel.verdict(at_ceiling, 55.0, thd_bound=True) == "ok"
-
-
-def test_past_the_ceiling_is_loud_whatever_the_figure_says():
-    assert ms.AutoLevel.verdict(ms.AUTO_PEAK_CEIL + 1.0, 55.0,
-                                thd_bound=False) == "loud"
-
-
-def test_a_quiet_probe_stays_quiet():
-    assert ms.AutoLevel.verdict(-40.0, 20.0, thd_bound=False) == "quiet"
-
-
-def test_the_crossing_outranks_the_peak_floor():
-    """The first cut asked the third question INSIDE the old peak
-    window, and on his rig the crossing happens at a peak of -13.6
-    dBFS -- below AUTO_PEAK_FLOOR. So the level that answered it was
-    rejected as not hot enough before the question was reached, and
-    the hunt sailed past to full volume. He caught it from a
-    screenshot; this is the court that keeps it caught.
-
-    His own ladder, Liberty 5 Pro into the coupler.
-    """
-    ladder = [(-22.8, 38.8, True), (-19.6, 42.4, True),
-              (-19.6, 42.6, True), (-16.2, 46.9, True),
-              (-13.6, 50.0, False), (-7.5, 56.2, False)]
-    said = [ms.AutoLevel.verdict(pk, snr, False, b) for pk, snr, b in ladder]
-    assert said == ["quiet", "quiet", "quiet", "quiet", "ok", "ok"]
-
-
-def test_without_a_judgement_the_peak_floor_still_rules():
-    """Nothing is said about the figure on a clipped probe, or before
-    an analysis exists. The old behaviour has to survive there."""
-    assert ms.AutoLevel.verdict(-13.6, 50.0, False, None) == "quiet"
-    assert ms.AutoLevel.verdict(-7.5, 56.2, False, None) == "ok"
-
-
-def test_a_dirty_probe_is_quiet_whatever_the_figure_says():
-    """SNR is the lower guard and it comes first: a figure that looks
-    like a measurement under a noisy capture is not one."""
-    assert ms.AutoLevel.verdict(-13.6, 20.0, False, False) == "quiet"
-
-
-def test_the_hunt_closes_on_the_lowest_ok_not_the_first():
-    """The ramp doubles, so it steps straight over the crossing: 4, 8,
-    16, 32, 64 walks past a crossing at 79 and lands on full volume --
-    the old behaviour wearing new clothes, which is what he saw in a
-    screenshot. An ok level is a CEILING to close on."""
-    def judge(v):
-        return ((-25.0, 45.0, True) if v < 0.76 else (-13.0, 50.0, False))
-
-    a = ms.AutoLevel()
-    v, seen = 0.04, []
-    for _ in range(14):
-        pk, snr, bound = judge(v)
-        a.observe(v, pk, snr, False, bound)
-        seen.append(round(v * 100))
-        if a.settled():
-            break
-        v = a.next_volume(v, pk)
-    assert a.settled()
-    assert 76 <= round(a.ok[0] * 100) <= 84, seen
-    assert max(seen) >= 90 or a.ok[0] < 0.9   # it did come back down
-
-
-def test_settling_needs_a_quiet_below_the_ok():
-    """Ok on the very first probe: nothing to close on, take it."""
-    a = ms.AutoLevel()
-    a.observe(0.5, -10.0, 50.0, False, False)
-    assert a.settled() and a.ok[0] == 0.5
-
-
-def test_a_wide_bracket_is_not_settled():
-    a = ms.AutoLevel()
-    a.observe(0.10, -30.0, 45.0, False, True)
-    a.observe(0.80, -12.0, 50.0, False, False)
-    assert not a.settled()
-
-
-def test_the_hunt_steers_by_the_analysed_snr_not_the_quick_one():
-    """The quick estimate finds the sweep's onset as the first crossing
-    of ten times the pre-roll RMS. That cannot work on a card whose
-    pre-roll carries fixed spikes: his CM106 sits at -34 dBFS there, so
-    the threshold lands at -14 and every probe quieter than that
-    reports no onset at all.
-
-    The field showed what that costs: SNR n/a on every ramp step, the
-    hunt steering with no lower guard, ramping to the ceiling and
-    declaring the rig hopeless -- on a take the analysis scored at
-    50 dB. Two estimators, two verdicts about one recording.
-    """
-    import numpy as np
-    fs = 48000
-    chan = np.zeros(fs, dtype=np.float64)
-    chan[::4096] = 10 ** (-34.0 / 20.0)          # the fixed spikes
-    chan[fs // 2:] += 10 ** (-25.0 / 20.0)       # a sweep quieter than 10x
-    ses = ms.MeasureSession.__new__(ms.MeasureSession)
-    ses.sweep = type("S", (), {"fs": fs})()
-    snr, noise = ms.MeasureSession._quick_snr(ses, chan)
-    assert snr is None, "the quick estimate is expected to fail here"
-
-
-def test_a_closed_bracket_ends_the_hunt_even_on_a_quiet_probe():
-    """The stop must not require THIS probe to be the ok one. As the
-    bracket narrows the probes land on the QUIET side, and demanding
-    both left his hunt circling 69, 64, 67, 68, 69 until it ran out of
-    steps and stopped short on a bound -- with the answer, 69, already
-    in hand three sweeps earlier."""
-    a = ms.AutoLevel()
-    for v, bound in ((0.15, True), (0.30, True), (0.60, True),
-                     (0.80, False), (0.69, False), (0.64, True)):
-        a.observe(v, -20.0, 45.0, False, bound)
-    assert a.settled()
-    assert a.ok[0] == pytest.approx(0.69)
-    # and the probe that closed it was judged quiet, not ok
-    assert a.verdict(-20.0, 45.0, False, True) == "quiet"
-
-
-def test_a_take_warns_from_the_snr_it_reports():
-    """One recording, one figure. The take prints the analysed SNR and
-    used to warn from the quick estimate, so his run showed "SNR 46.1
-    dB" over "WARNING: low SNR (2.9 dB)" about the same sweep. The
-    quick one is the wrong of the two on a card whose pre-roll carries
-    fixed spikes."""
-    import inspect
-    src = inspect.getsource(ms.MeasureSession._accept)
-    head = src[:src.index("notes.append(\"WARNING: low SNR")]
-    assert "analyze_take" in head, "the analysis must come first"
-    assert "t.snr_db" in head, "the warning must read the analysed SNR"
-
-
-def test_a_hunt_never_starts_from_zero():
-    """A multiplicative ramp cannot move from zero: it doubles to zero,
-    sees no change and stops after one sweep. relevel() took the MIN of
-    the current level and the quiet start -- meant as "do not jump UP
-    if we are already quieter" -- and a new rig shows ZERO on the
-    fader. Zero is not quieter, it is nothing.
-    """
-    for start in (None, 0.0, 0.5, 1.0):
-        ses = ms.MeasureSession.__new__(ms.MeasureSession)
-        ses._v_cur = start
-        ses._pending = None
-        ms.MeasureSession.relevel(ses)
-        assert ses._v_cur == pytest.approx(ms.AUTO_START_VOLUME)
-        nxt = ses._auto_ctl.next_volume(ses._v_cur, -30.0)
-        assert abs(nxt - ses._v_cur) > 1e-3, "the ramp must be able to move"
-
-
-def test_the_ramp_stops_doubling_once_the_margin_says_it_is_close():
-    """Doubling the cubic volume is EIGHTEEN decibels a step, which
-    guarantees an overshoot at the crossing -- and then a coin flip in
-    the bound test decides whether the hunt closes DOWN from eighty or
-    UP from a hundred. Two consecutive ladders on one earphone chose 74
-    and 89 that way, 4.8 dB apart, on readings of 0.25 and 0.23 per
-    cent at the same level."""
-    far = ms.AutoLevel()
-    far.observe(0.60, -22.0, 45.0, False, True, margin_db=-30.0)
-    assert not far.near
-    assert far.next_volume(0.60, -22.0) == pytest.approx(0.80)   # ceiling
-
-    close = ms.AutoLevel()
-    close.observe(0.60, -22.0, 45.0, False, True, margin_db=-1.0)
-    assert close.near
-    assert close.next_volume(0.60, -22.0) == pytest.approx(0.672, abs=1e-3)
-
-
-def test_the_margin_and_the_mark_cannot_disagree():
-    """Same band, same median, one bar between them."""
-    import numpy as np
-    from perdeviceeq import measure_build as mb
-    f = np.array([980.0, 1000.0, 1020.0])
-    for gap in (0.5, 2.9, 3.1, 12.0):
-        thd = np.full(3, -60.0)
-        noise = np.full(3, -60.0 - gap)
-        margin = mb.thd_margin_db(f, thd, noise)
-        bound = mb.thd_is_bound(f, thd, noise)
-        assert margin == pytest.approx(gap)
-        assert bound == (margin < 3.0)

@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
+from perdeviceeq import level_run
 from perdeviceeq import measure_session as ms
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -168,43 +169,6 @@ def test_profile_restored_when_playback_fails(tmp_path):
 
 # --- auto-level -------------------------------------------------------------
 
-def test_auto_level_starts_quiet_and_lands_in_window(tmp_path):
-    proc, out, state = run_measure(tmp_path, ["--auto-level"])
-    assert proc.returncode == 0, proc.stderr
-    r = json.loads(out.read_text())
-    auto = r["levels"]["auto_level"]
-    assert auto["enabled"] is True
-    assert auto["initial"] == pytest.approx(ms.AUTO_START_VOLUME, abs=1e-3)
-    assert 1 <= auto["adjustments"] <= ms.AUTO_MAX_ADJUST
-    assert auto["in_window"] is True
-    pk = r["levels"]["capture_peak_dbfs"][-1]
-    assert ms.AUTO_PEAK_FLOOR <= pk <= ms.AUTO_PEAK_CEIL
-    vol = json.loads((state / "volume.json").read_text())["cubic"]
-    assert vol == pytest.approx(0.30, abs=1e-3)   # restored to listening level
-    assert auto["final"] > 0.30                   # the sweep itself ran hotter
-    log = json.loads((state / "volume_log.json").read_text())
-    assert log[0]["cubic"] == pytest.approx(ms.AUTO_START_VOLUME, abs=1e-3)
-    assert log[-1]["cubic"] == pytest.approx(0.30, abs=1e-3)   # last = restore
-
-
-def test_auto_level_converges_on_a_nonlinear_gain(tmp_path):
-    # a BT-like law so steep near the top that the target window is only
-    # reached ABOVE the explore ceiling (Mikhail's Liberty 5): the soft
-    # ceiling must lift and the run converge, not stall at the ceiling
-    proc, out, state = run_measure(tmp_path, ["--auto-level"],
-                                   env_extra={"PDE_SHIM_GAIN_EXP": "9"})
-    assert proc.returncode == 0, proc.stderr
-    r = json.loads(out.read_text())
-    assert r["levels"]["auto_level"]["in_window"] is True
-    pk = r["levels"]["capture_peak_dbfs"][-1]
-    assert ms.AUTO_PEAK_FLOOR <= pk <= ms.AUTO_PEAK_CEIL
-    # the ceiling lifted past its start (the device needed more than 80%)
-    assert r["levels"]["auto_level"]["final"] > ms.AUTO_EXPLORE_CEIL
-    # the accepted level must not be a clipped one
-    outdir = next((tmp_path / "takes").iterdir())
-    import soundfile as sf
-    x, _ = sf.read(str(outdir / "take01.wav"), always_2d=True)
-    assert float(np.max(np.abs(x[:, 0]))) < ms.FULLSCALE
 
 
 def test_without_auto_level_volume_is_never_written(tmp_path):
@@ -362,53 +326,10 @@ def test_bypass_seeds_from_wpstate_when_metadata_empty(tmp_path):
 
 # --- pure helpers: the auto-level controller safety properties --------------
 
-def test_autolevel_steps_up_but_never_blasts_when_quiet():
-    ac = ms.AutoLevel()
-    ac.observe(0.15, -45.0, None, False)
-    nv = ac.next_volume(0.15, -45.0)
-    assert nv > 0.15                                 # move toward the target
-    assert nv <= 0.15 * ms.AUTO_RAMP                 # bounded ramp per step
-    assert nv <= ms.AUTO_EXPLORE_CEIL                # no full-volume probe
 
 
-def test_autolevel_brackets_and_stays_below_the_loud_side():
-    ac = ms.AutoLevel()
-    ac.observe(0.2, -20.0, 25.0, False)              # too quiet (low SNR)
-    ac.observe(0.8, 0.0, None, True)                 # clipped -> loud
-    nv = ac.next_volume(0.8, 0.0)
-    assert 0.2 < nv < 0.8                            # interpolated inside
-    assert nv <= 0.8 * ms.AUTO_CLIP_BACKOFF          # kept below the clip
 
 
-def test_autolevel_never_returns_to_a_clipping_level():
-    ac = ms.AutoLevel()
-    ac.observe(0.3, -30.0, 30.0, False)
-    ac.observe(1.0, 0.5, None, True)
-    assert ac.next_volume(1.0, 0.5) <= 1.0 * ms.AUTO_CLIP_BACKOFF
-
-
-def test_autolevel_ceiling_lifts_when_stuck_below_window():
-    # a probe sitting at the explore ceiling but still below the window
-    # means the device needs more: the ceiling must lift past its start
-    ac = ms.AutoLevel()
-    ac.observe(ms.AUTO_EXPLORE_CEIL, -20.0, 25.0,
-               False)                                # at ceiling, quiet
-    nv = ac.next_volume(ms.AUTO_EXPLORE_CEIL, -20.0)
-    assert nv > ms.AUTO_EXPLORE_CEIL                 # allowed to go higher now
-
-
-def test_autolevel_bisects_between_brackets():
-    # once bracketed, the next probe is the geometric midpoint of the two
-    # -- no slope/law assumption, so it converges on a steep BT law where
-    # a slope estimate overshoots
-    ac = ms.AutoLevel()
-    ac.observe(0.30, -20.0, 25.0, False)              # too quiet
-    ac.observe(0.90, -1.0, 60.0, False)               # past the ceiling
-    nv = ac.next_volume(0.90, -1.0)
-    assert nv == pytest.approx((0.30 * 0.90) ** 0.5, abs=1e-6)
-
-
-# --- the glitch probe imports and parses (hardware tool, smoke only) --------
 
 def test_capture_glitch_probe_help():
     import subprocess
@@ -445,3 +366,43 @@ def test_capture_glitch_probe_runs_against_shims(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "1/1 runs had non-finite samples" in r.stdout
     assert "dropout" in r.stdout
+
+
+# --- the CLI runs the search BEFORE its takes -------------------------
+
+def test_auto_level_starts_quiet_and_lands_in_window(tmp_path):
+    proc, out, state = run_measure(tmp_path, ["--auto-level"])
+    assert proc.returncode == 0, proc.stderr
+    r = json.loads(out.read_text())
+    auto = r["levels"]["auto_level"]
+    assert auto["enabled"] is True
+    assert auto["initial"] == pytest.approx(level_run.AUTO_START_VOLUME, abs=1e-3)
+    assert 1 <= auto["adjustments"] <= level_run.AUTO_MAX_ADJUST
+    assert auto["in_window"] is True
+    pk = r["levels"]["capture_peak_dbfs"][-1]
+    assert level_run.AUTO_PEAK_FLOOR <= pk <= level_run.AUTO_PEAK_CEIL
+    vol = json.loads((state / "volume.json").read_text())["cubic"]
+    assert vol == pytest.approx(0.30, abs=1e-3)   # restored to listening level
+    assert auto["final"] > 0.30                   # the sweep itself ran hotter
+    log = json.loads((state / "volume_log.json").read_text())
+    assert log[0]["cubic"] == pytest.approx(level_run.AUTO_START_VOLUME, abs=1e-3)
+    assert log[-1]["cubic"] == pytest.approx(0.30, abs=1e-3)   # last = restore
+
+def test_auto_level_converges_on_a_nonlinear_gain(tmp_path):
+    # a BT-like law so steep near the top that the target window is only
+    # reached ABOVE the explore ceiling (Mikhail's Liberty 5): the soft
+    # ceiling must lift and the run converge, not stall at the ceiling
+    proc, out, state = run_measure(tmp_path, ["--auto-level"],
+                                   env_extra={"PDE_SHIM_GAIN_EXP": "9"})
+    assert proc.returncode == 0, proc.stderr
+    r = json.loads(out.read_text())
+    assert r["levels"]["auto_level"]["in_window"] is True
+    pk = r["levels"]["capture_peak_dbfs"][-1]
+    assert level_run.AUTO_PEAK_FLOOR <= pk <= level_run.AUTO_PEAK_CEIL
+    # the ceiling lifted past its start (the device needed more than 80%)
+    assert r["levels"]["auto_level"]["final"] > level_run.AUTO_EXPLORE_CEIL
+    # the accepted level must not be a clipped one
+    outdir = next((tmp_path / "takes").iterdir())
+    import soundfile as sf
+    x, _ = sf.read(str(outdir / "take01.wav"), always_2d=True)
+    assert float(np.max(np.abs(x[:, 0]))) < ms.FULLSCALE

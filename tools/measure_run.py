@@ -26,9 +26,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from perdeviceeq import level_run
 from perdeviceeq import measure_core as mc
 from perdeviceeq.measure_session import (
-    AUTO_MAX_ADJUST, AUTO_PEAK_CEIL, AUTO_START_VOLUME,
     FaultyCaptureError, MeasureError, MeasureSession, RefusalError,
     SessionConfig, default_save_base)
 
@@ -70,7 +70,7 @@ def measure(a):
                         mic=a.mic,
                         save_dir=(a.save_dir
                                   or default_save_base()),
-                        mute_others=a.mute_others, auto_level=a.auto_level,
+                        mute_others=a.mute_others,
                         raw_capture_dump=a.raw_capture_dump)
     ses = MeasureSession(cfg)
     for w in ses.precondition_notes:
@@ -94,17 +94,30 @@ def measure(a):
         print("declined", file=sys.stderr)
         return 3
     if a.auto_level:
-        if not confirm("--auto-level will adjust the sink volume "
-                       "(start quiet at %.0f%%, up to %d raises, "
-                       "target SNR >= %g dB at a peak below %g dBFS). "
-                       "Proceed?"
-                       % (100 * min(v0 or 1.0, AUTO_START_VOLUME),
-                          AUTO_MAX_ADJUST, mc.SNR_WARN_DB,
-                          AUTO_PEAK_CEIL), a.yes):
+        if not confirm("--auto-level will sweep at rising volumes to "
+                       "find one (start quiet at %.0f%%, up to %d "
+                       "sweeps). Proceed?"
+                       % (100 * level_run.AUTO_START_VOLUME,
+                          level_run.AUTO_MAX_ADJUST), a.yes):
             print("declined", file=sys.stderr)
             return 3
 
     with ses:
+        if a.auto_level:
+            # A SEARCH BEFORE THE TAKES, not inside them. It plays its
+            # own sweeps and hands back a number; the session is then
+            # simply told what to play at.
+            def said(p):
+                print("  level %3.0f%%  %-9s peak %6.1f dBFS  step %d"
+                      % (100 * p.volume, p.phase, p.peak_dbfs, p.step))
+            vol, probes = level_run.hunt(
+                ses.sink, ses.source, cfg.channels,
+                sink_name=ses.sink_ident["name"],
+                sweep=ses.sweep, freqs=ses.freqs,
+                pre_silence=cfg.pre_silence,
+                post_silence=cfg.post_silence, on_probe=said)
+            print("level       : %.0f%%" % (100 * vol))
+            ses.set_level(vol, found=level_run.summary(vol, probes))
         print("Artifacts   : %s" % ses.outdir)
         accepted = 0
         while accepted < a.takes:
@@ -126,22 +139,6 @@ def measure(a):
                      "%.1f dB" % snr if snr is not None else "n/a"))
             for n in out.notes:
                 print(n, file=sys.stderr)
-            if out.kind == "level_probe":
-                lv = out.level
-                print("auto-level: sink volume %.0f%% -> %.0f%% "
-                      "(step %d/%d), retrying the take"
-                      % (100 * lv["volume_from"], 100 * lv["volume_to"],
-                         lv["step"], lv["max_steps"]))
-                continue
-            if out.kind == "level_stuck":
-                if not confirm("Continue at the current level anyway?",
-                               a.yes):
-                    raise MeasureError("aborted: %s"
-                                       % (out.level or {}).get(
-                                           "why", "leveling gave up"))
-                out = ses.accept_level()
-                for n in out.notes:
-                    print(n, file=sys.stderr)
             accepted += 1
 
     out_path = a.out or os.path.join(ses.outdir, "result.json")
@@ -191,12 +188,11 @@ def main(argv=None):
                    help="mute foreign streams on the sink instead of "
                         "refusing to start")
     p.add_argument("--auto-level", action="store_true",
-                   help="adjust the sink volume until the capture is "
-                        "clean (SNR >= %g dB) at a peak below %g dBFS "
-                        "(max %d raises, confirmed); refuses when the "
-                        "noise floor makes that impossible"
-                        % (mc.SNR_WARN_DB, AUTO_PEAK_CEIL,
-                           AUTO_MAX_ADJUST))
+                   help="sweep at rising volumes first and measure at "
+                        "the lowest one where the distortion figure at "
+                        "1 kHz is a measurement rather than a bound "
+                        "(max %d sweeps, confirmed)"
+                        % level_run.AUTO_MAX_ADJUST)
     p.add_argument("--yes", action="store_true",
                    help="assume yes on confirmations (NOT on reseat "
                         "pauses)")

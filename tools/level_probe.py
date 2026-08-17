@@ -26,7 +26,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from perdeviceeq import measure_build as mb              # noqa: E402
-from perdeviceeq import measure_session as ms            # noqa: E402
+from perdeviceeq import level_run                        # noqa: E402
 from perdeviceeq import pw_backend                       # noqa: E402
 
 # bands as the project's own thd_at reads them: a centre and a width in
@@ -63,67 +63,36 @@ def find(entries, needle):
 
 
 
-def config_for(sink, src, width, hunt=True):
-    return ms.SessionConfig(
-        sink=sink["name"], source=pw_backend.entry_node(src["name"]),
-        channels=width, auto_level=hunt, mute_others=True,
-        device=sink.get("desc"), start_volume=None)
-
-
-def watch_the_hunt(cfg, column, guard=14):
-    """Drive the session's own auto-level and report every probe."""
+def watch_the_hunt(sink, src, width, column):
+    """Drive the same search the window drives, and report it."""
     print("  %-6s %-10s %-9s %-7s %-11s %-7s %s"
           % ("step", "phase", "peak", "SNR", "THD@1k", "margin", "level"))
-    with ms.MeasureSession(cfg) as s:
-        for _ in range(guard):
-            out = s.take(0, analyze=column)
-            if out.kind == "level_probe":
-                lv = out.level or {}
-                pct = lv.get("thd_pct")
-                thd = ("n/a" if pct is None else
-                       "%s%s%%" % ("<=" if lv.get("thd_bound") else "",
-                                   mb.pct_word(pct)))
-                mar = lv.get("thd_margin_db")
-                print("  %-6s %-10s %-9.1f %-7s %-11s %-7s %.0f%% -> %.0f%%"
-                      % ("%d/%d" % (lv.get("step", 0),
-                                    lv.get("max_steps", 0)),
-                         lv.get("phase", "?"),
-                         lv.get("peak_dbfs", float("nan")),
-                         ("%.1f" % lv["snr_db"]) if lv.get("snr_db")
-                         is not None else "n/a",
-                         thd,
-                         "n/a" if mar is None else "%+.1f dB" % mar,
-                         100 * lv.get("volume_from", 0),
-                         100 * lv.get("volume_to", 0)))
-                continue
-            gave_up = None
-            if out.kind == "level_stuck":
-                lv = out.level or {}
-                gave_up = lv.get("why") or "level stuck"
-                out = s.accept_level()
-            if out.kind == "take" and out.take is not None:
-                t = out.take
-                # ONE WORD FOR ONE OUTCOME. Printing "gave up" and then
-                # "settled" about the same run said two opposite things
-                # in four lines.
-                print("\n  %s at %.0f%%, recorded peak %.1f dBFS, "
-                      "SNR %.1f dB"
-                      % ("STOPPED SHORT" if gave_up else "SETTLED",
-                         100 * (s._v_cur or 0), t.peak_dbfs, t.snr_db))
-                if gave_up:
-                    print("    the hunt could not reach its target: %s"
-                          % gave_up)
-                for f0, frac, name in BANDS:
-                    print("    %-8s %s%%" % (name, word(band(t, f0, frac))))
-                for n in out.notes or []:
-                    print("    note: %s" % n)
-                return
-            print("  unexpected outcome: %s" % out.kind)
-            return
-    print("\n  the hunt did not settle within %d sweeps" % guard)
 
+    def said(p):
+        thd = ("n/a" if p.thd_pct is None else
+               "%s%s%%" % ("<=" if p.thd_bound else "",
+                           mb.pct_word(p.thd_pct)))
+        print("  %-6d %-10s %-9.1f %-7s %-11s %-7s %.0f%%"
+              % (p.step, p.phase, p.peak_dbfs,
+                 "n/a" if p.snr_db is None else "%.1f" % p.snr_db,
+                 thd,
+                 "n/a" if p.margin_db is None else "%+.1f dB" % p.margin_db,
+                 100 * p.volume))
 
-
+    vol, probes = level_run.hunt(
+        sink, {"name": pw_backend.entry_node(src["name"]),
+               "id": src["id"]},
+        width, sink_name=sink["name"], analyze=column, on_probe=said)
+    print("\n  ANSWER: %.0f%%" % (100 * vol))
+    if probes:
+        last = probes[-1]
+        print("  last sweep: peak %.1f dBFS, SNR %s"
+              % (last.peak_dbfs,
+                 "n/a" if last.snr_db is None else "%.1f dB" % last.snr_db))
+    print("\n  the number is the whole product: nothing was left on the "
+          "hardware,")
+    print("  because a moratorium takes the measurement volume as a "
+          "parameter.")
 
 
 def main():
@@ -147,9 +116,8 @@ def main():
           % (src["name"], a.column, width))
     print("SWEEPS WILL PLAY. Keep the room quiet and do not move the rig.\n")
 
-    cfg = config_for(sink, src, width, hunt=True)
     try:
-        watch_the_hunt(cfg, a.column)
+        watch_the_hunt(sink, src, width, a.column)
     except KeyboardInterrupt:
         print("\nstopped.")
     except (RuntimeError, ValueError) as exc:
