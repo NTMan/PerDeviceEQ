@@ -49,6 +49,12 @@ from . import measure_prefs                         # noqa: E402
 
 CLEAN_TARGET = 3            # clean takes per channel before "all clean"
 
+# The failures this window is WRITTEN to have: a refusal, a measurement
+# error, a Stop. They are reported to the hand in words and need no
+# traceback. Anything else is a defect and gets one on stderr.
+EXPECTED_FAILURES = (sweep_io.MeasureCancelled, sweep_io.MeasureError,
+                     sweep_io.RefusalError)
+
 # Where each channel sits on the ring, as a compass angle from the front
 # (0 = straight ahead, positive = clockwise toward the right), so a
 # speaker is drawn where it physically belongs the way GNOME's speaker
@@ -3523,6 +3529,8 @@ class MeasureWindow(Adw.Window):
                 quiet_sink=self.sink_node)
         except Exception as e:                          # noqa: BLE001
             out["error"] = e
+            debug.crashed("the gain ladder", e,
+                          expected=EXPECTED_FAILURES)
         GLib.idle_add(self._knee_done, out)
 
     def _knee_done(self, out):
@@ -4042,6 +4050,7 @@ class MeasureWindow(Adw.Window):
                     ch, analyze=self.mic_of.get(ch, 0))
         except Exception as e:
             result["error"] = e
+            debug.crashed("the measurement", e, expected=EXPECTED_FAILURES)
         GLib.idle_add(self._measure_done, ch, result)
 
     def _post_status(self, text):

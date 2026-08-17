@@ -9,6 +9,7 @@ when off.
 import os
 import sys
 import time
+import traceback
 
 
 def log(*a):
@@ -20,6 +21,23 @@ def log(*a):
     error handler, turning a warning into a crash. A trace is silent
     until asked for; a failure is not a trace."""
     print("per-device-eq:", *a, file=sys.stderr)
+
+
+def crashed(where, exc, expected=()):
+    """A failure caught on a worker thread and shown to the hand
+    belongs on stderr too, with its traceback.
+
+    A worker catches everything so the window can say what happened,
+    which is right -- and then a programming error reads as a
+    measurement problem and leaves nothing behind to grep or paste.
+    `expected` names the failures the code is written to have: those
+    get one line, anything else gets its traceback as well. Not gated,
+    for the same reason log() is not: a failure is not a trace.
+    """
+    print("per-device-eq: %s failed: %s: %s"
+          % (where, type(exc).__name__, exc), file=sys.stderr)
+    if not isinstance(exc, tuple(expected)):
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
 def sweep_trace(*a):
