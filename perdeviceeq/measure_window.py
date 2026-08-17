@@ -3903,12 +3903,12 @@ class MeasureWindow(Adw.Window):
             # wpctl, __enter__ prepares a quiet start, and the state
             # block reports a hunt when one happens.
             #
-            # WHETHER a given sweep hunts is decided at TAKE time, in
-            # one place: no level given means hunt. It used to be
-            # decided here as well, from the fader and the previous
-            # run's level_only flag -- but a session is built ONCE, in
-            # the constructor, so that reading was stale before it was
-            # used and could only be right by accident.
+            # WHICH sweeps hunt is not a property of the session
+            # either: the auto-level button hunts and nothing else
+            # does. It used to be decided here as well, from the fader
+            # and the previous run's flag -- but a session is built
+            # ONCE, in the constructor, so that reading was stale
+            # before it was used and could only be right by accident.
             _t = time.monotonic()
             cfg = ms.SessionConfig(
                 sink=self.sink_node,
@@ -3959,6 +3959,17 @@ class MeasureWindow(Adw.Window):
             self._confirm_loud(
                 lambda: self._start_measure(ch, level_only))
             return
+        # A LEVEL OF ZERO IS NOT A REQUEST TO GUESS. It used to start
+        # a hunt, which was my invention and nobody asked for it -- and
+        # it punched a hole in the fader law this window is built on:
+        # the sweep plays the fader's number, ALWAYS, so the behaviour
+        # is always predictable. Implicit behaviour is worse than a
+        # refusal that names the next move.
+        if not level_only and self.vol_spin.get_value() <= 0:
+            self._error("The measurement level is at zero, so the sweep "
+                        "would be silent.\n\nSet a level, or press the "
+                        "auto-level button to measure one.")
+            return
         if not self._ensure_session():
             return
         if self._sink_gone or self._mic_gone:
@@ -3968,15 +3979,9 @@ class MeasureWindow(Adw.Window):
         # setting the session level to the fader's number, read
         # on the main thread here, applied by the worker after
         # the session is entered. One door, zero shield flags.
-        # ZERO MEANS HUNT, so it must not go through the door: the
-        # session's set_level FREEZES the auto-level, which is right
-        # for a number a hand chose and fatal for the one number that
-        # means "nobody has chosen yet". 0191 added the hunt-at-zero
-        # rule and this line quietly cancelled it -- the sweep played
-        # silence at the level it was told to play.
-        self._take_level = (None
-                            if level_only or self.vol_spin.get_value() <= 0
-                            else self.vol_spin.get_value() / 100.0)
+        # the fader's number, snapshotted here because a worker thread
+        # cannot read a widget. Not a mode, not a signal: a level
+        self._take_level = self.vol_spin.get_value() / 100.0
         # the input gain rides the SAME door, read here on the main
         # thread: baking it into the session let a stale number from
         # window-open time pull the slider back mid-sweep
@@ -4003,17 +4008,15 @@ class MeasureWindow(Adw.Window):
         try:
             self._assert_entry_route()
             self._assert_capture_gain()
-            if getattr(self, "_take_level", None) is not None:
-                self.session.set_level(self._take_level)
-            else:
-                # NO LEVEL GIVEN MEANS HUNT, and the session has to be
-                # told so at TAKE time. auto_level is frozen into the
-                # config when the session is built -- at window open --
-                # so a fader zeroed afterwards left a session that
-                # believed it was already levelled, ran one sweep and
-                # stopped. That is 0191's hole returning through
-                # another door, and relevel() is the door's own key.
+            # ONE VARIABLE, ONE THING. _take_level is the fader's
+            # number; whether this run hunts is the MODE, and the mode
+            # already has a name. A session is built once, at window
+            # open, so neither can be baked into it: both are told at
+            # take time.
+            if self._level_only:
                 self.session.relevel()
+            else:
+                self.session.set_level(self._take_level)
             guard = 0
             while True:
                 guard += 1
