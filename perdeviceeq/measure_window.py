@@ -187,6 +187,12 @@ class MeasureWindow(Adw.Window):
         self._pending_port = None   # an input awaiting its profile
         self._pending_out = None    # an output awaiting its profile
         self._busy = False
+        # ONE STOP FOR THE ONE LONG THING THAT CAN BE RUNNING: only a
+        # single job runs at a time (_busy guards that), so the flag
+        # means "the hand has asked the running job to stop" and every
+        # job clears it as it starts. Born here because a reader must
+        # never depend on some other job having run first.
+        self._stop_asked = False
         self._loud_ack = False
         self._canvas_ids = {}       # (ch, live rec.id) -> canvas id
         self._canvas_session = None  # one session entry per sitting
@@ -3335,10 +3341,13 @@ class MeasureWindow(Adw.Window):
         self._start_measure(self._selected_ch)
 
     def _on_stop(self, _btn):
-        # one stop for both long things the window does. The ladder
-        # watches this flag between rungs and puts the gain back on its
-        # way out, so stopping costs nothing but the time already spent
-        self._knee_stop = True
+        # ONE STOP FOR WHATEVER IS RUNNING. Both searches watch this
+        # flag between sweeps -- the gain ladder between rungs, the
+        # level search between probes -- so stopping either costs
+        # nothing but the time already spent. A take is not polled: it
+        # is cancelled through the session, which kills the sweep in
+        # flight.
+        self._stop_asked = True
         if self.session is not None and self._busy:
             self.session.cancel()            # aborts the sweep in flight
 
@@ -3486,7 +3495,7 @@ class MeasureWindow(Adw.Window):
         if not src:
             self._error("Pick a measurement mic first.")
             return
-        self._knee_stop = False
+        self._stop_asked = False
         self._busy = True
         self._set_row_sensitive(False)
         self._update_pult()
@@ -3506,7 +3515,7 @@ class MeasureWindow(Adw.Window):
 
             out["verdict"], out["walk"] = knee_run.ladder(
                 src, col, on_rung=said,
-                should_stop=lambda: self._knee_stop,
+                should_stop=lambda: self._stop_asked,
                 # the ladder measures SILENCE, so claim the output
                 # this window is measuring against for its duration:
                 # otherwise a notification lands in the noise floor
@@ -3523,7 +3532,7 @@ class MeasureWindow(Adw.Window):
         if out["error"] is not None:
             self._say("Could not walk the gain: %s" % out["error"])
             return
-        if self._knee_stop:
+        if self._stop_asked:
             # a walk does not put anything back, so a stopped one has
             # left the fader on the rung it halted on. Said plainly
             # rather than left for the eye to notice
@@ -3964,6 +3973,7 @@ class MeasureWindow(Adw.Window):
         self._take_gain = (self.gain_spin.get_value() / 100.0
                            if getattr(self, "_gain_ok", False)
                            else None)
+        self._stop_asked = False
         self._busy = True
         self._set_row_sensitive(False)
         self._update_pult()
@@ -4006,7 +4016,7 @@ class MeasureWindow(Adw.Window):
             pre_silence=self.session.cfg.pre_silence,
             post_silence=self.session.cfg.post_silence,
             play_map=self.session._channel_map(ch),
-            on_probe=said, should_stop=lambda: self._knee_stop)
+            on_probe=said, should_stop=lambda: self._stop_asked)
         return vol, level_run.summary(vol, probes)
 
     def _measure_worker(self, ch):
