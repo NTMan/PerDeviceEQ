@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np                                      # noqa: E402
 
 from perdeviceeq import knee, knee_run, pw_backend      # noqa: E402
-from perdeviceeq import measure_session as ms           # noqa: E402
+from perdeviceeq import sweep_io                        # noqa: E402
 
 RATE = 48000
 DWELL_S = 1.0
@@ -179,7 +179,7 @@ def main():
                 r = w.visit(db)
                 if r is None:
                     continue
-                cap = ms.CaptureStream(int(src["id"]), width, RATE)
+                cap = sweep_io.CaptureStream(int(src["id"]), width, RATE)
                 try:
                     cap.wait_frames(int(a.dwell * RATE), a.dwell + 3.0)
                     block = cap.data()

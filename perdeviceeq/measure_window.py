@@ -42,7 +42,8 @@ from . import eq                                     # noqa: E402
 from . import debug
 from .picker import NodePicker                       # noqa: E402
 from . import measure_core as mc                    # noqa: E402
-from . import measure_session as ms                 # noqa: E402
+from . import measure_session as ms
+from . import sweep_io                 # noqa: E402
 from . import measure_prefs                         # noqa: E402
 
 
@@ -4049,7 +4050,7 @@ class MeasureWindow(Adw.Window):
         self._update_pult()
         self._say("Ready")
         err = result["error"]
-        if isinstance(err, ms.MeasureCancelled):
+        if isinstance(err, sweep_io.MeasureCancelled):
             self._refresh_all()              # Stop: quiet, nothing stored
             return False
         if err is not None:

@@ -33,7 +33,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from perdeviceeq import measure_session as ms        # noqa: E402
+from perdeviceeq import sweep_io                     # noqa: E402
 
 
 def _play(sink_id, wav):
@@ -45,9 +45,9 @@ def _play(sink_id, wav):
 
 
 def probe(a):
-    dump = ms.pw_dump()
-    src = ms.resolve_node(dump, a.source, "Audio/Source")
-    sink = ms.resolve_node(dump, a.sink, "Audio/Sink") if a.sink else None
+    dump = sweep_io.pw_dump()
+    src = sweep_io.resolve_node(dump, a.source, "Audio/Source")
+    sink = sweep_io.resolve_node(dump, a.sink, "Audio/Sink") if a.sink else None
     print("source: %s (id %d)" % (src["info"]["props"].get("node.name"),
                                   src["id"]))
     if sink and a.sweep:
@@ -60,7 +60,7 @@ def probe(a):
     first_idx = []                      # first non-finite index seen per run
 
     for r in range(a.runs):
-        cap = ms.CaptureStream(src["id"], a.channels, a.rate)
+        cap = sweep_io.CaptureStream(src["id"], a.channels, a.rate)
         play = None
         try:
             time.sleep(0.3)

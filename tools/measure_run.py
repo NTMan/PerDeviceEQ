@@ -28,9 +28,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from perdeviceeq import level_run
 from perdeviceeq import measure_core as mc
-from perdeviceeq.measure_session import (
-    FaultyCaptureError, MeasureError, MeasureSession, RefusalError,
-    SessionConfig, default_save_base)
+from perdeviceeq.measure_session import MeasureSession, SessionConfig
+from perdeviceeq.sweep_io import (
+    FaultyCaptureError, MeasureError, RefusalError, default_save_base)
 
 
 # --- interaction ---------------------------------------------------------

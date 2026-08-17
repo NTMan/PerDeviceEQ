@@ -18,6 +18,7 @@ import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
 from perdeviceeq import measure_session as ms
+from perdeviceeq import sweep_io
 
 ROOT = Path(__file__).resolve().parent.parent
 SHIMS = ROOT / "tests" / "shims"
@@ -282,7 +283,7 @@ def test_run_take_cancelled_raises_and_stores_nothing(shim_state, tmp_path):
     with ses:
         cancel = threading.Event()
         cancel.set()
-        with pytest.raises(ms.MeasureCancelled):
+        with pytest.raises(sweep_io.MeasureCancelled):
             ms.run_take(ses.sink, ses.source, ses.wav, ses.wav_duration,
                         ses.cfg.channels, ses.sweep.fs, verify=False,
                         cancel=cancel)
@@ -749,15 +750,15 @@ def test_await_sink_volume_reads_back(monkeypatch):
         i = min(calls["n"], len(seq) - 1)
         calls["n"] += 1
         return seq[i]
-    monkeypatch.setattr(ms, "pw_dump", fake_dump)
-    monkeypatch.setattr(ms, "sink_applied_volumes",
+    monkeypatch.setattr(sweep_io, "pw_dump", fake_dump)
+    monkeypatch.setattr(sweep_io, "sink_applied_volumes",
                         fake_applied)
-    assert ms.await_sink_volume(7, 0.614, timeout_s=2.0)
+    assert sweep_io.await_sink_volume(7, 0.614, timeout_s=2.0)
     assert calls["n"] == 3
 
     calls["n"] = 0
     seq[:] = [([0.9 ** 3, 0.9 ** 3], [1.0, 1.0])]
-    assert not ms.await_sink_volume(7, 0.614, timeout_s=0.15)
+    assert not sweep_io.await_sink_volume(7, 0.614, timeout_s=0.15)
 
 
 def test_start_volume_outranks_sink_read(tmp_path, monkeypatch):

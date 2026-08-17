@@ -6,9 +6,10 @@ that passes between them is a NUMBER: this walk's product is a sink
 volume, which the take is then told to use. Nothing here knows what a
 take is, and MeasureSession does not know this exists.
 
-It stands on the same primitives the session stands on -- a sweep,
-run_take, analyze_take, and a moratorium to claim the hardware -- not
-on the session itself. knee_run.Walk has the same shape for the
+It stands on sweep_io, the same floor the session stands on -- a
+sweep, run_take, analyze_take, and a moratorium to claim the hardware.
+Not on the session, and no longer through a function-level import to
+dodge a cycle: there is no cycle to dodge. knee_run.Walk has the same shape for the
 capture gain; this is its twin for the playback level.
 
 WHAT IT LOOKS FOR, settled by field ladders on two earphones: the
@@ -28,6 +29,7 @@ import numpy as np
 from . import measure_build as mb
 from . import measure_core as mc
 from . import pw_backend
+from .sweep_io import run_take, write_sweep_files
 
 AUTO_RAMP = 2.0                 # coarse step while nothing is bracketed
 AUTO_RAMP_NEAR = 1.12           # ~3 dB, once the margin says the
@@ -237,7 +239,6 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
     `on_probe(probe)` is called after each sweep and `should_stop()` is
     asked before each, so a caller can narrate and interrupt.
     """
-    from .measure_session import run_take, write_sweep_files
     sweep = sweep or mc.generate_sweep(262144, 48000, 20.0, 20000.0)
     freqs = mc.log_grid() if freqs is None else freqs
     outdir = tempfile.mkdtemp(prefix="pdeq-level-")
