@@ -9,8 +9,9 @@ take is, and MeasureSession does not know this exists.
 It stands on sweep_io, the same floor the session stands on -- a
 sweep, run_take, analyze_take, and a moratorium to claim the hardware.
 Not on the session, and no longer through a function-level import to
-dodge a cycle: there is no cycle to dodge. knee_run.Walk has the same shape for the
-capture gain; this is its twin for the playback level.
+dodge a cycle: there is no cycle to dodge. knee_run.Walk has the
+same shape for the capture gain; this is its twin for the playback
+level.
 
 WHAT IT LOOKS FOR, settled by field ladders on two earphones: the
 lowest level at which the distortion figure at 1 kHz is a MEASUREMENT

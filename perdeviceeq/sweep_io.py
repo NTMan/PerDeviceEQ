@@ -11,6 +11,35 @@ search had to import from the module it was being taken OUT of -- a
 function-level import to dodge a cycle, and the last thread tying two
 jobs together. Nothing here knows what a take is, what a profile is,
 or that a search exists.
+
+Method notes (worth not re-deriving):
+
+- No clock synchronization between playback and capture is attempted:
+  the core aligns every take by the peak of its own linear impulse and
+  averages in magnitude only (a BT sink and a USB mic run on
+  independent clocks). pw-record simply starts BEFORE pw-play and stops
+  after enough frames. The capture is pinned to the requested source
+  with node.target (NOT --target, which the session manager overrides
+  by relinking to the DEFAULT source -- a wrong default silently
+  records the wrong mic).
+- Path verification: shortly after pw-play starts, pw-dump must show
+  our sweep stream linked DIRECTLY to the target node and to nothing
+  else, and the target must be a real device (media.class Audio/Sink,
+  device.api alsa*/bluez*). A dirty path (loopback sinks, effect
+  chains, unknown nodes) aborts the run: a sweep through an
+  unidentified chain is not a measurement of the device.
+  Symmetrically, the capture stream must link FROM the requested source
+  and no other, or the run aborts -- a wrong default source hijacking
+  the recording is a common, silent failure. The verdict and any
+  unknown node names ride out in `path_clean`, which the caller keeps.
+- pw-record is asked for a bare stream with --raw; without it the
+  stdout stream is prefixed with a format descriptor (rate/channels
+  POD) whose bytes decode to a NaN at the start of channel 0 on every
+  capture.
+- Raw takes (float32 wav, all captured channels) plus the sweep wav,
+  its sidecar and the analytic inverse (REW cross-check) are saved
+  under tests/fixtures-local/<device>_<stamp>/ -- .gitignore'd, real
+  captures never enter git.
 """
 
 import json
@@ -47,6 +76,8 @@ VERIFY_AFTER_S = 0.4                     # pw-play start -> pw-dump link check
 VERIFY_TIMEOUT_S = 3.0
 CAPTURE_LEAD_S = 0.5                     # record head start (extra pre-roll)
 EXTRA_TAIL_S = 1.0                       # decay + link latency margin
+
+
 class MeasureError(RuntimeError):
     pass
 
@@ -223,7 +254,6 @@ def metadata_clear(key):
         .returncode == 0
 
 
-
 # --- volume ------------------------------------------------------------------
 
 def sink_volume_state(dump, sink_id):
@@ -237,7 +267,6 @@ def sink_volume_state(dump, sink_id):
             cubic = (sum(cv) / len(cv)) ** (1.0 / 3.0) if cv else None
             return cubic, cv, bool(d.get("mute", False))
     return None, [], False
-
 
 
 def watch_volume_ends(sink_id, stop_evt, source_id=None):

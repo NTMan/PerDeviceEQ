@@ -1,105 +1,73 @@
 #!/usr/bin/env python3
-"""PipeWire plumbing for the measurement wizard (ROADMAP Tasks 3/4).
+"""The measurement session: one take at a time, and its record.
 
-Everything the live measurement needs below the CLI: graph inspection
-over pw-dump, node resolution and identity checks, the per-device-eq
-profile bypass, foreign-stream muting, sink volume control with the
-adaptive auto-level controller, the raw f32 capture stream, playback
-path verification and the single-sweep runner `run_take`. Extracted
-verbatim from tools/measure_run.py so the GTK wizard (increment 4) can
-drive takes from GUI callbacks without dragging in argparse, prompts
-or the batch loop; measure_run.py remains the CLI on top.
+MeasureSession is the wizard-facing API. Preconditions in the
+constructor (it refuses before any sound), a moratorium claimed and
+released around every sweep -- our own profile bypassed on the target
+sink, foreign streams muted -- and take(channel) for one physical
+sweep, returning a structured TakeOutcome: the analyzed curve plus the
+running per-frequency spread across the channel's accepted takes, the
+GUI's live fan. discard() drops a bad take, set_level() names the level
+its sweeps play at, finalize(channel) writes one result.json per
+channel (fit_peq --left/--right takes it from there). No printing, no
+prompts.
 
-MeasureSession is that wizard-facing API: preconditions in the
-constructor (refuses before any sound), profile bypass + foreign-stream
-muting + the quiet auto-level start on __enter__ (restored on ANY
-exit), take(channel) for one physical sweep returning a structured
-TakeOutcome -- the analyzed curve plus the running per-frequency spread
-across the channel's accepted takes, the GUI's live fan --, discard()
-to drop a bad take, accept_level() to keep measuring at a stuck level,
-finalize(channel) writing one result.json per channel (fit_peq
---left/--right takes it from there). No printing, no prompts.
+It stands on sweep_io, which moves one sweep and knows nothing about
+takes, profiles or searches. THE TWO SEARCHES ARE SIBLINGS ON THAT
+FLOOR, not parts of this one: knee_run walks the capture gain,
+level_run the playback level. What arrives here from either is a
+NUMBER the session is told to use -- nothing in here hunts. Extracted
+from tools/measure_run.py, which remains the CLI on top.
 
 Method notes (worth not re-deriving):
 
-- No clock synchronization between playback and capture is attempted: the
-  core aligns every take by the peak of its own linear impulse and averages
-  in magnitude only (BT sink and USB mic run on independent clocks).
-  pw-record simply starts BEFORE pw-play and stops after enough frames. The
-  capture is pinned to the requested source with node.target (NOT --target,
-  which the session manager overrides by relinking to the DEFAULT source --
-  a wrong default silently records the wrong mic).
-- EQ state (Task 4 lesson): the run bypasses our own profile on the target
-  sink by deleting its key from the 'per-device-eq' metadata (the same
-  mechanism the app's Bypass switch uses -- the WirePlumber hook flattens
-  the node) and restores the exact graph string afterwards, including on
-  any exception or ^C (context manager). The graph is read from the
-  metadata, or, when the GUI has not published it this session (a cold
-  PipeWire start seeds the hook from persisted state without touching the
-  metadata), from that persisted state. What was found and from where, that
-  it was bypassed and that it was restored is recorded in `eq_profile_state`.
-  A failed restore is loudly reported with the manual recovery command.
-- Path verification: shortly after pw-play starts, pw-dump must show our
-  sweep stream linked DIRECTLY to the target node and to nothing else, and
-  the target must be a real device (media.class Audio/Sink, device.api
-  alsa*/bluez*). A dirty path (loopback sinks, effect chains, unknown
-  nodes) aborts the run: a sweep through an unidentified chain is not a
-  measurement of the device. Symmetrically, the capture stream must link
-  FROM the requested source and no other, or the run aborts (a wrong
-  default source hijacking the recording is a common, silent failure). The
-  verdict and any unknown node names are kept in `path_clean`.
-- Foreign streams: anything else playing into the sink during the sweep is
-  measured too. By default their presence refuses the run with a list;
-  --mute-others instead mutes them (Props mute=true via pw-cli) for the
-  duration and restores the previous mute state after. The list, muted or
-  not, goes into `foreign_streams` of the result.
-- Levels policy: the digital sweep level is FIXED at -6 dBFS (core), the
-  sweep stream volume is forced to 1.0 (pw-play --volume, verified from
-  the node's Props), and the sink volume is never touched -- the protocol
-  is to measure at the working listening level via the sink's own control.
-  The only exception is --auto-level: starting from a quiet volume
-  (min(current, 0.15) cubic) it adjusts the sink volume via wpctl until
-  the capture is both hot enough (peak in AUTO_PEAK_FLOOR..CEIL) and
-  clean enough (SNR at least SNR_WARN_DB + margin), after an explicit
-  confirmation. It assumes nothing about the device's volume->gain law
-  (a BT sink's is nothing like the software cube law): it brackets and
-  bisects in log-volume between a too-quiet and a too-loud probe, capped
-  per step and held below any level seen to clip -- so the first sound
-  neither blasts nor overshoots into a clip. Peak and SNR rise together
-  dB-for-dB with the volume (the acoustic floor stays put), so one
-  hot-enough probe predicts the best SNR reachable below the safe peak
-  ceiling; when that is under SNR_WARN_DB the leveling REFUSES with the
-  numbers instead of parking at a level that only makes flagged takes
-  (see AutoLevel). Without --auto-level the sink volume is never raised
-  above its value at start (it is not written at all). Everything ends
-  up in `levels`. The sink's applied volumes (channelVolumes and
-  softVolumes) are read from its Props during every sweep and stored on
-  the take: when the level was moved between takes of one channel (the
-  manual override, or re-armed auto-level) and the move was applied in
+- EQ state (Task 4 lesson): the sweep runs with our own profile
+  bypassed on the target sink -- the backend's moratorium deletes that
+  sink's key from the 'per-device-eq' metadata, the same mechanism the
+  app's Bypass switch uses, and the WirePlumber hook flattens the node.
+  The graph string is read from the metadata, or, when the GUI has not
+  published it this session (a cold PipeWire start seeds the hook from
+  persisted state without touching the metadata), from that persisted
+  state. The claim is taken per sweep and released in a finally, so an
+  exception or a cancel restores it too. What was found and from where,
+  that it was bypassed and that it was restored is recorded in
+  `eq_profile_state`; a failed restore is loudly reported with the
+  manual recovery command.
+- Foreign streams: anything else playing into the sink during the
+  sweep is measured too. By default their presence refuses the run
+  with a list; mute_others instead has the moratorium mute them for
+  the duration and restore the previous mute state after. The list,
+  muted or not, goes into `foreign_streams` of the result; the reading
+  of the graph for it is sweep_io's.
+- Levels policy: the digital sweep level is FIXED at -6 dBFS (core),
+  the sweep stream volume is forced to 1.0 (pw-play --volume, verified
+  from the node's Props), and the sink volume is written only to the
+  level this session was given -- given none, it is not written at
+  all. Everything ends up in `levels`, including a search's own
+  description of itself when one produced the number. The sink's
+  applied volumes (channelVolumes and softVolumes) are read from its
+  Props during every sweep and stored on the take: when the level was
+  moved between takes of one channel and the move was applied in
   software, averaging and finalize align the takes onto the channel's
   quietest one by exactly the recorded gain ratio -- the known
   bookkeeping is removed, seating variation is kept. A hardware-volume
   device (softVolumes pinned at 1.0, e.g. BT absolute volume) records
   unity gains, the alignment is a no-op and mixed levels stay visible
   in the spread, which is the honest answer there.
-- SNR: pw-record is asked for a bare stream with --raw; without it the
-  stdout stream is prefixed with a format descriptor (rate/channels POD)
-  whose bytes decode to a NaN at the start of channel 0 on every
-  capture. Each take gets a quick pre-roll noise-floor check right after
-  capture (same threshold and wording as the core) so a noisy room is
-  caught on take 1, not after five reseats; up to REPAIR_MAX_MS of
-  isolated non-finite (NaN/Inf) samples on the analyzed channel are
-  interpolated as a capture xrun (with a warning) while a larger flood
-  aborts as a faulty input; the non-finite scan covers ALL channels, not
-  just the analyzed one, so a glitch on the other side is not invisible.
-  A full-scale sample count flags a genuinely clipped (unusable) take
-  and a peak above HOT_DBFS is only a low-headroom advisory. The
-  authoritative numbers are still computed by the core from the aligned
-  impulse.
-- Raw takes (float32 wav, all captured channels) plus the sweep wav, its
-  sidecar and the analytic inverse (REW cross-check) are saved under
-  tests/fixtures-local/<device>_<stamp>/ -- .gitignore'd, real captures
-  never enter git.
+- What a take is judged on here: a quick pre-roll noise-floor look
+  right after capture (same threshold and wording as the core) so a
+  noisy room is caught on take 1, not after five reseats; up to
+  REPAIR_MAX_MS of isolated non-finite (NaN/Inf) samples on the
+  analyzed channel are interpolated as a capture xrun (with a warning)
+  while a larger flood aborts as a faulty input; the non-finite scan
+  covers ALL channels, not just the analyzed one, so a glitch on the
+  other side is not invisible. A full-scale sample count flags a
+  genuinely clipped (unusable) take and a peak above HOT_DBFS is only
+  a low-headroom advisory. The authoritative numbers are still
+  computed by the core from the aligned impulse.
+- Where the sweep actually went is sweep_io's verdict, kept here in
+  `path_clean` and carried into the result: a sweep through an
+  unidentified chain is not a measurement of the device.
 """
 import math
 import os
@@ -108,7 +76,6 @@ from datetime import datetime
 import shutil
 import tempfile
 import threading
-from contextlib import ExitStack
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -179,8 +146,6 @@ def mirror_key(key):
     if key.endswith("R"):
         return key[:-1] + "L"
     return None
-
-
 
 
 @dataclass
@@ -462,7 +427,6 @@ class MeasureSession:
         self.started_utc = None             # stamped on __enter__
         self.path_clean = None
         self.eq_state = None
-        self._stack = None
         self._cancel = threading.Event()    # set by cancel() to abort a sweep
         # the explicit hand outranks the environment read: an
         # unarmed session used to wear the sink's CURRENT cubic
@@ -544,22 +508,20 @@ class MeasureSession:
         self.wav = write_sweep_files(self.outdir, self.sweep,
                                      self.cfg.pre_silence,
                                      self.cfg.post_silence)
-        with ExitStack() as stack:
-            if self.cfg.start_volume is not None:
-                self._v_cur = self.cfg.start_volume
-            self._stack = stack.pop_all()
+        if self.cfg.start_volume is not None:
+            self._v_cur = self.cfg.start_volume
         return self
 
     def __exit__(self, *exc):
-        stack, self._stack = self._stack, None
-        ret = False
-        if stack is not None:
-            ret = stack.__exit__(*exc)
+        # NOTHING TO UNWIND: the hardware is claimed and given back
+        # per sweep, inside take(), and the level search that used to
+        # register a restore here lives in level_run now. What is left
+        # is the throwaway directory.
         if self._ephemeral and self.outdir:
             shutil.rmtree(self.outdir, ignore_errors=True)
             self.outdir = None
             self.wav = None       # take() after exit fails loudly again
-        return ret
+        return False
 
     # -- one physical sweep --------------------------------------------------
 
@@ -585,8 +547,6 @@ class MeasureSession:
         self._v_cur = max(0.0, min(1.0, float(cubic)))
         if found is not None:
             self._level_found = dict(found)
-
-
 
     def _meas_volume_arg(self):
         """The measurement volume for this sweep, or None when the
@@ -733,35 +693,34 @@ class MeasureSession:
             if st["id"] in muted:
                 st["muted_for_measure"] = True
         try:
-            if True:
-                changed = vol_arg is not None
-                if changed:
-                    # readback settle on EVERY transport; the
-                    # warm-up stays as the Bluetooth link wake
-                    await_sink_volume(self.sink["id"],
-                                      self._v_cur)
-                    if (self.sink_ident.get("device_api")
-                            or "").startswith("bluez"):
-                        self._warm_sink()
-                vstop = threading.Event()
-                if os.environ.get("PDEQ_TRACE_VOL"):
-                    threading.Thread(
-                        target=watch_volume_ends,
-                        args=(self.sink["id"], vstop),
-                        kwargs={"source_id":
-                                self.source["id"]},
-                        daemon=True).start()
-                try:
-                    data, info = run_take(self.sink, self.source, self.wav,
-                                          self.wav_duration, cfg.channels,
-                                          self.sweep.fs,
-                                          verify=self.path_clean is None,
-                                          raw_dump_path=raw_path,
-                                          cancel=self._cancel,
-                                          channel_map=cmap)
-                    gains = self._applied_gains(channel)
-                finally:
-                    vstop.set()
+            changed = vol_arg is not None
+            if changed:
+                # readback settle on EVERY transport; the
+                # warm-up stays as the Bluetooth link wake
+                await_sink_volume(self.sink["id"],
+                                  self._v_cur)
+                if (self.sink_ident.get("device_api")
+                        or "").startswith("bluez"):
+                    self._warm_sink()
+            vstop = threading.Event()
+            if os.environ.get("PDEQ_TRACE_VOL"):
+                threading.Thread(
+                    target=watch_volume_ends,
+                    args=(self.sink["id"], vstop),
+                    kwargs={"source_id":
+                            self.source["id"]},
+                    daemon=True).start()
+            try:
+                data, info = run_take(self.sink, self.source, self.wav,
+                                      self.wav_duration, cfg.channels,
+                                      self.sweep.fs,
+                                      verify=self.path_clean is None,
+                                      raw_dump_path=raw_path,
+                                      cancel=self._cancel,
+                                      channel_map=cmap)
+                gains = self._applied_gains(channel)
+            finally:
+                vstop.set()
         finally:
             auth.moratorium_end()   # volume, EQ, unmute -- right after
         if info is not None:
