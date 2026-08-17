@@ -3879,24 +3879,17 @@ class MeasureWindow(Adw.Window):
                 if not quiet:
                     self._error("Pick a measurement mic first.")
                 return False
-            # AUTO_LEVEL IS ALWAYS TRUE HERE, and it is not the
-            # decision. This window can always hunt -- the button is
-            # right there -- so the session is built able to, which is
-            # what the flag really controls: the preflight requires
-            # wpctl, __enter__ prepares a quiet start, and the state
-            # block reports a hunt when one happens.
-            #
-            # WHICH sweeps hunt is not a property of the session
-            # either: the auto-level button hunts and nothing else
-            # does. It used to be decided here as well, from the fader
-            # and the previous run's flag -- but a session is built
-            # ONCE, in the constructor, so that reading was stale
-            # before it was used and could only be right by accident.
+            # A SESSION IS BUILT ONCE, in the constructor, so nothing
+            # about a single run may be settled here. Which sweeps
+            # hunt is not a property of a session at all: the
+            # auto-level button runs the search and hands the number
+            # over, and the flag that used to be passed here went out
+            # of SessionConfig with the search itself.
             _t = time.monotonic()
             cfg = ms.SessionConfig(
                 sink=self.sink_node,
                 source=pw_backend.entry_node(mic),
-                channels=self.mic_ch, auto_level=True,
+                channels=self.mic_ch,
                 mute_others=True, device=self.sink_desc,
                 play_map=self._play_map(),
                 start_volume=None)
