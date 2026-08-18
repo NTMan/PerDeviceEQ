@@ -1358,24 +1358,25 @@ class MeasureWindow(Adw.Window):
         fallback once invented a number nobody asked for. The caption
         under the fader names the level's source, so a remembered 33
         and a pending hunt can never wear the same face again."""
+        v = None
         if self.session is not None:
             v = getattr(self.session, "_v_cur", None)
-            debug.mic_trace("refresh session_v=%r" % v)
-            if v is not None:
-                self._set_volume_display(v)
-        else:
-            # pre-session the fader shows the pair's memory --
-            # a hand edit is remembered immediately, so this
-            # read-back IS the hand. No memory means ZERO on
-            # the dial: an obviously wrong number is the cue
-            # to press auto-level, never a hidden fifteen.
+        debug.mic_trace("refresh session_v=%r" % v)
+        if v is None:
+            # NO ESTABLISHED LEVEL, so the fader shows the pair's
+            # memory -- a hand edit is remembered immediately, so
+            # this read-back IS the hand. It runs with a session
+            # alive too: one born before anything was measured
+            # holds no level, and the sink's listening volume is
+            # not a substitute for one. No memory means ZERO on
+            # the dial: an obviously wrong number is the cue to
+            # press auto-level, never a hidden fifteen.
             src = self._source_name()
             v = (self.memory.volume_for(self.sink_node, src)
                  if src else None)
             debug.mic_trace("refresh mem_v=%r src=%r"
                             % (v, src))
-            self._set_volume_display(v if v is not None
-                                     else 0.0)
+        self._set_volume_display(v if v is not None else 0.0)
 
     def _on_relevel(self, _btn):
         """Measure the level here and now: forget the remembered value
@@ -2290,27 +2291,13 @@ class MeasureWindow(Adw.Window):
         self._sync_cal_labels()
         self._persist_mic()
         self._rebuild_session()
-        # the pair's remembered level lands the moment both
-        # ends are known: the restore branch in
-        # _refresh_volume was honest but unreachable -- the
-        # session is built in the constructor now, so the
-        # display always showed session._v_cur, seeded from
-        # the fader widget's hardcoded birth value; the pair
-        # memory (which held the hand's own 42 all along) was
-        # never consulted. Before the session exists this
-        # paints the fader, and the session then reads its
-        # start level from that very widget; with a session
-        # alive (a mid-life pair change) the level is set
-        # directly.
-        rv = self.memory.volume_for(self.sink_node,
-                                    self._source_name())
-        debug.mic_trace("level rv=%r src=%r session=%s "
-                        "spin=%.0f"
-                        % (rv, self._source_name(),
-                           self.session is not None,
-                           self.vol_spin.get_value()))
-        if rv is not None and self.session is not None:
-            self.session.set_level(rv)
+        # THE LEVEL TRAVELS ONE WAY ONLY: _ensure_session reads
+        # the pair's memory when it builds the session, and
+        # _refresh_volume reads it when no level is established
+        # yet. A restore here was a second door to the same
+        # number, and it was shut anyway -- _rebuild_session
+        # above leaves self.session None until the constructor
+        # arms it, so the branch could never fire at open.
         self._refresh_volume()
         # the field's stale verdict: the pult judged BEFORE the
         # mic was born (constructor order), the prefill then
@@ -3909,7 +3896,8 @@ class MeasureWindow(Adw.Window):
                 channels=self.mic_ch,
                 mute_others=True, device=self.sink_desc,
                 play_map=self._play_map(),
-                start_volume=None)
+                start_volume=self.memory.volume_for(
+                    self.sink_node, self._source_name()))
             try:
                 # an absent home births the session unresolved:
                 # the canvas adopts, statistics and refits run,
@@ -4081,7 +4069,7 @@ class MeasureWindow(Adw.Window):
         found = result.get("level")
         if found is not None:
             self.session.set_level(found, found=result.get("found"))
-        v = getattr(self.session, "_v_cur", self.session.volume_start)
+        v = getattr(self.session, "_v_cur", None)
         src = self._source_name()
         if v is not None and src:
             self.memory.remember(self.sink_node, source=src, volume=v)

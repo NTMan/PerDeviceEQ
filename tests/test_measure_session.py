@@ -761,10 +761,16 @@ def test_await_sink_volume_reads_back(monkeypatch):
     assert not sweep_io.await_sink_volume(7, 0.614, timeout_s=0.15)
 
 
-def test_start_volume_outranks_sink_read(tmp_path, monkeypatch):
-    """The explicit hand beats the environment: an unarmed
-    session wears cfg.start_volume from birth, not the sink's
-    current cubic; without the hand, the sink read stands."""
+def test_a_level_nobody_chose_is_not_a_level(tmp_path, monkeypatch):
+    """cfg.start_volume seeds the level at birth. Without it the
+    session has NO level, because the sink's LISTENING volume is
+    not one: it was worn as a fallback once, and an unarmed
+    session then reported a number nobody had chosen -- which the
+    window duly showed on its fader.
+
+    Nothing about the sweep changes: with no level established
+    the volume argument is None, exactly as it was when the
+    fallback made it equal to the sink's own volume."""
     monkeypatch.setattr(ms, "pw_dump",
                         lambda: TWO_NODE_GRAPH)
     cfg = ms.SessionConfig(sink="test_sink",
@@ -778,7 +784,10 @@ def test_start_volume_outranks_sink_read(tmp_path, monkeypatch):
                             source="test_source",
                             samples=131072)
     ses2 = ms.MeasureSession(bare)
-    assert ses2._v_cur == ses2.volume_start
+    assert ses2._v_cur is None
+    assert ses2.volume_start is not None
+    assert ses2._meas_volume_arg() is None
+
 
 def test_a_take_that_heard_nothing_never_testifies():
     """Nothing plugged in, the wrong port, a sweep that never left

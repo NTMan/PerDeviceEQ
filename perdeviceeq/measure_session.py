@@ -428,15 +428,13 @@ class MeasureSession:
         self.path_clean = None
         self.eq_state = None
         self._cancel = threading.Event()    # set by cancel() to abort a sweep
-        # the explicit hand outranks the environment read: an
-        # unarmed session used to wear the sink's CURRENT cubic
-        # as its level until the first sweep armed it, so the
-        # fader showed the listening volume while cfg named the
-        # remembered one -- the very fallback the window's
-        # refresh docstring warned about, alive one floor down
-        self._v_cur = (cfg.start_volume
-                       if cfg.start_volume is not None
-                       else self.volume_start)
+        # NONE MEANS NOBODY HAS ESTABLISHED A LEVEL YET, and the
+        # sink's own listening volume is not one: wearing it made
+        # an unarmed session report a level nobody chose -- the
+        # very fallback the window's refresh docstring warns
+        # about, alive one floor down. cfg seeds this once, at
+        # birth; after that set_level() is the only writer.
+        self._v_cur = cfg.start_volume
         self._level_found = None            # a search's own words, if any
         self._take_seq = 0                  # take%02d numbers, never reused
         self._takes = {}                    # channel -> [(record, samples)]
@@ -496,9 +494,6 @@ class MeasureSession:
     def __enter__(self):
         if not self._resolved:
             self._resolve(pw_dump())
-            self._v_cur = (self.cfg.start_volume
-                           if self.cfg.start_volume is not None
-                           else self.volume_start)
         if self.outdir is None:             # ephemeral working dir
             self.outdir = tempfile.mkdtemp(
                 prefix="per-device-eq-%s-" % self._slug)
@@ -508,8 +503,6 @@ class MeasureSession:
         self.wav = write_sweep_files(self.outdir, self.sweep,
                                      self.cfg.pre_silence,
                                      self.cfg.post_silence)
-        if self.cfg.start_volume is not None:
-            self._v_cur = self.cfg.start_volume
         return self
 
     def __exit__(self, *exc):
