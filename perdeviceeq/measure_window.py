@@ -2854,7 +2854,9 @@ class MeasureWindow(Adw.Window):
         end = Gtk.Box(spacing=6, hexpand=True,
                       valign=Gtk.Align.CENTER, halign=Gtk.Align.END)
         box.append(end)
-        rm = Gtk.Button(icon_name="list-remove-symbolic",
+        # the same icon the targets' strip has used since the main
+        # window: one gesture, one glyph
+        rm = Gtk.Button(icon_name="window-close-symbolic",
                         valign=Gtk.Align.CENTER)
         rm.add_css_class("flat")
         rm.set_tooltip_text(
