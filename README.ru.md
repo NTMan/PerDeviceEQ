@@ -205,7 +205,7 @@ USB-микрофон для колонок, плюс его калибровоч
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `~/.config/per-device-eq/profiles/*.json`                        | ваши профили (банды, тейки, метаданные фита)                              |
 | `~/.config/per-device-eq/preference-layers.json`                 | слои вкуса и какой из них активен                                         |
-| `~/.config/per-device-eq/bindings.json`                          | карта устройство (`node.name`) → профиль                                  |
+| `~/.config/per-device-eq/bindings.json`                          | по устройству (`node.name`): его профиль и какой канал профиля кормит какой его собственный |
 | `~/.local/share/wireplumber/scripts/90-per-device-eq.lua`        | хук персистентности (статический скрипт, ставится из репозитория как есть)|
 | `~/.local/state/wireplumber/per-device-eq`                       | сохранённые хуком графы (пишутся хуком; восстанавливаются на старте)      |
 | `~/.config/wireplumber/wireplumber.conf.d/90-per-device-eq.conf` | загружает хук и создаёт объект метаданных `per-device-eq`                 |

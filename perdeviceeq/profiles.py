@@ -284,6 +284,16 @@ class ProfileStore:
         (an id or null), `map` (sink channel -> profile channel or null,
         in sink order), `pinned` (the same, for the hand's own choices).
 
+        NULL IN `map` MEANS NOTHING FEEDS THAT SINK CHANNEL -- either the
+        profile has no channel left for it (a ten-channel card wearing a
+        stereo profile) or there is no profile at all. The KEYS are the
+        sink's own channels, so a map of nothing but nulls is not an
+        empty map: it is the record of how wide the node is, which is
+        what the hook reads at login. Null in `pinned` is the opposite,
+        a hand saying feed this from nothing -- see pin_channel: the two
+        look identical in the map, and treating the resolver's null as
+        deliberate would make it permanent.
+
         A bare profile id was the shape before maps existed. It is
         neither written nor read now: one file, one form, and no reader
         kept alive for a past nobody needs. A row in the old shape is

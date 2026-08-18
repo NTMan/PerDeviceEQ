@@ -245,7 +245,7 @@ cannot clip behind the meter's back.
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `~/.config/per-device-eq/profiles/*.json`                        | your profiles (bands, takes, fit metadata)                               |
 | `~/.config/per-device-eq/preference-layers.json`                 | the taste layers and which one is active                                 |
-| `~/.config/per-device-eq/bindings.json`                          | device (`node.name`) → profile map                                       |
+| `~/.config/per-device-eq/bindings.json`                          | per device (`node.name`): its profile, and which profile channel feeds which of its own |
 | `~/.local/share/wireplumber/scripts/90-per-device-eq.lua`        | the persistence hook (a static script, installed verbatim from the repo) |
 | `~/.local/state/wireplumber/per-device-eq`                       | the hook's saved graphs (written by the hook; restored at startup)       |
 | `~/.config/wireplumber/wireplumber.conf.d/90-per-device-eq.conf` | loads the hook and creates the `per-device-eq` metadata object           |
