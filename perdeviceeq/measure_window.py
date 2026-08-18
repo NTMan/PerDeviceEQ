@@ -2430,7 +2430,13 @@ class MeasureWindow(Adw.Window):
     def _mic_channels(self):
         src = self._selected_source()
         if not src:
-            return 2
+            # NO MICROPHONE, NO COLUMNS. Two was a placeholder from
+            # when the width was clamped there anyway, and it showed as
+            # a card with channels L and R, a sensitivity fader and an
+            # offer to calibrate "L" -- for a microphone that had not
+            # been chosen. The same fiction the targets carried until
+            # they were born from the card instead of from a constant.
+            return 0
         # No stored override. It existed because a card could enumerate
         # a width it did not capture, and a hand could correct it -- but
         # the correction was a COUNT, and a count cannot say which wire
@@ -2456,6 +2462,8 @@ class MeasureWindow(Adw.Window):
         names = list(src.get("channels") or [])
         if len(names) == self.mic_ch and self.mic_ch > 2:
             return names
+        if not self.mic_ch:
+            return []
         if self.mic_ch == 1:
             return ["Mono"]
         if self.mic_ch == 2:
@@ -2577,7 +2585,7 @@ class MeasureWindow(Adw.Window):
         # answer is directly above it now.
         ch = self._selected_ch
         used = [min(self.mic_of.get(ch, 0), self.mic_ch - 1)] \
-            if 0 <= ch < self.n_ch else []
+            if self.mic_ch and 0 <= ch < self.n_ch else []
         for i in used:
             # ONE row: the fader, its search, and the line that says
             # where it stands. No heading -- a fader in this card IS
@@ -3916,6 +3924,16 @@ class MeasureWindow(Adw.Window):
             if not mic:
                 if not quiet:
                     self._error("Pick a measurement mic first.")
+                return False
+            if not self.mic_ch:
+                # A REMEMBERED NAME THAT NEVER RESOLVED still fills
+                # the picker, and the width comes from the live card,
+                # so there is none to build a session on. It used to
+                # be two by default, which built a session for a
+                # microphone that is not there.
+                if not quiet:
+                    self._error("That microphone is not on the "
+                                "system right now.")
                 return False
             # A SESSION IS BUILT ONCE, in the constructor, so nothing
             # about a single run may be settled here. Which sweeps
