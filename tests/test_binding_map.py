@@ -87,6 +87,29 @@ def test_one_node_s_map_does_not_reach_another(store):
     assert store.slots_for(OTHER) is None
 
 
+# ---- what a card has declared ---------------------------------------------
+
+def test_a_card_that_names_a_channel_has_declared_it():
+    """FL beside FL is read, not guessed, so a profile born on this
+    sink starts with the sides the card names -- in sink order."""
+    from perdeviceeq import eq
+    assert eq.spatial_targets(["FL", "FR"]) == ["FL", "FR"]
+    assert eq.spatial_targets(
+        ["FL", "FR", "FC", "LFE", "SL", "SR"]) == \
+        ["FL", "FR", "FC", "LFE", "SL", "SR"]
+
+
+def test_a_card_that_declares_nothing_gets_nothing():
+    """AUX0 is a bus, not a place. A ten-channel card offering only
+    buses starts empty and the hand pairs it, once."""
+    from perdeviceeq import eq
+    assert eq.spatial_targets(
+        ["AUX0", "AUX1", "AUX2", "AUX3"]) == []
+    assert eq.spatial_targets([]) == []
+    assert eq.spatial_targets(None) == []
+    assert eq.spatial_targets(["AUX0", "FR", "AUX1"]) == ["FR"]
+
+
 # ---- reconciliation -------------------------------------------------------
 
 def test_a_first_bind_answers_itself(store):

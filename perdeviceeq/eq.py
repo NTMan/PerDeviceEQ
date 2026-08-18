@@ -243,6 +243,18 @@ TARGETS = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR",
            "TRL", "TRC", "TRR"]
 
 
+def spatial_targets(sink_keys):
+    """The sink channels that carry a target's own name, in sink order.
+
+    A card that calls a channel FL has DECLARED where it goes, so FL
+    beside FL is read, not guessed. One that calls it AUX0 has declined
+    to declare anything, and there only a hand can say. That is the line
+    between a pairing worth making by itself and a guess: not "is it
+    obvious", but "did the card say".
+    """
+    return [k for k in (sink_keys or []) if k in TARGETS]
+
+
 def keep_channel_order(channels, stored_keys):
     """The profile's channel ORDER, kept.
 

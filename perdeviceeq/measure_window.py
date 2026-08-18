@@ -166,12 +166,11 @@ class MeasureWindow(Adw.Window):
         # selected. It used to be the sink's channels, which is how a
         # ten-channel card put AUX0 in a take's passport and how a
         # two-channel one left ten speakers on the ring behind it.
-        # A profile that has none yet starts at the stereo pair; more
-        # are added as pairs.
+        # A profile that declares none is born from the SINK, a few
+        # lines below once the graph has been read.
         prof = self.edit_prof or {}
-        self.ch_keys = (list(prof.get("ch_keys")
-                             or list((prof.get("channels") or {})))
-                        or ["FL", "FR"])
+        self.ch_keys = list(prof.get("ch_keys")
+                            or list((prof.get("channels") or {})))
         self.n_ch = len(self.ch_keys)
 
         _t = time.monotonic()
@@ -185,6 +184,15 @@ class MeasureWindow(Adw.Window):
         debug.timing("pw.update (a dump)", _t)
         self.sources = pw_backend.list_capture_entries_from(
             self._pw.sources)
+        if not self.ch_keys:
+            # BORN FROM THE SINK: the channels this card names
+            # spatially are the ones it has declared, and a profile
+            # measured here describes those sides. A card offering
+            # only AUX0..AUXn has declared nothing, so it starts
+            # empty and the hand pairs it -- once, for that sink.
+            self.ch_keys = eq.spatial_targets(
+                self._pw_output_channels(self.sink_node))
+            self.n_ch = len(self.ch_keys)
         self.cal = {}               # mic capture-channel idx -> cal
         self.mic_ch = 2             # rig capture channels (1 or 2)
         self.mic_of = {}            # sink channel -> analyzed mic ch
@@ -1472,7 +1480,26 @@ class MeasureWindow(Adw.Window):
     def _rebuild_page(self):
         if self._page is None:
             return
+        lb = self._page["takes_list"]
         ch = self._selected_ch
+        if not (0 <= ch < len(self.ch_keys)):
+            # NO TARGET, NO SUBJECT. This panel is about one side of a
+            # transducer, and a profile that declares none leaves it
+            # with nothing to be about -- so it says that, once, here,
+            # rather than every reader of self.ch_keys[ch] growing its
+            # own guard. The state is reachable now that the window no
+            # longer invents FL and FR for a profile that has neither.
+            for row in self._page["take_rows"]:
+                lb.remove(row)
+            self._page["take_rows"].clear()
+            self._page["title"].set_text("No target")
+            self._page["header"].set_markup(
+                "add a target and the output it plays through")
+            lb.set_visible(False)
+            self._page["chevron"].set_visible(False)
+            self._face = None
+            self._refresh_summary(ch, [])
+            return
         n = self._clean_count(ch)
         has_bad = self.session is not None and any(
             ms.take_quality(r) != ms.TAKE_CLEAN
@@ -1484,7 +1511,6 @@ class MeasureWindow(Adw.Window):
         self._page["header"].set_markup(
             "%d/%d clean%s%s%s"
             % (n, CLEAN_TARGET, mark, warn, self._thd_word(ch)))
-        lb = self._page["takes_list"]
         for row in self._page["take_rows"]:
             lb.remove(row)
         self._page["take_rows"].clear()
@@ -3229,6 +3255,8 @@ class MeasureWindow(Adw.Window):
         ch = self._selected_ch
         if not (0 <= ch < len(self.ch_keys)) or not self._target_is_empty(ch):
             return
+        if not (0 <= ch < len(self.ch_keys)):
+            return
         target = self.ch_keys[ch]
         store = self.parent.store
         if self.edit_pid:
@@ -3252,9 +3280,8 @@ class MeasureWindow(Adw.Window):
             if val == target:
                 store.pin_channel(self.sink_node, out, None)
         p = store.get(self.edit_pid) if self.edit_pid else {}
-        self.ch_keys = (list((p or {}).get("ch_keys")
-                             or list(((p or {}).get("channels") or {})))
-                        or ["FL", "FR"])
+        self.ch_keys = list((p or {}).get("ch_keys")
+                            or list(((p or {}).get("channels") or {})))
         self.n_ch = len(self.ch_keys)
         self._selected_ch = min(ch, self.n_ch - 1)
         self._recompute_mic()
@@ -3303,9 +3330,8 @@ class MeasureWindow(Adw.Window):
                 store.pin_channel(self.sink_node, ch, None)
         store.pin_channel(self.sink_node, sink_ch, target)
         p = store.get(pid) or {}
-        self.ch_keys = (list(p.get("ch_keys")
-                             or list((p.get("channels") or {})))
-                        or ["FL", "FR"])
+        self.ch_keys = list(p.get("ch_keys")
+                            or list((p.get("channels") or {})))
         self.n_ch = len(self.ch_keys)
         self._recompute_mic()
         self._rebuild_map_slots()
@@ -3810,8 +3836,13 @@ class MeasureWindow(Adw.Window):
         takes are per channel, and browsing the neighbor's pile
         must survive a gone device."""
         self._lock_baked_rows()
+        # A SWEEP NEEDS SOMETHING TO MEASURE, which is a fourth end of
+        # the chain and was never checked: with no target the play
+        # button used to be lit and the answer came from the sweep
+        # itself, as a failed measurement.
         live = (self._sink_present() and not self._sink_gone
-                and self._source_present() and not self._mic_gone)
+                and self._source_present() and not self._mic_gone
+                and bool(self.ch_keys))
         debug.mic_trace("pult live=%s sinkP=%s sinkG=%s srcP=%s "
                      "micG=%s busy=%s core=%r"
                      % (live, self._sink_present(),
@@ -3825,7 +3856,10 @@ class MeasureWindow(Adw.Window):
             # every control gray while "everything is there",
             # and nothing said WHICH of the four truths failed
             # or what NAME the window was looking for.
-            if not self._sink_present() or self._sink_gone:
+            if not self.ch_keys:
+                miss = ("nothing to measure yet -- add a target and "
+                        "the output it plays through")
+            elif not self._sink_present() or self._sink_gone:
                 miss = "sink offline: %s" % (self.sink_node
                                              or "?")
             elif self.mic_picker.core.node:
@@ -4099,9 +4133,15 @@ class MeasureWindow(Adw.Window):
         if self.edit_pid:
             return self.edit_pid
         store = self.parent.store
+        # IT DECLARES WHAT THE WINDOW IS SHOWING. Minting it empty was
+        # honest only while the window invented FL and FR to display;
+        # the targets came from the sink at open, and this writes them
+        # down so the profile and the tabs cannot disagree.
+        keys = list(self.ch_keys)
         pid = store.save_user({
             "name": self._profile_name(),
-            "preamp": 0.0, "ch_keys": [], "channels": {}})
+            "preamp": 0.0, "ch_keys": keys,
+            "channels": {k: {"bands": []} for k in keys}})
         self.edit_pid = pid
         self._minted = pid
         return pid
