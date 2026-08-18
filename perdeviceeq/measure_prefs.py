@@ -38,7 +38,8 @@ def _atomic_write(path, obj):
 
 
 
-def worth_saving(cal, existing, by_hand=False, knees=None):
+def worth_saving(cal, existing, by_hand=False, knees=None,
+                 columns=None):
     """Is there anything about this rig worth writing down?
 
     A remembered rig, or a calibration, obviously. And a HAND: an
@@ -54,10 +55,16 @@ def worth_saving(cal, existing, by_hand=False, knees=None):
     calibration -- which is every rig until one is chosen -- would
     have its verdict thrown away when the window closed.
 
+    And a DECLARED COLUMN, which is a hand saying which wires of this
+    card carry a capsule. It usually arrives before either of the
+    other two -- a column is declared and only then calibrated or
+    walked -- so a declaration that did not count as worth saving
+    would be forgotten before it could earn anything.
+
     Everything else is a handler firing during load, which must not
     mint a profile for every rig that is merely selected."""
     return (bool(cal) or existing is not None or bool(by_hand)
-            or bool(knees))
+            or bool(knees) or bool(columns))
 
 
 KNEE_FIELDS = ("gain", "kind", "knee_axis_db", "flat_dbfs",
@@ -107,6 +114,14 @@ def sane_columns(body):
     here belongs to the microphone plugged into it: same owner, same
     lifetime. A new per-column setting is then one line here rather
     than a second dictionary to keep in step with this one.
+
+    A RECORD MAY BE EMPTY, and an empty one is not noise: its
+    PRESENCE is the declaration that this column is in use. The app
+    cannot know how many of a card's columns carry a capsule -- one
+    microphone on a two-column card is not two microphones -- so the
+    hand says, once, and this is where the saying is kept. An empty
+    record used to be dropped here, which would have thrown the
+    declaration away on the next load.
     """
     out = {}
     if not isinstance(body, dict):
@@ -120,8 +135,7 @@ def sane_columns(body):
         knee = sane_knee(v.get("knee"))
         if knee:
             rec["knee"] = knee
-        if rec:
-            out[str(k)] = rec
+        out[str(k)] = rec
     return out
 
 
@@ -294,6 +308,24 @@ class MicProfileStore:
         if not p:
             return None
         return (p["columns"].get(str(channel)) or {}).get("knee")
+
+    def columns_of(self, pid):
+        """Which columns this rig has DECLARED, as ints, in order.
+
+        Presence is the declaration -- see sane_columns. A card's
+        width is not an answer to this: it says how many wires exist,
+        not how many carry a capsule, and only a hand knows that.
+        """
+        p = self.profiles.get(pid)
+        if not p:
+            return []
+        out = []
+        for k in p["columns"]:
+            try:
+                out.append(int(k))
+            except (TypeError, ValueError):
+                continue
+        return sorted(out)
 
     def knees_of(self, pid):
         """{column: verdict} for everything measured on this rig."""

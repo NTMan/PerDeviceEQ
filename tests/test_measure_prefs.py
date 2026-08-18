@@ -348,3 +348,28 @@ def test_a_measured_sensitivity_is_worth_a_file(paths):
     assert mp.worth_saving({}, None, False, knees={"0": {"gain": 0.5}})
     assert not mp.worth_saving({}, None, False, knees={})
     assert not mp.worth_saving({}, None, False)
+
+
+def test_a_declared_column_survives_with_nothing_in_it(paths):
+    """Presence is the declaration: the hand says which wires carry a
+    capsule, and it says so BEFORE there is a calibration or a walk to
+    keep in the record. An empty record used to be dropped on load,
+    which would forget the saying."""
+    body = {"name": "CM106", "node_match": "alsa_input.cm106#0",
+            "columns": {"0": {}, "1": {"cal": "/c/right.txt"}}}
+    store = mp.MicProfileStore()
+    pid = store.save(body)
+    assert store.columns_of(pid) == [0, 1]
+    assert store.cal_for(pid, 0) is None
+
+    again = mp.MicProfileStore()
+    assert again.columns_of(pid) == [0, 1]
+    assert again.cal_for(pid, 1) == "/c/right.txt"
+
+
+def test_a_declaration_is_worth_a_file_by_itself(paths):
+    """It arrives before anything it could earn -- a column is
+    declared first and calibrated or walked after -- so a declaration
+    that did not count would be forgotten before it counted."""
+    assert mp.worth_saving({}, None, False, columns={"0": {}})
+    assert not mp.worth_saving({}, None, False, columns={})
