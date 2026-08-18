@@ -348,7 +348,7 @@ class MeasureWindow(Adw.Window):
         # the status line below shares that axis (its lead bin
         # is size-grouped with the fader)
         ring_col.set_hexpand(True)
-        ring_col.append(self._build_measure_col())
+        self._build_measure_col()
         # HIS ORDER, and it is a dependency rather than a taste: the
         # microphone is settled first and knows nothing about targets;
         # the target comes next, because without one there is nothing
@@ -356,6 +356,20 @@ class MeasureWindow(Adw.Window):
         # and stop last, when everything is prepared. The output card
         # is built in the ui file and placed here, since only this
         # knows where the targets and the transport rows are.
+        # THE TARGETS RIDE IN THE SINK'S CARD, between its picker and
+        # its level, the same shape the microphone's card has: pick the
+        # thing, then say which of its channels, then the one number
+        # that moves. They had a card of their own, which said they
+        # were a third thing beside the microphone and the output --
+        # but a target is a channel OF the sink, so this is where the
+        # eye already looks for it.
+        #
+        # ONE DIFFERENCE FROM THE MIC CARD, and it must not be implied
+        # away: the level below is NOT per target. The mic card's rows
+        # follow the tab above them; the sweep level is one number for
+        # the rig, and its own row says so.
+        b.get_object("tabs_host").set_child(self._tab_box)
+        self._tab_row = b.get_object("tabs_host")
         ring_col.append(b.get_object("out_group"))
         ring_col.append(self._act_grp)
         self.ready_hint = Gtk.Label(xalign=0.5)
@@ -466,8 +480,8 @@ class MeasureWindow(Adw.Window):
         self._rebuild_cal_row()
 
     def _build_measure_col(self):
-        """The measurement column: the tabs, the capture row under
-        them, then the transport.
+        """The rows this window owns: the target tabs, the transport,
+        and the two faders. Each is CARDED by the window, not here.
 
         This was a RING -- a disc with a speaker per channel placed by
         compass angle. It went for a reason that killed the idea rather
@@ -483,20 +497,12 @@ class MeasureWindow(Adw.Window):
         three tones, and the transport standing still while the row
         above it changes shape.
         """
-        # ONE GROUP, the way the rig card above is one group. Loose
-        # widgets on a page and a boxed list with its own margins do
-        # not line up, and nothing says what belongs to what. Every
-        # control that acts on a target lives in a ROW of this group
-        # now -- the tabs with their add and remove, the transport
-        # with its play and stop, the capture column, that column's
-        # calibration -- and the group carries the title.
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        col.set_hexpand(True)
-        # no title: the whole window is the measurement, so a word
-        # saying so only costs a line
-        self._measure_grp = Adw.PreferencesGroup()
-        col.append(self._measure_grp)
-
+        # THE ROWS, NOT THE CARDS. This builds the tab row, the
+        # transport and the two faders; where each lands is the
+        # window's business, because only it knows the order the page
+        # is read in. The tabs went to the sink's card, the capture
+        # rows to the microphone's, and the transport keeps a card of
+        # its own at the bottom.
         # the same arrangement as the main window's tab row: the tabs
         # lead, the two controls sit together at the END, remove before
         # add. Here they ride the group's header, which is where a
@@ -543,10 +549,7 @@ class MeasureWindow(Adw.Window):
         pair_box.append(self._del_btn)      # remove, then add
         pair_box.append(self._add_btn)
         self._dress_tabs()
-        self._tab_row = Adw.PreferencesRow()
-        self._tab_row.set_activatable(False)
-        self._tab_row.set_child(row)
-        self._measure_grp.add(self._tab_row)
+        self._tab_box = row          # the window cards it, see __init__
 
         # the capture row belongs UNDER the tabs, his call and his
         # reason: the column is bound to the target that plays the
@@ -643,7 +646,6 @@ class MeasureWindow(Adw.Window):
             "Measure the playback level now (probe sweeps only)",
             self._on_relevel)
         self.relevel_btn.set_halign(Gtk.Align.CENTER)
-        return col
 
     def _pult_btn(self, icon, tip, cb):
         b = Gtk.Button()

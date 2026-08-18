@@ -204,6 +204,11 @@
       </object>
     </child>
     <child>
+      <object class="AdwPreferencesRow" id="tabs_host">
+        <property name="activatable">false</property>
+      </object>
+    </child>
+    <child>
       <object class="AdwPreferencesRow" id="vol_host">
         <property name="activatable">false</property>
       </object>
