@@ -34,20 +34,33 @@ def _written(tmp_path):
 
 # ---- file format ----------------------------------------------------------
 
-def test_a_bare_id_is_still_a_binding(store, tmp_path):
-    """Files written before maps existed keep working untouched."""
+def test_a_bare_id_is_not_read(store, tmp_path):
+    """The shape before maps existed, and no reader is kept alive for
+    it: one file, one form. The row is dropped, not silently adopted."""
     with open(tmp_path / "bindings.json", "w", encoding="utf-8") as f:
         json.dump({NODE: "abc123"}, f)
     s = P.ProfileStore()
-    assert s.binding_for(NODE) == "abc123"
+    assert s.binding_for(NODE) is None
     assert s.map_for(NODE) == {}
     assert s.slots_for(NODE) is None
 
 
-def test_a_node_without_a_map_is_written_back_bare(store, tmp_path):
-    """No map, no record: the file only grows a record once someone maps."""
+def test_every_node_is_written_as_a_record(store, tmp_path):
+    """All three keys, present even when empty: an absent key and an
+    empty one would be two ways to say one nothing."""
     store.set_binding(NODE, "abc123")
-    assert _written(tmp_path) == {NODE: "abc123"}
+    assert _written(tmp_path) == {
+        NODE: {"profile": "abc123", "map": {}, "pinned": {}}}
+
+
+def test_a_node_that_remembers_nothing_is_not_written(store, tmp_path):
+    """A row with no profile, no map and no pin says nothing about the
+    node it names."""
+    store.set_binding(NODE, "abc123")
+    store.set_map(NODE, {"FL": "FL"})
+    store.set_binding(NODE, None)
+    store.set_map(NODE, {})
+    assert _written(tmp_path) == {}
 
 
 def test_a_mapped_node_is_written_as_a_record(store, tmp_path):

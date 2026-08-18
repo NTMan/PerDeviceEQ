@@ -274,18 +274,25 @@ class ProfileStore:
 
     # ---- bindings ----
     def _load_bindings(self):
-        """bindings.json holds either a bare profile id per node, as it always
-        did, or a record. The record exists because a node needs to remember
-        more than which profile it wears: it also remembers WHICH CHANNEL OF
-        THE PROFILE FEEDS WHICH OF ITS OWN -- the sink owns the route, the
-        profile owns the earphone, and the correspondence between them
-        belongs to neither.
+        """bindings.json holds ONE shape: a record per node, always.
 
-        Read into two dicts so that everything written against the old shape
-        keeps working: self.bindings stays node -> profile id, self.maps
-        carries node -> {sink channel: profile channel or None}, in sink
-        order. A node with no map is written back in the bare form, so a
-        file only grows a record once someone actually maps something.
+        A node remembers more than which profile it wears. It remembers
+        WHICH CHANNEL OF THE PROFILE FEEDS WHICH OF ITS OWN -- the sink
+        owns the route, the profile owns the earphone, and the
+        correspondence between them belongs to neither -- and which of
+        those the hand chose rather than the app guessed. So: `profile`
+        (an id or null), `map` (sink channel -> profile channel or null,
+        in sink order), `pinned` (the same, for the hand's own choices).
+
+        A bare profile id was the shape before maps existed. It is
+        neither written nor read now: one file, one form, and no reader
+        kept alive for a past nobody needs. A row in the old shape is
+        named on stderr and dropped -- re-selecting the profile writes
+        it back in one click, and losing a binding without a word is
+        the one outcome not worth the tidiness.
+
+        Read into three dicts: self.bindings is node -> profile id,
+        self.maps and self.pins are node -> {sink channel: ...}.
         """
         binds, maps, pins = {}, {}, {}
         try:
@@ -295,38 +302,48 @@ class ProfileStore:
             b = {}
         if isinstance(b, dict):
             for node, v in b.items():
-                if isinstance(v, dict):
-                    pid = v.get("profile")
-                    if pid:
-                        binds[node] = pid
-                    m = v.get("map")
-                    if isinstance(m, dict) and m:
-                        maps[node] = {k: (x or None) for k, x in m.items()}
-                    q = v.get("pinned")
-                    if isinstance(q, dict) and q:
-                        pins[node] = {k: (x or None) for k, x in q.items()}
-                elif v:
-                    binds[node] = v
+                if not isinstance(v, dict):
+                    print("per-device-eq: bindings.json: %s is not a "
+                          "record, not read" % node, file=sys.stderr)
+                    continue
+                pid = v.get("profile")
+                if pid:
+                    binds[node] = pid
+                m = v.get("map")
+                if isinstance(m, dict) and m:
+                    maps[node] = {k: (x or None) for k, x in m.items()}
+                q = v.get("pinned")
+                if isinstance(q, dict) and q:
+                    pins[node] = {k: (x or None) for k, x in q.items()}
         self.maps = maps
         self.pins = pins
         return binds
 
     def save_bindings(self):
+        """Every node as a record, with all three keys present: an
+        absent key and an empty one would be two ways to say the same
+        nothing, and this file is read by hand.
+
+        A node that remembers NOTHING is not written at all. An
+        all-null map is not nothing -- it is the record of how wide
+        the node is, which the hook reads at login when there is no
+        sink to ask.
+        """
         os.makedirs(CONFIG_DIR, exist_ok=True)
+        maps = getattr(self, "maps", {}) or {}
+        pins = getattr(self, "pins", {}) or {}
+        nodes = list(self.bindings)
+        for n in list(maps) + list(pins):
+            if n not in nodes:
+                nodes.append(n)
         out = {}
-        extra = [n for n in list(getattr(self, "maps", {}))
-                 if n not in self.bindings]
-        for node in list(self.bindings) + extra:
+        for node in nodes:
             pid = self.bindings.get(node)
-            m = getattr(self, "maps", {}).get(node)
-            q = getattr(self, "pins", {}).get(node)
-            if m or q:
-                rec = {"profile": pid, "map": m}
-                if q:
-                    rec["pinned"] = q
-                out[node] = rec
-            else:
-                out[node] = pid
+            m = maps.get(node) or {}
+            q = pins.get(node) or {}
+            if not pid and not m and not q:
+                continue
+            out[node] = {"profile": pid, "map": m, "pinned": q}
         tmp = BINDINGS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=2, ensure_ascii=False)
