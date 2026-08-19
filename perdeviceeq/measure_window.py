@@ -198,6 +198,7 @@ class MeasureWindow(Adw.Window):
         self.mic_cols = []          # columns this rig has DECLARED
         self.mic_col = None         # the declared column in view
         self.col_tabs = None        # its strip, built with the card
+        self._takes_pending = None  # an edit on its way to the file
         self._col_of_label = {}     # the strip speaks the card's names
         self.mic_of = {}            # sink channel -> analyzed mic ch
         self.session = None         # created on first measure
@@ -240,7 +241,7 @@ class MeasureWindow(Adw.Window):
         self._knee = {}
         self.tabs = None             # the shared channel row
         self._inmeter = inmeter.InputMeter()
-        self._meter_bars = {}        # column -> Gtk.LevelBar in the list
+        self._meter_bars = {}        # column -> [Gtk.LevelBar], since a
         self._meter_shown = {}       # column -> the dB the eye sees
         self._meter_tick = None
 
@@ -2434,7 +2435,7 @@ class MeasureWindow(Adw.Window):
         self.mic_cols = self._declared_cols()
         if self.mic_col not in self.mic_cols:
             self.mic_col = self.mic_cols[0] if self.mic_cols else None
-        self.mic_of = self._default_mic_of()
+        self.mic_of = self._mic_of_map()
 
     def _declared_cols(self):
         """Which columns of this card carry a capsule, per the hand.
@@ -2454,13 +2455,34 @@ class MeasureWindow(Adw.Window):
         return [c for c in self.mic_store.columns_of(prof["id"])
                 if 0 <= c < self.mic_ch]
 
-    def _declare_col(self, col):
-        """A hand says this wire carries a capsule."""
-        if col in self.mic_cols or not (0 <= col < self.mic_ch):
+    def _point_col(self, col, keys):
+        """A hand points a capsule at targets, which is also how the
+        capsule gets declared.
+
+        ONE GESTURE WITH TWO PICKS, mirroring the output's add: there
+        the menu offers target and output together, here capsule and
+        target. Declaring a wire and saying what it captures were two
+        separate acts for one commit, and he was right that they are
+        one -- a wire nobody points at anything is not in use.
+
+        The `keys` may be every target at once, which is the one click
+        a single microphone ever needs: it captures all of them, on a
+        stereo set and on a 7.1 set alike. That is the case 0177 was
+        cut for, and a menu of pairs alone would have asked eight
+        times for it.
+        """
+        if not (0 <= col < self.mic_ch):
             return
-        self.mic_cols = sorted(self.mic_cols + [col])
+        by_name = dict(self._stored_takes())
+        for key in keys:
+            if key in self.ch_keys:
+                by_name[key] = col
+        self._takes_pending = by_name
+        if col not in self.mic_cols:
+            self.mic_cols = sorted(self.mic_cols + [col])
         self.mic_col = col
         self._persist_mic(by_hand=True)
+        self._takes_pending = None
         self._recompute_mic()
         self._rebuild_map_slots()
         self._update_pult()
@@ -2522,26 +2544,56 @@ class MeasureWindow(Adw.Window):
             return names if len(names) == 2 else ["L", "R"]
         return ["Column %d" % i for i in range(self.mic_ch)]
 
-    def _default_mic_of(self):
-        """Which DECLARED column each target starts on.
+    def _mic_of_map(self):
+        """Which declared column captures each target, BY THE HAND.
 
-        One declared column and there is nothing to choose: every
-        target reads it, and the question is never asked. Two or more
-        and this is still a guess -- the right side on the second, the
-        rest on the first -- which is why it dies when the target names
-        its column by hand. It picks from the DECLARED set now, not
-        from the card's width: a two-wire card carrying one capsule
-        used to send FR to column 1, a wire nobody had said was in use.
+        With ONE declared column there is nothing to choose and nothing
+        to record: it captures everything, and the question is never
+        asked. With two or more the hand says, per column, and a target
+        nobody named is not captured by anybody -- which the window
+        reports rather than papering over.
+
+        What stood here was a guess: the right side on the second
+        column, the rest on the first. It was right for a two-capsule
+        rig sitting the obvious way round and silently wrong for every
+        other arrangement, and nothing on screen said which it was.
         """
         cols = self.mic_cols
         if not cols:
             return {}
-        first = cols[0]
-        second = cols[1] if len(cols) > 1 else first
+        if len(cols) == 1:
+            # ONE MICROPHONE CAPTURES EVERY TARGET -- his rule, and it
+            # is the whole answer for most rigs: nothing is asked, on a
+            # stereo set and on a 7.1 set alike. A menu item saying
+            # "all targets" would have been the same rule spelled as a
+            # click, which he refused for exactly that reason.
+            return {k: cols[0] for k in range(len(self.ch_keys))}
+        by_name = self._stored_takes()
         m = {}
         for k, key in enumerate(self.ch_keys):
-            m[k] = second if key.upper().endswith("R") else first
+            col = by_name.get(key)
+            if col in cols:
+                m[k] = col
         return m
+
+
+    def _stored_takes(self):
+        src = self._selected_source()
+        prof = self.mic_store.match(src["name"]) if src else None
+        return self.mic_store.takes_of(prof["id"]) if prof else {}
+
+
+    def _takes_of_col(self, col):
+        """The targets this column captures, in profile order.
+
+        The EFFECTIVE answer, so the rule is visible: a lone capsule
+        reads as capturing all of them, which is what it does, rather
+        than as capturing the one target that happened to be named
+        while declaring it.
+        """
+        return [self.ch_keys[k] for k, c in sorted(self.mic_of.items())
+                if c == col and 0 <= k < len(self.ch_keys)]
+
 
     def _cal_testimony(self, path):
         """The slot's cloud: ONE number -- foreign profiles --
@@ -2830,23 +2882,26 @@ class MeasureWindow(Adw.Window):
         keys = [labels[c] if c < len(labels) else "Column %d" % c
                 for c in self.mic_cols]
         self._col_of_label = dict(zip(keys, self.mic_cols))
+        # UNDER EACH TAB, what that capsule captures. The strip already
+        # prints a partner under a key, which is how the targets' strip
+        # names the output each one plays through; here it is the other
+        # end of the same sentence, and it saves a row on a card he is
+        # deliberately keeping short.
+        partner = {}
+        for lab, c in self._col_of_label.items():
+            got = self._takes_of_col(c)
+            partner[lab] = ", ".join(got) if got else "captures nothing"
         self.col_tabs.rebuild(
-            keys, selected=(self._label_of_col(self.mic_col)
-                            if self.mic_col is not None else None))
+            keys, partner=partner,
+            selected=(self._label_of_col(self.mic_col)
+                      if self.mic_col is not None else None))
         box.append(bar)
         if self.mic_col is not None:
-            live = Gtk.LevelBar()
-            live.set_min_value(0.0)
-            live.set_max_value(1.0)
-            live.set_size_request(90, -1)
-            live.set_valign(Gtk.Align.CENTER)
-            live.set_value(self._meter_fraction(self.mic_col))
-            self._meter_bars[self.mic_col] = live
-            box.append(live)
+            box.append(self._meter_bar(self.mic_col))
         if not self.mic_cols:
             # the card is there and nothing has been said about it yet,
             # which is a state to invite out of, not to report
-            lab = Gtk.Label(label="no capture channel declared yet",
+            lab = Gtk.Label(label="no capture channel assigned yet",
                             xalign=0.0)
             lab.add_css_class("dim-label")
             lab.set_valign(Gtk.Align.CENTER)
@@ -2870,12 +2925,12 @@ class MeasureWindow(Adw.Window):
                              valign=Gtk.Align.CENTER)
         add.add_css_class("flat")
         add.set_tooltip_text(
-            "Declare another capture channel. Knock on the capsule "
-            "and watch which one moves.")
-        free = [c for c in range(self.mic_ch)
-                if c not in self.mic_cols]
-        add.set_sensitive(bool(free))
-        add.set_popover(self._col_add_popover(free))
+            "Say which capture channel captures which target. Knock "
+            "on the capsule and watch which channel moves. With one "
+            "capture channel in use it captures every target and "
+            "there is nothing to say.")
+        add.set_sensitive(bool(self.mic_ch and self.ch_keys))
+        add.set_popover(self._col_add_popover())
         end.append(add)
         row.set_child(box)
         return row
@@ -2895,47 +2950,117 @@ class MeasureWindow(Adw.Window):
         self._rebuild_cal_row()
         self._update_pult()
 
-    def _col_add_popover(self, free):
-        """The columns not yet declared, each with its own live level.
+    def _col_add_popover(self):
+        """The target first, then the capture channel that captures it.
 
-        The picker meters what it offers, because a card with sixteen
-        columns tells you nothing about which one the microphone is on
-        -- knock on the capsule, watch the list. The bars are
-        registered by COLUMN, not by row position: this list is a
-        subset, and a bar keyed by position would have shown a
-        neighbour's level.
+        THE SAME TWO LEVELS THE OUTPUT'S ADD USES, and the same first
+        level: the whole target vocabulary, not just the channels this
+        profile happens to declare. Choosing a microphone and finding
+        its working gain is the FIRST step of setting a rig up, and it
+        must not depend on the profile, which is the step after.
+        An assignment naming a target the profile does not have yet is
+        simply a fact about the rig, waiting: which capsule sits in
+        which ear is true before any earphone is measured.
+
+        The second level is built ON DEMAND, per target, because it
+        carries a live level per channel and this card has sixteen of
+        them -- twenty targets times sixteen channels of metered rows,
+        all at once, for a popover where one row is ever clicked.
         """
         pop = Gtk.Popover()
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         for side in ("start", "end", "top", "bottom"):
             getattr(box, "set_margin_" + side)(6)
-        labels = self._mic_labels()
-        for c in free:
-            b = Gtk.Button()
-            b.add_css_class("flat")
-            inner = Gtk.Box(spacing=12)
-            lbl = Gtk.Label(label=(labels[c] if c < len(labels)
-                                   else "Column %d" % c), xalign=0.0)
-            lbl.set_hexpand(True)
-            meter = Gtk.LevelBar()
-            meter.set_min_value(0.0)
-            meter.set_max_value(1.0)
-            meter.set_size_request(90, -1)
-            meter.set_valign(Gtk.Align.CENTER)
-            meter.set_value(self._meter_fraction(c))
-            self._meter_bars[c] = meter
-            inner.append(lbl)
-            inner.append(meter)
-            b.set_child(inner)
-            b.connect("clicked", self._make_declare_cb(pop, c))
-            box.append(b)
-        pop.set_child(box)
+        have = list(self.ch_keys)
+        for key in have + [t for t in eq.TARGETS if t not in have]:
+            mb = Gtk.MenuButton(label=key)
+            mb.add_css_class("flat")
+            mb.set_direction(Gtk.ArrowType.RIGHT)
+            mb.set_create_popup_func(self._make_chan_popup(mb, pop, key))
+            box.append(mb)
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_propagate_natural_height(True)
+        sw.set_max_content_height(420)
+        sw.set_child(box)
+        pop.set_child(sw)
         return pop
 
-    def _make_declare_cb(self, pop, col):
-        def cb(_b):
+    def _make_chan_popup(self, mb, parent, key):
+        """Fill a target's submenu the moment it is opened.
+
+        A LIVE LEVEL PER CHANNEL, which is what a submenu is usually
+        too dumb to carry: knock on the capsule and watch which row
+        moves, without leaving the choice you are making. Built here
+        rather than up front so sixteen bars exist only while they are
+        being looked at, and unregistered when the submenu closes.
+        """
+        def fill(_mb):
+            sub = Gtk.Popover()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                          spacing=6)
+            for side in ("start", "end", "top", "bottom"):
+                getattr(box, "set_margin_" + side)(6)
+            labels = self._mic_labels()
+            by_name = self._stored_takes()
+            lone = (self.mic_cols[0] if len(self.mic_cols) == 1
+                    else None)
+            mine = []
+            for c in range(self.mic_ch):
+                b = Gtk.Button()
+                b.add_css_class("flat")
+                inner = Gtk.Box(spacing=12)
+                name = (labels[c] if c < len(labels)
+                        else "Column %d" % c)
+                if c == lone:
+                    # THE RULE, said where it applies: one capture
+                    # channel in use captures every target, so this
+                    # row is already the answer
+                    name = "%s \u2713 (the only one in use)" % name
+                elif by_name.get(key) == c:
+                    name = "%s \u2713" % name
+                lbl = Gtk.Label(label=name, xalign=0.0)
+                lbl.set_hexpand(True)
+                inner.append(lbl)
+                bar = self._meter_bar(c)
+                mine.append((c, bar))
+                inner.append(bar)
+                b.set_child(inner)
+                b.connect("clicked", self._make_take_cb(parent, c, key))
+                box.append(b)
+            sw = Gtk.ScrolledWindow()
+            sw.set_policy(Gtk.PolicyType.NEVER,
+                          Gtk.PolicyType.AUTOMATIC)
+            sw.set_propagate_natural_height(True)
+            sw.set_max_content_height(420)
+            sw.set_child(box)
+            sub.set_child(sw)
+            sub.connect("closed", lambda _p: self._drop_meters(mine))
+            mb.set_popover(sub)
+        return fill
+
+    def _drop_meters(self, pairs):
+        """A closed submenu's bars stop being painted.
+
+        They would not raise on a set_value after their popover is
+        gone, so nothing would prune them: the registry would grow by
+        sixteen every time a submenu was opened.
+        """
+        for col, bar in pairs:
+            bars = [b for b in self._meter_bars.get(col, [])
+                    if b is not bar]
+            if bars:
+                self._meter_bars[col] = bars
+            else:
+                self._meter_bars.pop(col, None)
+
+    def _make_take_cb(self, pop, col, key):
+        def cb(btn):
+            sub = btn.get_ancestor(Gtk.Popover)
+            if sub is not None:
+                sub.popdown()
             pop.popdown()
-            self._declare_col(col)
+            self._point_col(col, [key])
         return cb
 
     def _say(self, text):
@@ -3037,11 +3162,36 @@ class MeasureWindow(Adw.Window):
         return min(1.0, max(0.0, (db - lo) / (0.0 - lo)))
 
     def _paint_meters(self):
-        for ch, bar in list(self._meter_bars.items()):
-            try:
-                bar.set_value(self._meter_fraction(ch))
-            except Exception:
+        """Every bar showing a channel, wherever it is drawn.
+
+        A LIST per channel, not one bar: the picker offers the same
+        channel under every target, so one channel can be on screen
+        four times at once, and a single-bar registry would leave
+        three of them frozen while the fourth moved.
+        """
+        for ch, bars in list(self._meter_bars.items()):
+            live = []
+            for bar in bars:
+                try:
+                    bar.set_value(self._meter_fraction(ch))
+                    live.append(bar)
+                except Exception:                       # noqa: BLE001
+                    pass
+            if live:
+                self._meter_bars[ch] = live
+            else:
                 self._meter_bars.pop(ch, None)
+
+    def _meter_bar(self, col):
+        """A bar for a capture channel, registered so it stays live."""
+        bar = Gtk.LevelBar()
+        bar.set_min_value(0.0)
+        bar.set_max_value(1.0)
+        bar.set_size_request(90, -1)
+        bar.set_valign(Gtk.Align.CENTER)
+        bar.set_value(self._meter_fraction(col))
+        self._meter_bars.setdefault(col, []).append(bar)
+        return bar
 
 
 
@@ -3472,9 +3622,9 @@ class MeasureWindow(Adw.Window):
         cubic, kind = src.get("gain") or (None, None)
         # the COLUMN's own gain where the card has one: the folded
         # reading is true of neither channel the moment they differ
-        col = self.mic_of.get(self._selected_ch, 0)
+        col = self.mic_col
         per = list(src.get("gains") or [])
-        if 0 <= col < len(per):
+        if col is not None and 0 <= col < len(per):
             cubic = per[col]
         # what the fader CAN do is a property of the route, not of the
         # value standing in it: at unity a hardware multiplier and a
@@ -3541,9 +3691,10 @@ class MeasureWindow(Adw.Window):
         nid = src.get("id")
         if nid is None:
             return
+        if self.mic_col is None:
+            return
         try:
-            self._write_gain(src, self.mic_of.get(self._selected_ch, 0),
-                             self._take_gain)
+            self._write_gain(src, self.mic_col, self._take_gain)
         except Exception as e:
             debug.log("capture gain: %s" % e)
 
@@ -3595,7 +3746,9 @@ class MeasureWindow(Adw.Window):
                          daemon=True).start()
 
     def _knee_worker(self, src):
-        col = self.mic_of.get(self._selected_ch, 0)
+        col = self.mic_col
+        if col is None:
+            return
         out = {"error": None, "verdict": None, "walk": None, "src": src}
         try:
             def said(rung, done, total):
@@ -3763,7 +3916,9 @@ class MeasureWindow(Adw.Window):
             return None
         route = next((r.get("name") for r in src.get("routes") or []
                       if r.get("active")), None)
-        return (name, route, self.mic_of.get(self._selected_ch, 0))
+        if self.mic_col is None:
+            return None
+        return (name, route, self.mic_col)
 
     def _apply_knee(self, src, v):
         """Remember what the ladder found, and move the fader only if
@@ -3809,7 +3964,9 @@ class MeasureWindow(Adw.Window):
             # same way a hand would
             if key is not None:
                 self._gain_set[key] = round(cubic * 100.0)
-            col = self.mic_of.get(self._selected_ch, 0)
+            col = self.mic_col
+            if col is None:
+                return
 
             def work():
                 try:
@@ -3856,7 +4013,9 @@ class MeasureWindow(Adw.Window):
             return
         cubic = scale.get_value() / 100.0
         self._refresh_knee_caption()
-        col = self.mic_of.get(self._selected_ch, 0)
+        col = self.mic_col
+        if col is None:
+            return
         seed = self._knee_key()
         if seed is not None:
             self._gain_set[seed] = round(scale.get_value())
@@ -3911,9 +4070,14 @@ class MeasureWindow(Adw.Window):
         # the chain and was never checked: with no target the play
         # button used to be lit and the answer came from the sweep
         # itself, as a failed measurement.
+        # AND A FIFTH: with two capsules declared, a target nobody
+        # pointed a column at cannot be recorded, and the answer must
+        # not be a sweep that analyses column 0 because that is the
+        # number a missing key returns.
         live = (self._sink_present() and not self._sink_gone
                 and self._source_present() and not self._mic_gone
-                and bool(self.ch_keys))
+                and bool(self.ch_keys)
+                and self._selected_ch in self.mic_of)
         debug.mic_trace("pult live=%s sinkP=%s sinkG=%s srcP=%s "
                      "micG=%s busy=%s core=%r"
                      % (live, self._sink_present(),
@@ -3930,6 +4094,12 @@ class MeasureWindow(Adw.Window):
             if not self.ch_keys:
                 miss = ("nothing to measure yet -- add a target and "
                         "the output it plays through")
+            elif (self._selected_ch not in self.mic_of
+                    and 0 <= self._selected_ch < len(self.ch_keys)
+                    and self.mic_cols):
+                miss = ("no microphone assigned to %s -- say which "
+                        "capture channel captures it"
+                        % self.ch_keys[self._selected_ch])
             elif not self._sink_present() or self._sink_gone:
                 miss = "sink offline: %s" % (self.sink_node
                                              or "?")
@@ -4066,6 +4236,17 @@ class MeasureWindow(Adw.Window):
                         "would be silent.\n\nSet a level, or press the "
                         "auto-level button to measure one.")
             return
+        if ch not in self.mic_of:
+            # WITH TWO CAPSULES DECLARED a target has to be pointed at
+            # one of them. The pult already refuses, and this is the
+            # same refusal at the other door: the releveler starts a
+            # sweep too, and a missing key used to read as column 0.
+            self._error("Nothing captures %s yet.\n\nOn the "
+                        "microphone's card, say which capture channel "
+                        "captures it."
+                        % (self.ch_keys[ch]
+                           if 0 <= ch < len(self.ch_keys) else "it"))
+            return
         if not self._ensure_session():
             return
         if self._sink_gone or self._mic_gone:
@@ -4122,7 +4303,7 @@ class MeasureWindow(Adw.Window):
             self.session.sink, self.session.source,
             self.session.cfg.channels,
             sink_name=self.session.sink_ident["name"],
-            analyze=self.mic_of.get(ch, 0),
+            analyze=self.mic_of[ch],
             sweep=self.session.sweep, freqs=self.session.freqs,
             pre_silence=self.session.cfg.pre_silence,
             post_silence=self.session.cfg.post_silence,
@@ -4150,7 +4331,7 @@ class MeasureWindow(Adw.Window):
             else:
                 self.session.set_level(self._take_level)
                 result["outcome"] = self.session.take(
-                    ch, analyze=self.mic_of.get(ch, 0))
+                    ch, analyze=self.mic_of[ch])
         except Exception as e:
             result["error"] = e
             debug.crashed("the measurement", e, expected=EXPECTED_FAILURES)
@@ -4416,6 +4597,12 @@ class MeasureWindow(Adw.Window):
                                           columns=self.mic_cols):
             return
         chans = {str(c): {} for c in self.mic_cols}
+        by_name = (self._takes_pending if self._takes_pending is not None
+                   else self._stored_takes())
+        for key in self.ch_keys:            # profile order, not dict
+            col = by_name.get(key)
+            if col in self.mic_cols:
+                chans[str(col)].setdefault("takes", []).append(key)
         for k, path in cal.items():
             chans.setdefault(str(k), {})["cal"] = path
         for k, rec in knees.items():

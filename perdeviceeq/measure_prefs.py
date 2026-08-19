@@ -122,6 +122,13 @@ def sane_columns(body):
     hand says, once, and this is where the saying is kept. An empty
     record used to be dropped here, which would have thrown the
     declaration away on the next load.
+
+    `takes` names the profile channels this column captures, by their
+    own names. It belongs to the SOURCE and not to the earphone: which
+    capsule sits in which ear is a fact about the rig, so changing the
+    earphone must not disturb it. Only stated when there is something
+    to state -- with one declared column there is nothing to choose and
+    nothing is written.
     """
     out = {}
     if not isinstance(body, dict):
@@ -135,6 +142,11 @@ def sane_columns(body):
         knee = sane_knee(v.get("knee"))
         if knee:
             rec["knee"] = knee
+        takes = v.get("takes")
+        if isinstance(takes, (list, tuple)):
+            names = [str(t) for t in takes if t]
+            if names:
+                rec["takes"] = names
         out[str(k)] = rec
     return out
 
@@ -326,6 +338,29 @@ class MicProfileStore:
             except (TypeError, ValueError):
                 continue
         return sorted(out)
+
+    def takes_of(self, pid):
+        """{profile channel: column} for this rig, from the hand.
+
+        Inverted on read because the question the window asks is
+        always "which column captures THIS target", while the record
+        is kept per column -- a column is the thing that exists, a
+        target is what it is pointed at. A target named twice would be
+        a contradiction; the last column wins here and the window is
+        what prevents it from arising.
+        """
+        p = self.profiles.get(pid)
+        if not p:
+            return {}
+        out = {}
+        for k, v in p["columns"].items():
+            try:
+                col = int(k)
+            except (TypeError, ValueError):
+                continue
+            for t in v.get("takes") or []:
+                out[t] = col
+        return out
 
     def knees_of(self, pid):
         """{column: verdict} for everything measured on this rig."""

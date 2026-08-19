@@ -110,6 +110,38 @@ def test_a_card_that_declares_nothing_gets_nothing():
     assert eq.spatial_targets(["AUX0", "FR", "AUX1"]) == ["FR"]
 
 
+# ---- which capsule captures which target ----------------------------------
+
+def test_a_column_says_what_it_captures(tmp_path, monkeypatch):
+    """Kept per column, because a column is the thing that exists;
+    read per target, because that is the question a take asks."""
+    from perdeviceeq import measure_prefs as MP
+    monkeypatch.setattr(MP, "MIC_PROFILES_FILE",
+                        str(tmp_path / "mic.json"))
+    st = MP.MicProfileStore()
+    pid = st.save({"name": "EARS", "node_match": "n#0",
+                   "columns": {"0": {"takes": ["FL"]},
+                               "1": {"takes": ["FR"]}}})
+    st = MP.MicProfileStore()
+    assert st.takes_of(pid) == {"FL": 0, "FR": 1}
+    assert st.columns_of(pid) == [0, 1]
+
+
+def test_a_declared_column_captures_nothing_until_told(tmp_path,
+                                                       monkeypatch):
+    """Declaring a wire and pointing it at a target are two acts, and
+    the first survives without the second."""
+    from perdeviceeq import measure_prefs as MP
+    monkeypatch.setattr(MP, "MIC_PROFILES_FILE",
+                        str(tmp_path / "mic.json"))
+    st = MP.MicProfileStore()
+    pid = st.save({"name": "CM106", "node_match": "n#0",
+                   "columns": {"0": {}}})
+    st = MP.MicProfileStore()
+    assert st.columns_of(pid) == [0]
+    assert st.takes_of(pid) == {}
+
+
 # ---- reconciliation -------------------------------------------------------
 
 def test_a_first_bind_answers_itself(store):
