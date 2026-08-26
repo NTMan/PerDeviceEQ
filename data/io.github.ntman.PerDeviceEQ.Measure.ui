@@ -167,9 +167,16 @@
                something to capture it with. -->
           <object class="AdwPreferencesGroup" id="mic_group">
             <child>
-              <object class="AdwComboRow" id="source_row">
+              <object class="AdwActionRow" id="source_row">
                 <property name="title" translatable="yes">Measurement mic</property>
                 <property name="subtitle" translatable="yes">Input the sweep is captured on</property>
+                <child type="suffix">
+                  <object class="GtkMenuButton" id="source_row_btn">
+                    <property name="valign">center</property>
+                    <property name="always-show-arrow">true</property>
+                    <style><class name="flat"/></style>
+                  </object>
+                </child>
               </object>
             </child>
             <child>
@@ -198,9 +205,16 @@
        and the play/stop row, which are built in code -->
   <object class="AdwPreferencesGroup" id="out_group">
     <child>
-      <object class="AdwComboRow" id="sink_row">
+      <object class="AdwActionRow" id="sink_row">
         <property name="title" translatable="yes">Output</property>
         <property name="subtitle" translatable="yes">Where the sweep is played</property>
+        <child type="suffix">
+          <object class="GtkMenuButton" id="sink_row_btn">
+            <property name="valign">center</property>
+            <property name="always-show-arrow">true</property>
+            <style><class name="flat"/></style>
+          </object>
+        </child>
       </object>
     </child>
     <child>

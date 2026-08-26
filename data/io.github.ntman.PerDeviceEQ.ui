@@ -107,8 +107,9 @@
                   <class name="linked"/>
                 </style>
                 <child>
-                  <object class="GtkDropDown" id="device_dd">
+                  <object class="GtkMenuButton" id="device_dd">
                     <property name="tooltip-text" translatable="yes">Output device</property>
+                    <property name="always-show-arrow">true</property>
                   </object>
                 </child>
                 <child>

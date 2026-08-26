@@ -39,7 +39,7 @@ from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
 from . import (__version__, chantabs, config, debug, eq, pw_backend,
                integration)
-from .picker import NodePicker
+from .picker import NodeMenu
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
                      load_ui_state, save_ui_state,
                      UI_FILE_CANDIDATES)
@@ -280,7 +280,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.profile_button.connect("notify::active", self._on_picker_toggle)
         self.follow_btn.connect("toggled", self._on_follow_toggled)
 
-        self.picker = NodePicker(self.device_dd, self._on_sink_pick)
+        self.picker = NodeMenu(self.device_dd, self._on_sink_pick)
         _t = time.monotonic()
         self._init_devices()
         debug.timing("_init_devices", _t)
@@ -1320,11 +1320,6 @@ class EqWindow(Adw.ApplicationWindow):
             self.follow_btn.set_sensitive(False)
             return
         self.live = True
-        try:
-            self.device_dd.set_expression(
-                Gtk.PropertyExpression.new(Gtk.StringObject, None, "string"))
-        except Exception:
-            pass
         b = pw_backend.backend()
         b.update()
         self.sinks = b.sinks

@@ -23,7 +23,7 @@ def _core(sinks, node=None, desc=None):
 def test_rows_mirror_the_graph():
     c = _core([_s("a", "A"), _s("b", "B")], "b")
     assert c.rows() == [("a", "A"), ("b", "B")]
-    assert c.index_of("b") == 1
+    assert c.rows()[1][0] == "b"
     assert c.alive()
 
 
@@ -31,7 +31,7 @@ def test_gone_row_tops_the_list_and_keeps_the_desc():
     c = _core([_s("a", "A"), _s("b", "B")], "b")
     c.set_sinks([_s("a", "A")])          # b left the graph
     assert c.rows()[0] == ("b", "B")
-    assert c.index_of("b") == 0
+    assert c.rows()[0][0] == "b"
     assert not c.alive()
     assert c.alive("a")
 
@@ -44,344 +44,236 @@ def test_desc_follows_the_graph_while_alive():
     assert c.rows() == [("a", "new name")]
 
 
-def test_pick_moves_strips_and_rejects():
-    c = _core([_s("a", "A"), _s("b", "B")], "b")
-    c.set_sinks([_s("a", "A")])          # rows: gone b, then a
-    rows = c.rows()
-    assert c.pick(0, rows) is None       # the gone row IS the
-    assert c.pick(9, rows) is None       # choice; range guarded
-    assert c.pick(1, rows) == ("a", "A")
-
-
-def test_pick_resolves_against_the_stale_rows():
-    c = _core([_s("a", "A"), _s("b", "B")], "b")
-    c.set_sinks([_s("a", "A")])
-    stale = c.rows()                     # the widget shows these
-    c.set_node("a")                      # ...but the core moved
-    # picking the old gone row deliberately re-pins the dead b
-    assert c.pick(0, stale) == ("b", "B")
-    # and against FRESH rows the same index is a self-pick
-    assert c.pick(0) is None
+def test_pick_by_name_moves_strips_and_rejects():
+    """A pick names the node, so nothing has to be resolved against a
+    snapshot that may already have moved."""
+    c = _core([_s("a", "A"), _s("b", "B")], "gone", "Gone")
+    assert c.pick("gone") is None        # the gone row IS the choice
+    assert c.pick("nobody") is None      # not in the snapshot
+    assert c.pick("a") == ("a", "A")
 
 
 def test_select_resolves_desc_with_fallback():
-    c = _core([_s("a", "A"), _s("b", "B")], "a")
-    c.set_node("b")                      # desc from the graph
-    assert c.desc == "B"
-    c.set_node("ghost")                  # not listed: keep last
-    assert c.desc == "B"
-    assert c.rows()[0] == ("ghost", "B")
+    c = _core([_s("a", "A")], "a")
+    assert c.desc == "A"
+    c.set_node("ghost")                  # not in the graph
+    assert c.desc == "A"                 # last known desc survives
+    c.set_node("a", "Renamed")
+    assert c.desc == "Renamed"
 
 
 # ---- the GTK shell, executed against a stub gi ----------------
-# The fake dropdown mimics the one GTK behavior that caused the
-# field bug: set_model resets the selection to row 0 and emits.
+# The shell drives a GtkMenuButton and a stateful action. The fakes
+# below are the two of them, no more: the menu is data, the action
+# carries the mark, and a rebuild must not land while the menu is
+# open.
 
 import sys
 import types
 
-INVALID = 4294967295
 
-
-class FakeStringList:
+class FakeMenu:
     def __init__(self):
-        self.items = []
+        self.items = []          # (label, target) or (label, FakeMenu)
 
-    def append(self, s):
-        self.items.append(s)
+    def append_item(self, item):
+        self.items.append((item.label, item.target))
+
+    def append_submenu(self, label, sub):
+        self.items.append((label, sub))
 
 
-class FakeDropDown:
-    def __init__(self):
-        self.model = None
-        self.selected = INVALID
-        self.set_model_calls = 0
-        self._handlers = []
-        self._emitting = 0
+class FakeMenuItem:
+    def __init__(self, label, _detail):
+        self.label, self.target = label, None
+
+    @staticmethod
+    def new(label, detail):
+        return FakeMenuItem(label, detail)
+
+    def set_action_and_target_value(self, name, target):
+        self.action, self.target = name, target.s
+
+
+class FakeVariant:
+    def __init__(self, _fmt, s):
+        self.s = s
+
+    def get_string(self):
+        return self.s
+
+    def __eq__(self, other):
+        return isinstance(other, FakeVariant) and other.s == self.s
+
+
+class FakeAction:
+    def __init__(self, name, _vt, state):
+        self.name, self.state, self._cb = name, state, None
+
+    @staticmethod
+    def new_stateful(name, vt, state):
+        return FakeAction(name, vt, state)
 
     def connect(self, _sig, cb):
-        self._handlers.append(cb)
+        self._cb = cb
 
-    def _emit(self):
-        self._emitting += 1
-        try:
-            for cb in list(self._handlers):
-                cb(self, None)
-        finally:
-            self._emitting -= 1
+    def get_state(self):
+        return self.state
 
-    def set_model(self, model):
-        # model surgery inside the widget's own emission is the
-        # segfault (three field crashes); the fake refuses it so
-        # every shell test enforces the invariant
-        assert not self._emitting, "set_model inside emission"
-        self.model = model
-        self.set_model_calls += 1
-        new = 0 if model.items else INVALID
-        if new != self.selected:
-            self.selected = new
-            self._emit()          # GTK's reset-to-row-0
+    def set_state(self, v):
+        self.state = v
 
-    def set_selected(self, i):
-        assert not self._emitting, "set_selected inside emission"
-        if i != self.selected:
-            self.selected = i
-            self._emit()
-
-    def get_selected(self):
-        return self.selected
-
-    def user_pick(self, i):
-        self.set_selected(i)
+    def activate(self, name):
+        self._cb(self, FakeVariant("s", name))
 
 
-def _shell(monkeypatch, veto=False, ellipsis=None, on_pick=None):
-    idle = []
+class FakeGroup:
+    def __init__(self):
+        self.actions = []
+
+    def add_action(self, a):
+        self.actions.append(a)
+
+
+class FakeButton:
+    def __init__(self):
+        self.menu = None
+        self.label = None
+        self.active = False
+        self.builds = 0
+        self._toggled = []
+
+    def insert_action_group(self, _prefix, group):
+        self.group = group
+
+    def connect(self, _sig, cb):
+        self._toggled.append(cb)
+
+    def set_menu_model(self, m):
+        self.menu = m
+        self.builds += 1
+
+    def set_label(self, s):
+        self.label = s
+
+    def get_active(self):
+        return self.active
+
+    def open(self):
+        self.active = True
+
+    def close(self):
+        self.active = False
+        for cb in self._toggled:
+            cb(self, None)
+
+    def labels(self):
+        return [lab for lab, _ in (self.menu.items if self.menu else [])]
+
+
+def _shell(monkeypatch, veto=False, ellipsis=None, placeholder=None):
+    gio = types.SimpleNamespace(SimpleActionGroup=FakeGroup,
+                                SimpleAction=FakeAction,
+                                Menu=FakeMenu, MenuItem=FakeMenuItem)
     glib = types.SimpleNamespace(
-        idle_add=lambda fn, *a: idle.append((fn, a)))
-    gtk = types.SimpleNamespace(StringList=FakeStringList)
+        Variant=FakeVariant,
+        VariantType=types.SimpleNamespace(new=lambda s: s))
     repo = types.ModuleType("gi.repository")
-    repo.Gtk, repo.GLib = gtk, glib
+    repo.Gio, repo.GLib = gio, glib
     gi = types.ModuleType("gi")
     gi.repository = repo
     monkeypatch.setitem(sys.modules, "gi", gi)
     monkeypatch.setitem(sys.modules, "gi.repository", repo)
-    from perdeviceeq.picker import NodePicker
-    dd = FakeDropDown()
+    from perdeviceeq.picker import NodeMenu
+    btn = FakeButton()
     picks = []
 
     def cb(node, desc):
         picks.append((node, desc))
-        if on_pick is not None:
-            return on_pick(node, desc)
         if veto:
             return False
 
-    return NodePicker(dd, cb, ellipsis=ellipsis), dd, picks, idle
+    return (NodeMenu(btn, cb, ellipsis=ellipsis,
+                     placeholder=placeholder), btn, picks)
 
 
-def _run_idle(idle):
-    while idle:
-        fn, a = idle.pop(0)
-        fn(*a)
+def test_shell_builds_the_two_levels(monkeypatch):
+    p, btn, _ = _shell(monkeypatch)
+    p.refresh(UMIK + M62)
+    assert btn.labels() == ["Umik-1 Gain 24dB", "M62"]
+    sub = btn.menu.items[1][1]
+    assert [lab for lab, _ in sub.items] == ["IN 1", "IN 2", "AUX"]
 
 
-def test_shell_rebuild_restores_selection_not_row0(monkeypatch):
-    p, dd, picks, idle = _shell(monkeypatch)
-    p.refresh([_s("a", "A"), _s("b", "B")])
-    p.select("b")
-    assert dd.get_selected() == 1
-    # the graph grows; GTK resets a fresh model to row 0 -- the
-    # placement must take the choice back (the field bug)
-    p.refresh([_s("a", "A"), _s("b", "B"), _s("c", "C")])
-    assert dd.get_selected() == 1
-    assert picks == []
+def test_shell_marks_the_chosen_node(monkeypatch):
+    """The mark is the ACTION's state, which is what makes a menu item
+    draw one at all."""
+    p, btn, _ = _shell(monkeypatch)
+    p.refresh(UMIK + M62)
+    p.select("aux")
+    assert p._act.get_state().get_string() == "aux"
 
 
-def test_shell_death_moves_onto_the_gone_row(monkeypatch):
-    p, dd, picks, idle = _shell(monkeypatch)
-    p.refresh([_s("a", "A"), _s("b", "B")])
-    p.select("b")
-    p.refresh([_s("a", "A")])            # b left the graph
-    assert dd.model.items[0] == "B"  # clean; the window says gone
-    assert dd.get_selected() == 0
-    assert picks == []                   # nobody picked anything
+def test_shell_group_names_its_chosen_child(monkeypatch):
+    """A submenu cannot carry a mark, so the group says where it is."""
+    p, btn, _ = _shell(monkeypatch)
+    p.refresh(UMIK + M62)
+    p.select("aux")
+    assert btn.labels()[1] == "M62 \u00b7 AUX"
 
 
-def test_shell_pick_defers_all_model_surgery(monkeypatch):
-    p, dd, picks, idle = _shell(monkeypatch)
-    p.refresh([_s("a", "A"), _s("b", "B")])
-    p.select("b")
-    p.refresh([_s("a", "A")])            # gone-b tops the list
-    calls = dd.set_model_calls
-    dd.user_pick(1)                      # the user picks a
-    assert picks == [("a", "A")]
-    assert p.core.node == "a"
-    assert dd.set_model_calls == calls   # none inside the emission
-    _run_idle(idle)
-    assert dd.model.items == ["A"]       # the gone row melted
-    assert dd.get_selected() == 0
-
-
-def test_shell_veto_snaps_the_row_back(monkeypatch):
-    p, dd, picks, idle = _shell(monkeypatch, veto=True)
-    p.refresh([_s("a", "A"), _s("b", "B")])
-    p.select("b")
-    dd.user_pick(0)
-    assert picks == [("a", "A")]
-    assert p.core.node == "b"            # the core did not move
-    _run_idle(idle)
-    assert dd.get_selected() == 1        # the row snapped back
-
-
-def test_shell_clips_like_the_measure_picker(monkeypatch):
-    p, dd, picks, idle = _shell(monkeypatch, ellipsis=6)
-    p.refresh([_s("a", "ABCDEFGH")])
-    p.select("a")
-    assert dd.model.items == ["ABCDE\u2026"]
-
-
-def test_shell_doors_are_safe_inside_the_pick(monkeypatch):
-    """The field crash: a Measure retarget calls picker.select()
-    from inside on_pick (the dropdown's own emission), and the
-    gone-to-live move changes the rows -- the mirror must land
-    at idle, never inside the emission (the strict fake raises
-    on any surgery there)."""
-    box = {}
-
-    def retarget(node, desc):
-        box["picker"].select(node, desc)   # what _retarget does
-
-    p, dd, picks, idle = _shell(monkeypatch, on_pick=retarget)
-    box["picker"] = p
-    p.refresh([_s("a", "A"), _s("b", "B")])
-    p.select("b")
-    p.refresh([_s("a", "A")])            # b gone: rows [b, a]
-    calls = dd.set_model_calls
-    dd.user_pick(1)                      # retarget to a
-    assert picks == [("a", "A")]
-    assert p.core.node == "a"
-    assert dd.set_model_calls == calls   # nothing in the emission
-    _run_idle(idle)
-    assert dd.model.items == ["A"]       # the gone row melted
-    assert dd.get_selected() == 0
+def test_shell_pick_arrives_by_name(monkeypatch):
+    p, btn, picks = _shell(monkeypatch)
+    p.refresh(UMIK + M62)
+    p._act.activate("in2")
+    assert picks == [("in2", "IN 2")] or picks == [("in2", "M62 IN 2")]
+    assert p.core.node == "in2"
 
 
 def test_shell_core_leads_the_callback(monkeypatch):
-    """The field bug, mic edition: window code inside on_pick
-    resolves the selection through the core, so the core must
-    already stand on the picked node when the callback runs --
-    one pick behind meant every mic pick acted on the previous
-    mic."""
-    seen = {}
-
-    def peek(node, desc):
-        seen["core"] = box["p"].core.node
-
-    box = {}
-    p, dd, picks, idle = _shell(monkeypatch, on_pick=peek)
-    box["p"] = p
-    p.refresh([_s("a", "A"), _s("b", "B")])
-    p.select("a")
-    dd.user_pick(1)
-    assert picks == [("b", "B")]
-    assert seen["core"] == "b"           # led, not lagged
-    assert p.core.node == "b"
+    seen = []
+    p, btn, _ = _shell(monkeypatch)
+    p.on_pick = lambda n, d: seen.append(p.core.node)
+    p.refresh(UMIK + M62)
+    p._act.activate("in1")
+    assert seen == ["in1"]          # never the pick before it
 
 
-# --- the mirror: nothing chosen must show as nothing ---------------------
-
-class MirrorDD:
-    """Only what _sync touches, with GTK's own habit reproduced: a
-    fresh model selects row 0 by itself. Named apart from the
-    FakeDropDown above, which belongs to the pick courts."""
-
-    def __init__(self):
-        self.sel = 0
-        self.model = None
-
-    def set_model(self, m):
-        self.model = m
-        self.sel = 0                       # what GTK does, and the trap
-
-    def get_selected(self):
-        return self.sel
-
-    def set_selected(self, i):
-        self.sel = i
+def test_shell_veto_rolls_the_core_back(monkeypatch):
+    p, btn, picks = _shell(monkeypatch, veto=True)
+    p.refresh(UMIK + M62)
+    p.select("umik")
+    p._act.activate("aux")
+    assert picks == [("aux", "AUX")] or picks == [("aux", "M62 AUX")]
+    assert p.core.node == "umik"
 
 
-class MirrorList(list):
-    pass
+def test_shell_holds_a_rebuild_until_the_menu_closes(monkeypatch):
+    """The heartbeat refreshes several times a second; a model swapped
+    under an open popover moves rows out from under the pointer."""
+    p, btn, _ = _shell(monkeypatch)
+    p.refresh(UMIK)
+    before = btn.builds
+    btn.open()
+    p.refresh(UMIK + M62)
+    assert btn.builds == before      # held
+    btn.close()
+    assert btn.builds == before + 1  # and it lands
 
 
-def _mirror(core):
-    """A NodePicker with the widget stubbed, exercising _sync alone."""
-    from perdeviceeq.picker import NodePicker
-    p = NodePicker.__new__(NodePicker)
-    p.core = core
-    p.dd = MirrorDD()
-    p._shown = None
-    p._guard = False
-    p._in_pick = False
-    p._ellipsis = 0
-    p._Gtk = type("G", (), {"StringList": MirrorList})
-    p._sync()
-    return p
+def test_shell_label_shows_the_placeholder_then_the_choice(monkeypatch):
+    p, btn, _ = _shell(monkeypatch, placeholder="Choose a mic")
+    p.refresh(UMIK)
+    assert btn.label == "Choose a mic"
+    p.select("umik")
+    assert btn.label == "Umik-1 Gain 24dB"
 
 
-def test_an_empty_core_shows_no_selection():
-    """GTK resets a fresh model's selection to row 0, and the
-    placement is what keeps that reset from becoming the choice. With
-    no node there was nothing to place, so row 0 stayed on display
-    over an empty core -- a window naming a microphone in the row
-    while its own status line said the mic was not resolved."""
-    from perdeviceeq.picker import INVALID_POSITION
-    p = _mirror(_core([_s("a", "A"), _s("b", "B")]))
-    assert p.core.node is None
-    assert p.dd.get_selected() == INVALID_POSITION
-
-
-def test_a_chosen_node_is_placed():
-    p = _mirror(_core([_s("a", "A"), _s("b", "B")], "b"))
-    assert p.dd.get_selected() == 1
-
-
-def test_clearing_the_node_clears_the_row():
-    from perdeviceeq.picker import INVALID_POSITION
-    c = _core([_s("a", "A"), _s("b", "B")], "b")
-    p = _mirror(c)
-    assert p.dd.get_selected() == 1
-    c.set_node(None)
-    p._sync()
-    assert p.dd.get_selected() == INVALID_POSITION
-
-
-# --- a row that may hold no choice --------------------------------------
-
-def test_nothing_is_a_row_where_a_choice_may_be_absent():
-    """An AdwComboRow cannot show emptiness: while its model has rows,
-    one of them is displayed. So for a picker that may legitimately
-    hold no choice, "nothing" has to BE a row. Clearing the selection
-    was not enough -- the mic row went on naming a microphone the core
-    had never chosen."""
-    c = PickerCore(placeholder="Not chosen")
-    c.set_sinks([_s("a", "A"), _s("b", "B")])
-    assert c.rows() == [(None, "Not chosen"), ("a", "A"), ("b", "B")]
-    assert c.index_of(c.node) == 0            # and it is what is shown
-
-
-def test_the_placeholder_cannot_be_picked():
-    # picking it means picking what is already current, which the core
-    # already reads as a no-op
-    c = PickerCore(placeholder="Not chosen")
-    c.set_sinks([_s("a", "A")])
-    assert c.pick(0) is None
-    assert c.pick(1) == ("a", "A")
-
-
-def test_the_placeholder_leaves_once_something_is_chosen():
-    c = PickerCore(placeholder="Not chosen")
-    c.set_sinks([_s("a", "A"), _s("b", "B")])
-    c.set_node("b", "B")
-    assert c.rows() == [("a", "A"), ("b", "B")]
-    assert c.index_of(c.node) == 1
-
-
-def test_a_picker_without_one_never_grows_a_placeholder_row():
-    # a sink is always chosen; that row must not offer "nothing"
-    c = PickerCore()
-    c.set_sinks([_s("a", "A")])
-    assert c.rows() == [("a", "A")]
-    assert c.index_of(c.node) == -1
-
-
-def test_the_mirror_shows_the_placeholder():
-    c = PickerCore(placeholder="Not chosen")
-    c.set_sinks([_s("a", "A"), _s("b", "B")])
-    p = _mirror(c)
-    assert p.dd.get_selected() == 0
-    assert p._shown[0] == (None, "Not chosen")
+def test_shell_clips_a_monster_description(monkeypatch):
+    p, btn, _ = _shell(monkeypatch, ellipsis=10)
+    p.refresh(UMIK)
+    p.select("umik")
+    assert len(btn.label) == 10 and btn.label.endswith("\u2026")
 
 
 # --- two levels: a card with several nodes, and one without --------

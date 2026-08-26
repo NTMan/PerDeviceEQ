@@ -40,7 +40,7 @@ from . import knee_run                               # noqa: E402
 from . import level_run                              # noqa: E402
 from . import eq                                     # noqa: E402
 from . import debug
-from .picker import NodePicker                       # noqa: E402
+from .picker import NodeMenu                       # noqa: E402
 from . import measure_core as mc                    # noqa: E402
 from . import measure_session as ms
 from . import sweep_io                 # noqa: E402
@@ -301,7 +301,8 @@ class MeasureWindow(Adw.Window):
         # fader, and the header carries the profile's name instead --
         # a control belongs beside the thing it moves
         self.sink_dd = b.get_object("sink_row")
-        self.picker = NodePicker(self.sink_dd, self._on_sink_pick,
+        self.picker = NodeMenu(b.get_object("sink_row_btn"),
+                               self._on_sink_pick,
                                  ellipsis=34)
         self._tame_scroll(self.sink_dd)
         self.picker.select(self.sink_node, self.sink_desc)
@@ -318,6 +319,7 @@ class MeasureWindow(Adw.Window):
         # get_text and set_text read the same as the row's did.
 
         self._build_mic_controls(b.get_object("source_row"),
+                                 b.get_object("source_row_btn"),
                                  b.get_object("mic_group"))
 
         # the slot itself, with no wrapper of its own: an extra box
@@ -452,15 +454,14 @@ class MeasureWindow(Adw.Window):
         # the fold -- only the take rows tuck away
         self._page["card"].append(fa)
 
-    def _build_mic_controls(self, source_row, mic_group):
-        # the row IS the picker (AdwComboRow); the popup shows
-        # the full name, the row ellipsizes the selected one --
-        # the ellipsis cap stays so a monster ALSA description
-        # never dictates the window's minimum width
+    def _build_mic_controls(self, source_row, source_btn, mic_group):
+        # the ROW carries the title and the sensitivity, the BUTTON
+        # carries the menu; the ellipsis cap stays so a monster ALSA
+        # description never dictates the window's minimum width
         self.source_dd = source_row
-        self.mic_picker = NodePicker(self.source_dd,
-                                     self._on_mic_pick,
-                                     ellipsis=34,
+        self.mic_picker = NodeMenu(source_btn,
+                                   self._on_mic_pick,
+                                   ellipsis=34,
                                      # this row may legitimately hold
                                      # no choice, and an AdwComboRow
                                      # cannot show that by itself
