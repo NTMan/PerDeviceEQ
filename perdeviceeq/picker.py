@@ -82,8 +82,19 @@ class PickerCore:
         """The visible rows: the graph, plus the current node
         when the graph lost it (kept at the top, like the
         Measure picker minted it; no suffix -- the window
-        already names the gone state)."""
-        rows = [(s["name"], s["desc"]) for s in self.sinks]
+        already names the gone state).
+
+        A node the listing marked NOT offerable is left out: a
+        card can publish one for a socket with nothing in it, and
+        the desktop does not list those either. It is a display
+        rule and lives here rather than in the listing, because
+        everything else in the app still has to be able to look
+        that node up by name -- and because the rule below keeps
+        it on screen if it is the current choice, which is the
+        one case where hiding it would be a lie.
+        """
+        rows = [(s["name"], s["desc"]) for s in self.sinks
+                if s.get("offerable", True) or s["name"] == self.node]
         if self.node and all(n != self.node for n, _ in rows):
             rows.insert(0, (self.node, self.desc))
         if self.node is None and self.placeholder:
@@ -116,9 +127,14 @@ class PickerCore:
         on separators, and a name is evidence rather than decoration.
         """
         rows = self.rows()
+        # counted over the VISIBLE rows, not the whole snapshot: a
+        # card whose second node is an empty socket has one row here,
+        # and a submenu holding one row is the irritation this rule
+        # exists to prevent
+        shown = {n for n, _ in rows}
         by_card = {}
         for s in self.sinks:
-            if s.get("card") is not None:
+            if s.get("card") is not None and s["name"] in shown:
                 by_card.setdefault(s["card"], []).append(s["name"])
         card_of = {s["name"]: s.get("card") for s in self.sinks}
         label_of = {s["name"]: s.get("card_desc") for s in self.sinks}

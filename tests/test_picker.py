@@ -329,6 +329,35 @@ def test_a_live_node_shows_its_port_too():
                                     "Digital Input (S/PDIF)"]
 
 
+def test_a_socket_with_nothing_in_it_is_not_offered():
+    """His CM106: two nodes over one capture device, and the
+    Microphone one sits there with an empty jack while Line Input is
+    the one in use. The desktop does not list it."""
+    rows = [{"name": "line", "desc": "USB Audio Line Input",
+             "port": "Line Input", "offerable": True, "card": 51,
+             "card_desc": "USB Audio"},
+            {"name": "mic", "desc": "USB Audio Microphone",
+             "port": "Microphone", "offerable": False, "card": 51,
+             "card_desc": "USB Audio"}]
+    c = _core(rows)
+    assert [n for n, _ in c.rows()] == ["line"]
+    # one node left, so the card is a leaf again
+    assert c.groups() == [("USB Audio Line Input", "line", None)]
+
+
+def test_an_unoffered_node_stays_while_it_is_the_choice():
+    """Hiding the row a window is standing on would be a lie, and the
+    selection must never dangle."""
+    rows = [{"name": "line", "desc": "USB Audio Line Input",
+             "port": "Line Input", "offerable": True, "card": 51,
+             "card_desc": "USB Audio"},
+            {"name": "mic", "desc": "USB Audio Microphone",
+             "port": "Microphone", "offerable": False, "card": 51,
+             "card_desc": "USB Audio"}]
+    c = _core(rows, "mic")
+    assert sorted(n for n, _ in c.rows()) == ["line", "mic"]
+
+
 def test_a_node_with_no_port_keeps_its_description():
     """Bluetooth and virtual nodes have no card ports; nothing is
     invented for them."""

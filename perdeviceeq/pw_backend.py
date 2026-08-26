@@ -95,7 +95,8 @@ def list_sinks(dump=None, default=None):
                           "desc": p.get("node.description") or name,
                           "card": p.get("device.id"),
                           "card_desc": _cards.get(p.get("device.id")),
-                          "port": active_port(_routes),
+                          "port": own_port(_routes),
+                          "offerable": node_offerable(_routes),
                           "prio": p.get("priority.session") or 0,
                           "routes": _routes,
                           # the channel list rides along: the dump is
@@ -124,6 +125,40 @@ def _door_desc(route):
     port = door_port(route)
     card = route.get("card")
     return "%s - %s" % (port, card) if card else port
+
+
+def own_port(routes):
+    """The port THIS node speaks for, by description, or None.
+
+    `mine` rather than `active`, and the difference is a real card:
+    a CM106 exposes its Microphone and its Line Input as two nodes
+    over one capture device, so only one of them is ever the ACTIVE
+    route while both are somebody's own. Asked which port it is, the
+    idle one answered "none" and fell back to naming its profile.
+    The active one is the fallback here, for a card that marks no
+    port as anyone's.
+    """
+    return (next((r["description"] for r in (routes or [])
+                  if r.get("mine")), None)
+            or active_port(routes))
+
+
+def node_offerable(routes):
+    """Whether a live node is worth offering at all.
+
+    The rule the doors have always used, applied to the other kind of
+    row: a port with no jack behind it is not an offer. A card can
+    publish a node for a socket with nothing in it -- the CM106's
+    Microphone sits there with available=no while its Line Input is
+    the one in use -- and the desktop does not list it. Neither
+    should we.
+
+    Only the node's OWN ports are asked, and a card that claims none
+    of them (Bluetooth, a virtual sink) is offered: no evidence is
+    not evidence against.
+    """
+    mine = [r for r in (routes or []) if r.get("mine")]
+    return not mine or any(r.get("available", True) for r in mine)
 
 
 def active_port(routes):
@@ -240,7 +275,8 @@ def list_sources(dump=None):
                             "desc": p.get("node.description") or name,
                             "card": p.get("device.id"),
                             "card_desc": _cards.get(p.get("device.id")),
-                            "port": active_port(routes),
+                            "port": own_port(routes),
+                            "offerable": node_offerable(routes),
                             "prio": p.get("priority.session") or 0,
                             "routes": routes,
                             # as on the sink side: the dump is in hand
