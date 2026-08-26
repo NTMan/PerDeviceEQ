@@ -1371,8 +1371,13 @@ class PipeWireBackend(AudioBackend):
                "-P", _STREAM_PROPS % (CAPTURE_NODE, int(device)),
                "--format", "f32", "--rate", str(int(rate)),
                "--channels", str(int(channels)), "-"]
+        # stderr is KEPT, not discarded: when pw-record dies the only
+        # thing that says why is its own last line, and throwing it
+        # away turns every capture failure into a bare exit code. The
+        # play side has read its stderr since the beginning; this side
+        # cost a CI round to learn the same lesson
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL)
+                                stderr=subprocess.PIPE)
         return StreamHandle(proc)
 
     @staticmethod

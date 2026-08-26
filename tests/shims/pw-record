@@ -60,10 +60,20 @@ def main(argv):
     sl.write_json("raw_flag.json", {"raw": "--raw" in argv})
     # announce the capture stream immediately (before waiting for the
     # playback deposit) so verify_capture sees the node + its source link
+    # OWN the marker. Under load the previous take's shim can still be
+    # dying when this one starts, and its finally-clause used to delete
+    # whatever capturing.json it found -- including this one's, whose
+    # absence reads to the runner as "the capture never appeared"
     sl.write_json("capturing.json",
-                  {"node_name": "pde-measure-capture",
+                  {"node_name": "pde-measure-capture", "pid": os.getpid(),
                    "target": target if target is not None else sl.SOURCE_ID})
-    deadline = time.monotonic() + 60
+    # A FAKE MUST NEVER BE THE FIRST TO GIVE UP. This used to wait 60 s
+    # and exit 1, which is less than the runner's own patience for the
+    # frames, so on a slow runner the shim's impatience was reported as
+    # "pw-record exited early (rc=1)" -- the fake accusing the subject.
+    # Outlast every runner-side timeout and let the real code time out
+    # with a message about what it was actually waiting for.
+    deadline = time.monotonic() + 300
     played = None
     while time.monotonic() < deadline:
         played = sl.read_json("played.json")
@@ -111,10 +121,12 @@ def main(argv):
     except (BrokenPipeError, KeyboardInterrupt):
         return 0
     finally:
-        try:
-            os.remove(os.path.join(sl.state_dir(), "capturing.json"))
-        except OSError:
-            pass
+        if (sl.read_json("capturing.json", {}) or {}).get("pid") \
+                == os.getpid():
+            try:
+                os.remove(os.path.join(sl.state_dir(), "capturing.json"))
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

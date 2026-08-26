@@ -73,7 +73,13 @@ BT_WARM_S = 2.0                          # silence played to a bluez sink
 REPAIR_MAX_MS = 2.0                      # interp this many ms of dropouts;
 #                                          more non-finite than that = fault
 VERIFY_AFTER_S = 0.4                     # pw-play start -> pw-dump link check
-VERIFY_TIMEOUT_S = 3.0
+# A PATIENCE CEILING, NOT A DELAY: the wait returns the instant the
+# node and its link show up, so a generous number costs nothing on a
+# healthy machine and only decides how long we look before calling a
+# capture missing. Three seconds was thin for a loaded two-core runner
+# where every pw-dump is a process spawn, and it accused the source of
+# being dead when it was merely slow.
+VERIFY_TIMEOUT_S = 10.0
 CAPTURE_LEAD_S = 0.5                     # record head start (extra pre-roll)
 EXTRA_TAIL_S = 1.0                       # decay + link latency margin
 
@@ -426,6 +432,15 @@ class CaptureStream:
                 self._chunks.append(chunk)
                 self._bytes += len(chunk)
 
+    def _died(self):
+        """Why the capture ended, in one line, with whatever pw-record
+        said on its way out. A bare exit code names the actor and not
+        the cause, and the cause is usually in that last line."""
+        why = (self.proc.stderr_read() or "").strip()
+        return ("pw-record exited early (rc=%s)%s"
+                % (self.proc.returncode,
+                   (": " + why.splitlines()[-1]) if why else ""))
+
     def wait_frames(self, n_frames, timeout, cancel=None):
         need = n_frames * self.channels * 4
         deadline = time.monotonic() + timeout
@@ -436,8 +451,7 @@ class CaptureStream:
                 if self._bytes >= need:
                     return
             if self.proc.poll() is not None:
-                raise MeasureError("pw-record exited early (rc=%s)"
-                                   % self.proc.returncode)
+                raise MeasureError(self._died())
             time.sleep(0.05)
         raise MeasureError("capture timed out: got %d of %d frames "
                            "(is the mic source alive?)"
@@ -519,8 +533,7 @@ def verify_capture(source, cap):
     node, sources = None, set()
     while time.monotonic() < deadline:
         if cap.proc.poll() is not None:
-            raise MeasureError("pw-record exited early (rc=%s)"
-                               % cap.proc.returncode)
+            raise MeasureError(cap._died())
         dump = pw_dump()
         for o in _nodes(dump):
             if _props(o).get("node.name") == CAPTURE_NODE:
