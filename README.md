@@ -198,7 +198,7 @@ measured on the same bench starts at step 4.
    seen hunts the playback level itself with probe sweeps — hot enough
    for a clean take, safely short of clipping — and refuses honestly if
    no level can be both. It is one number for the whole rig, not one per
-   channel; the fader shows it, and the ruler button forgets the
+   channel; the fader shows it, and the button beside it forgets the
    remembered value and measures it here and now.
 7. **Land about three clean takes per channel.** A green dot marks a
    clean take. Re-seat the device between takes: the take-to-take spread

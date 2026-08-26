@@ -195,13 +195,16 @@ His goal lines ride each task verbatim.
 10. **The globals-row icon family.** Goal: visual polish
     -- icons for the eye, Floor and Auto strip when the family
     is picked.
-    **Status (Aug 26): two exist**, `pde-find-gain-symbolic`
-    and `pde-level-symbolic`. Still stock or textual: the eye
+    **Status (Aug 26): two exist and both are drawn**,
+    `pde-find-gain-symbolic` (a microphone beside a ladder of
+    levels) and `pde-level-symbolic`, which was a ruler and is
+    now that same shape with a loudspeaker in the microphone's
+    place -- the architect's call, and the right one: the two
+    rows do the same work on the two ends of the chain. An
+    earlier line here named the WRONG glyph as the rejected
+    one. Still stock or textual: the eye
     (`view-reveal-symbolic`), and Floor and Auto, which are
-    words. And the find-gain glyph is REJECTED -- it draws a
-    ruler where the row wants the shape the microphone card
-    uses, with a loudspeaker in place of the microphone and a
-    ladder of bars beside it.
+    words.
 
 11. **The routing rework, never on this list.** It changed
     how a microphone and a sink are stored -- capture columns

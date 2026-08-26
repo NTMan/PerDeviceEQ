@@ -1,9 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
      viewBox="0 0 16 16">
-  <!-- a ruler: measure the playback level (CC0, drawn for this app;
-       the icon-library ruler was unreachable at build time) -->
-  <path fill="#2e3436" d="M2.5 4C1.67 4 1 4.67 1 5.5v5c0 .83.67 1.5
-    1.5 1.5h11c.83 0 1.5-.67 1.5-1.5v-5C15 4.67 14.33 4 13.5 4Zm0
-    1.5h1V8h1V5.5h1.5V7h1V5.5H8.5V8h1V5.5H11V7h1V5.5h1.5v5h-11Z"/>
+  <!-- a loudspeaker beside a rising ladder of levels: measure the
+       playback level for this rig (CC0, drawn for this app). It is
+       deliberately the twin of pde-find-gain-symbolic, same ladder in
+       the same place with a loudspeaker where that one has a
+       microphone, because the two rows do the same kind of work on
+       the two ends of the chain: one walks the input's gain, this one
+       walks the output's level.
+
+       The cone opens TOWARD the ladder rather than away. A solid
+       triangle pointing the other way reads as a rewind arrow at
+       sixteen pixels, and every desktop volume glyph faces this way
+       already.
+
+       Note for anyone editing this file: an XML comment may not
+       contain two hyphens in a row, so the house dash cannot be used
+       here. This one was written with it and failed to parse. -->
+  <path fill="#2e3436" d="M0.5 6 H2.5 V10 H0.5 Z"/>
+  <path fill="#2e3436" d="M2.5 6 L6.5 2.5 V13.5 L2.5 10 Z"/>
+  <path fill="#2e3436" d="M9 10 H11 V15 H9 Z"/>
+  <path fill="#2e3436" d="M11.8 7 H13.8 V15 H11.8 Z"/>
+  <path fill="#2e3436" d="M14.6 4 H16 V15 H14.6 Z"/>
 </svg>
