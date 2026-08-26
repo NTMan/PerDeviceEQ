@@ -807,3 +807,47 @@ def test_a_route_without_channels_falls_back_to_the_node():
     got = _column_gains(node, [{"active": True}])
     assert got[0] == pytest.approx(0.2, abs=1e-4)
     assert _column_gains(node, []) == pytest.approx(got, abs=1e-4)
+
+
+# --- the population hears a jack ----------------------------------
+
+def _snap(available):
+    """One source on a card with two ports, one of them a socket
+    whose jack state is the argument."""
+    return {"sinks": [], "default_sink": None,
+            "sources": [{"name": "cm106", "desc": "USB Audio",
+                         "routes": [
+                             {"index": 0, "mine": True,
+                              "reachable": True, "available": True,
+                              "active": True},
+                             {"index": 1, "mine": False,
+                              "reachable": True,
+                              "available": available,
+                              "active": False}]}]}
+
+
+def _fresh():
+    b = pwb.PipeWireBackend.__new__(pwb.PipeWireBackend)
+    b._subs = []
+    return b
+
+
+def test_a_jack_event_is_a_population_change():
+    """Pulling a cable flips one route's `available` and changes no
+    name and no default. A signature built from names alone went on
+    saying nothing had happened, so an empty socket kept its row and
+    a door for a jack just plugged in never came."""
+    b = _fresh()
+    b._ingest(_snap(False))
+    assert b._ingest(_snap(True)) is True
+    assert b._ingest(_snap(True)) is False      # and it settles
+
+
+def test_a_volume_tick_is_not():
+    """The rule the signature exists for: a property moving must not
+    rebuild every picker."""
+    b = _fresh()
+    snap = _snap(True)
+    b._ingest(snap)
+    snap["sources"][0]["volume"] = 0.42
+    assert b._ingest(snap) is False

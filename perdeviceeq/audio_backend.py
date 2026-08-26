@@ -44,6 +44,15 @@ import traceback
 from abc import ABC, abstractmethod
 
 
+def _route_sig(routes):
+    """A card's ports as the population sees them: the flags that
+    decide what a chooser offers, and nothing that moves on its own.
+    """
+    return tuple((r.get("index"), r.get("mine"), r.get("reachable"),
+                  r.get("available"), r.get("active"))
+                 for r in (routes or []))
+
+
 class AudioBackend(ABC):
     """Process-wide authority over the audio server.
 
@@ -223,15 +232,22 @@ class AudioBackend(ABC):
         self.sinks = snap.get("sinks", [])
         self.sources = snap.get("sources", [])
         self.default_sink = snap.get("default_sink")
-        # the active input PORT belongs in the signature: a card
-        # route can move under us -- from GNOME, from another app --
-        # without a single node name changing, and a list that does
-        # not hear about it goes on showing the wrong jack
-        sig = (tuple(s.get("name") for s in self.sinks),
-               tuple((s.get("name"),
-                      next((r.get("index") for r in (s.get("routes")
-                                                     or [])
-                            if r.get("active")), None))
+        # THE PORTS BELONG IN THE SIGNATURE, not just the names. A
+        # jack event changes no name and no default: pulling the
+        # cable out of a microphone socket only flips that route's
+        # `available`, and a signature built from names went on
+        # saying nothing had happened, so a row for an empty socket
+        # stayed and a door for a jack just plugged in never came.
+        # The desktop reacts to both, and it reacts to them because
+        # this is what it is watching.
+        #
+        # These are the flags the listing reads and the census
+        # prints, and none of them ticks with a volume: an index, who
+        # owns it, whether the loaded profile carries it, whether a
+        # jack is behind it, and whether it is the one in use.
+        sig = (tuple((s.get("name"), _route_sig(s.get("routes")))
+                     for s in self.sinks),
+               tuple((s.get("name"), _route_sig(s.get("routes")))
                      for s in self.sources),
                self.default_sink)
         changed = sig != getattr(self, "_sig", None)
