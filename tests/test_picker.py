@@ -314,6 +314,32 @@ def test_a_child_shows_the_name_the_graph_gave_it():
     assert [d for _, d in kids] == ["M62 IN 1", "M62 IN 2", "M62 AUX"]
 
 
+def test_a_live_node_shows_its_port_too():
+    """The same rule as a door's, and the reason the group is worth
+    opening: under "Umik-1" the useful word is the jack, not the
+    profile the node is named after."""
+    rows = [{"name": "a", "desc": "Umik-1 Gain 24dB Analog Stereo",
+             "port": "Microphone", "card": 3,
+             "card_desc": "Umik-1 Gain: 24dB"},
+            {"name": "b", "desc": "Digital Input (S/PDIF) - Umik-1",
+             "port": "Digital Input (S/PDIF)", "card": 3,
+             "card_desc": "Umik-1 Gain: 24dB"}]
+    _, _, kids = _core(rows).groups()[0]
+    assert [d for _, d in kids] == ["Microphone",
+                                    "Digital Input (S/PDIF)"]
+
+
+def test_a_node_with_no_port_keeps_its_description():
+    """Bluetooth and virtual nodes have no card ports; nothing is
+    invented for them."""
+    rows = [{"name": "a", "desc": "Handsfree", "card": 9,
+             "card_desc": "Buds"},
+            {"name": "b", "desc": "High Fidelity", "card": 9,
+             "card_desc": "Buds"}]
+    _, _, kids = _core(rows).groups()[0]
+    assert [d for _, d in kids] == ["Handsfree", "High Fidelity"]
+
+
 def test_a_door_shows_its_port_because_it_carries_one():
     """A door's row is composed by this app out of a port and a card.
     Under the card's own submenu it shows the port half -- taken from

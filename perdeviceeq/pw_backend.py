@@ -90,12 +90,14 @@ def list_sinks(dump=None, default=None):
             name = p.get("node.name")
             if not name:
                 continue
+            _routes = card_output_ports(name, dump)
             sinks.append({"id": o["id"], "name": name,
                           "desc": p.get("node.description") or name,
                           "card": p.get("device.id"),
                           "card_desc": _cards.get(p.get("device.id")),
+                          "port": active_port(_routes),
                           "prio": p.get("priority.session") or 0,
-                          "routes": card_output_ports(name, dump),
+                          "routes": _routes,
                           # the channel list rides along: the dump is
                           # already in hand here, and a window that
                           # asks for it separately pays a pw-dump
@@ -122,6 +124,21 @@ def _door_desc(route):
     port = door_port(route)
     card = route.get("card")
     return "%s - %s" % (port, card) if card else port
+
+
+def active_port(routes):
+    """The description of the port a live node is listening on or
+    playing through, or None when its card has no ports.
+
+    The same string a desktop prints beside the card ("Microphone",
+    "Line In", "Digital Input (S/PDIF)"), and the same one a door
+    carries -- so a chooser that already shows the card can show this
+    half for a live node exactly as it does for a door. A node's own
+    description names the card and its PROFILE ("Analog Stereo"),
+    which is a different fact and the wrong one for that row.
+    """
+    return next((r["description"] for r in (routes or [])
+                 if r.get("active")), None)
 
 
 def door_port(route):
@@ -223,6 +240,7 @@ def list_sources(dump=None):
                             "desc": p.get("node.description") or name,
                             "card": p.get("device.id"),
                             "card_desc": _cards.get(p.get("device.id")),
+                            "port": active_port(routes),
                             "prio": p.get("priority.session") or 0,
                             "routes": routes,
                             # as on the sink side: the dump is in hand

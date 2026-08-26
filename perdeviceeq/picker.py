@@ -103,16 +103,17 @@ class PickerCore:
         six inputs and five outputs, grows a second level. Group where
         grouping pays and nowhere else.
 
-        NAMES ARE PASSED THROUGH, NEVER EDITED. A child shows what
-        PipeWire calls it; if that repeats the card's own name, that
-        is the graph's redundancy to answer for and not ours. The one
-        exception is not an exception: a DOOR is a row this app
-        composes itself out of a port and a card ("Analogue Output -
-        M62"), and under the card's own submenu it shows the port
-        half, which it carries as a field. Nothing is taken apart by
-        looking for a separator -- a port really called
-        "Line - Rear panel" would not survive that, and a name is
-        evidence, not decoration.
+        NAMES ARE PASSED THROUGH, NEVER EDITED. Under the card's own
+        title a row shows its PORT when it has one -- "Microphone",
+        "Digital Input (S/PDIF)" -- which is the same string a
+        desktop prints there and a field the listing carries, not a
+        piece cut out of another one. A node's own description names
+        the card and its PROFILE ("Analog Stereo"), which is a
+        different fact and the wrong one for that row. Where there is
+        no port (Bluetooth, a virtual sink) the description stands as
+        it is; nothing is trimmed to fit, because a port really
+        called "Line - Rear panel" would not survive a rule that cut
+        on separators, and a name is evidence rather than decoration.
         """
         rows = self.rows()
         by_card = {}
