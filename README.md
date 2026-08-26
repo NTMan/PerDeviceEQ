@@ -13,7 +13,9 @@ On top of the per-device correction sits a **taste layer**: your personal EQ,
 composed after whatever profile is active, on every device, without ever
 touching the measured profiles.
 
-![Per-Device EQ — the GUI](per-device-eq-screenshot.png)
+![Per-Device EQ — Main window](per-device-eq-main.png)
+
+![Per-Device EQ — Measurement window](per-device-eq-measurements.png)
 
 Projects like REW, AutoEq and EasyEffects inspired this one with the results
 they achieve; I wanted the same correctness with more comfort, so the whole
@@ -33,6 +35,10 @@ nothing — lives in [TRUST.md](TRUST.md).
 - **Incremental takes.** Every accepted sweep is persisted the moment it
   lands. Add takes across sessions, delete a bad one, re-fit — the profile
   only improves.
+- **Distortion on the record.** Every take stores its harmonics and its
+  own noise floor, drawn per take and summed into a warning band under
+  the correction, so a boost that would be heard as rasp is visible
+  before you reach for it.
 - **Per output device.** Each sink — built-in speakers, HDMI, a specific
   Bluetooth headset (by MAC) — remembers its own EQ and gets it back
   automatically.
@@ -157,31 +163,76 @@ You need a measurement rig the device can play into: an ear/headphone rig
 (miniDSP EARS or a 711-class coupler) for headphones and IEMs, or a USB
 measurement mic for speakers, plus its per-capsule calibration files.
 
-1. Connect the rig and mount the device on it.
-2. In the app, pick the output device you are correcting, open the profile
-   picker and press **+** (New). Editing an existing profile opens the same
-   window on the profile's *own* device.
-3. Name the profile, pick the **Measurement mic** input, the capsule count
-   (mono, or stereo like an EARS), and a **Calibration** file per capsule.
-   The app remembers the rig per device and pre-fills all of it next time.
-4. Click a speaker on the ring to select the channel and press **play**.
-   On a device + mic pair the app has never seen, the first press hunts
-   the playback level by itself with probe sweeps -- hot enough for a
-   clean take, safely short of clipping -- and refuses honestly if no
-   level can be both. After that the level is remembered per pair; the
-   fader on the left shows it, and the ruler button forgets the memory
-   and re-measures here and now.
-5. Land about three clean takes per channel (a green dot marks clean;
-   re-seat the device between takes — the take-to-take spread is what tells
-   the fit which frequencies to trust). Every take is saved the moment it
-   completes; the trash can on a take removes it.
-6. The card above the takes shows the channel's mean response with the
-   spread band; the **EQ range** handles below follow the trustworthy band
-   until you drag them. **Bands** sets the fit's filter budget.
-7. Close the window. The fit runs right on the main window's graph with a
-   per-channel progress bar, lands gain-staged (Safe preamp), and the
-   profile is playing. The trust plaque under the graph offers **Re-fit**
-   after you add or remove takes later.
+Mount the device on the rig, then open the profile picker on the output
+you are correcting and press **+** (New) — editing an existing profile
+opens the same window on the profile's *own* device. The window is read
+top to bottom, and that order is a dependency rather than a habit: the
+microphone is settled first and needs to know nothing about what will be
+played; the target comes second, because without one there is nothing to
+play to; the level comes last, when both ends exist. Nothing is guessed
+on your behalf, and every answer is remembered, so the next profile
+measured on the same bench starts at step 4.
+
+1. **Pick the measurement mic** in *Measurement mic* — the input the
+   sweep is captured on.
+2. **Declare the capture channels it has.** Press **+** on the strip: a
+   rig has the channels a hand declared and no others. Each one carries
+   its own **calibration** file (*Change…*), and the bar on its tab is
+   live — knock on a capsule and the tab it arrives on moves, which is
+   how you tell which is which without unplugging anything.
+3. **Calibrate the sensitivity.** The button beside the gain fader walks
+   that input's gain **in silence** — nothing is played — and finds the
+   point where the microphone's own noise stops being buried in the
+   converter's. Below it signal-to-noise is being thrown away; above it
+   more gain buys nothing and costs headroom. An input with no analogue
+   gain of its own, like a UMIK-1, says so under the fader and skips
+   this step.
+4. **Pick the output** in *Output* — where the sweep is played.
+5. **Declare the channels to measure.** **+** offers the sink's
+   channels, and then which capsule captures each one. With a single
+   capsule in use there is nothing to answer: it captures every target,
+   and each capsule's tab prints what it captures. With two, the submenu
+   carries a live level per capsule, so the answer is a knock and a
+   click.
+6. **Calibrate the level.** The first **play** on a rig the app has not
+   seen hunts the playback level itself with probe sweeps — hot enough
+   for a clean take, safely short of clipping — and refuses honestly if
+   no level can be both. It is one number for the whole rig, not one per
+   channel; the fader shows it, and the ruler button forgets the
+   remembered value and measures it here and now.
+7. **Land about three clean takes per channel.** A green dot marks a
+   clean take. Re-seat the device between takes: the take-to-take spread
+   is what tells the fit which frequencies to trust. Every take is saved
+   the moment it completes, and the trash can on a take removes it.
+
+The card above the takes shows the channel's mean response with the
+spread band; the **EQ range** handles below it follow the trustworthy
+band until you drag them, and **Bands** sets the fit's filter budget.
+Close the window and the fit runs right on the main window's graph with
+a per-channel progress bar, lands gain-staged (Safe preamp), and the
+profile is playing. The trust plaque under the graph offers **Re-fit**
+after you add or remove takes later.
+
+### Distortion, and the Floor
+
+A take records more than the response. It confesses the second and third
+harmonic, the total harmonic distortion and the noise the room and the
+chain contributed; they are drawn under the response in the takes list
+and summarised in the panel's header as `THD@1k`. Where a harmonic falls
+outside the sweep the pen stops instead of guessing, and the graph says
+*no harmonic evidence* over that region.
+
+The **Floor** is a high-pass under the correction, the answer to a woofer
+asked for excursion it does not have — where more bass buys distortion
+rather than bass. Its handle carries a warning band along the top of its
+own strip: one curve for the whole profile, the worst channel at each
+frequency, painted where the measured distortion passes the point at
+which it is heard. That threshold moves with frequency, because hearing
+does — roughly −18 dB re the tone at 20 Hz against −40 dB from 1 kHz up.
+Whole percents pass unnoticed in the bass; tenths of one do not in the
+midband. A profile whose takes carry no confession is painted not at
+all: an absence of evidence and an absence of distortion must not wear
+the same colour.
 
 ### Speakers with a UMIK-1
 
