@@ -73,11 +73,19 @@ def main(argv):
     # "pw-record exited early (rc=1)" -- the fake accusing the subject.
     # Outlast every runner-side timeout and let the real code time out
     # with a message about what it was actually waiting for.
+    # A DEPOSIT POINTING AT A FILE THAT IS GONE IS NOT A DEPOSIT. The
+    # deposit is never cleared, so a take that follows the auto-level
+    # search finds the SEARCH's wav lying there -- in a temp directory
+    # the search deletes on its way out -- and opening it died with a
+    # libsndfile error that read, all the way up the stack, like a
+    # capture failure. Keep waiting for one that can actually be
+    # opened; the sweep being played for THIS capture is on its way.
     deadline = time.monotonic() + 300
     played = None
     while time.monotonic() < deadline:
-        played = sl.read_json("played.json")
-        if played:
+        p = sl.read_json("played.json")
+        if p and os.path.exists(p.get("wav") or ""):
+            played = p
             break
         time.sleep(0.05)
     if not played:
