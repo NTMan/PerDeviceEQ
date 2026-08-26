@@ -53,6 +53,25 @@ SPACING_GRID = (0, 3, 6, 12, 18, 24, 30, 36)
 _MUTE_VERBS = ("yes", "no")
 
 
+def _is_action_menu(node):
+    """A GtkMenuButton that clicks rather than holds.
+
+    The class alone cannot say: the same widget is the device
+    picker, whose face IS the chosen sink, and the add button, whose
+    face is a plus. Its FACE decides -- a menu button wearing a word
+    inside a linked group beside a toggle is a picker with its
+    modifier, which is the shape this rule exists to allow.
+
+    The limit, stated rather than hidden: a labelled menu button that
+    really is an action ("File") would pass here. It only matters
+    inside a linked group with a toggle, which is not where such a
+    button ever sits, and the alternative is a marker the widget has
+    to carry for the audit's sake alone.
+    """
+    return (node.get("class") == "GtkMenuButton"
+            and (node.get("props") or {}).get("icon_only"))
+
+
 def _findings_h1(node, path, out):
     """H1: linked means ONE instrument.
 
@@ -62,7 +81,10 @@ def _findings_h1(node, path, out):
     automation, a picker whose pin follows the default. A plain
     action button with a toggle stays a violation: the modifier
     pattern is about a VALUE under automation, not two actions
-    glued together. And the one letter the libadwaita
+    glued together. A menu button counts as the value when it
+    wears a word rather than a glyph -- the device picker became
+    one when it grew a second level, and its pin did not change
+    meaning by a hair. And the one letter the libadwaita
     style-classes doc actually writes: a linked box carries no
     spacing."""
     props = node.get("props", {})
@@ -87,9 +109,11 @@ def _findings_h1(node, path, out):
     # value controls, not action clickers: a *Button suffix
     # cannot decide this (GtkSpinButton and GtkColorButton are
     # values), so plain action classes are named outright
-    _actions = ("GtkButton", "GtkMenuButton", "GtkLinkButton")
-    instrument = (len(values) == 1 and toggles
-                  and values[0].get("class") not in _actions)
+    _actions = ("GtkButton", "GtkLinkButton")
+    val = values[0] if len(values) == 1 else None
+    instrument = (val is not None and toggles
+                  and val.get("class") not in _actions
+                  and not _is_action_menu(val))
     if len(kids) < 2 or not (facets or instrument):
         out.append({
             "rule": "H1", "path": path,

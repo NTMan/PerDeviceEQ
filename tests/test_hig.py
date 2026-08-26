@@ -39,6 +39,22 @@ def test_h1_linked_holds_facets_of_one_control():
     assert hig.lint(pair) == []
 
 
+def test_h1_a_menu_button_wearing_a_word_is_the_value():
+    """The device picker became a GtkMenuButton when it grew a second
+    level, and its pin did not change meaning by a hair. A menu
+    button wearing a GLYPH is still an action clicker."""
+    tog = {"class": "GtkToggleButton", "props": {}, "children": []}
+    picker = {"class": "GtkMenuButton",
+              "props": {"label": "Adam D3V"}, "children": []}
+    assert hig.lint(_box([picker, tog], css=["linked"],
+                         spacing=0)) == []
+    plus = {"class": "GtkMenuButton",
+            "props": {"icon_only": True, "tooltip": "Add a target"},
+            "children": []}
+    assert _rules(hig.lint(_box([plus, tog], css=["linked"],
+                                spacing=0))) == ["H1"]
+
+
 def test_h1_one_value_control_with_its_toggles_is_an_instrument():
     spin = {"class": "GtkSpinButton", "props": {}, "children": []}
     tog = {"class": "GtkToggleButton", "props": {}, "children": []}
