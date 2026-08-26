@@ -2,6 +2,12 @@
 """Read a USB device's STRING descriptors.
 
     python3 tools/usb_strings.py 152a:875c
+    python3 tools/usb_strings.py 152a:875c 11 36
+
+With no range it walks the table from index 1 and stops after eight
+misses in a row. Give a FIRST and LAST index to read a run directly,
+which is what an iChannelNames pointer names: a gap wider than eight
+before the channel names would otherwise end the walk short of them.
 
 Why this exists: macOS shows a multichannel interface's channels by
 name -- Analogue 1, AUX 1, BT 1, Mobile 1, Loopback 1 -- because Core
@@ -117,6 +123,13 @@ def main():
                                          sys.argv[1]):
         print(__doc__)
         return 2
+    try:
+        first = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+        last = int(sys.argv[3]) if len(sys.argv) > 3 else 255
+    except ValueError:
+        print("the range is two integers: FIRST LAST")
+        return 2
+    asked = len(sys.argv) > 2
     path = find_device(sys.argv[1])
     if path is None:
         print("no such device: %s" % sys.argv[1])
@@ -139,7 +152,7 @@ def main():
         print("%s -- string descriptors (langid 0x%04x)" % (path, langid))
         print()
         blank = 0
-        for i in range(1, 256):
+        for i in range(first, last + 1):
             try:
                 s = get_string(fd, i, langid)
             except OSError:
@@ -147,8 +160,10 @@ def main():
             if not s:
                 blank += 1
                 # a run of misses means the table has ended; a single
-                # gap does not, because indices are not always dense
-                if blank >= 8:
+                # gap does not, because indices are not always dense.
+                # An ASKED-FOR range is read to its end regardless: the
+                # hand naming it knows something the walk does not
+                if blank >= 8 and not asked:
                     break
                 continue
             blank = 0
