@@ -1241,9 +1241,21 @@ class StreamHandle:
         return self._proc.returncode
 
     def stderr_read(self):
+        """What the process said on its way out, as TEXT.
+
+        Always text, whichever mode it was spawned in. The play side
+        opens in text mode; the capture side cannot, because its
+        stdout is raw f32 audio and would be mangled by a decoder --
+        so its stderr arrives as bytes, and a caller building a
+        message out of it got a TypeError instead of a diagnostic.
+        The decode belongs here, where the two modes meet.
+        """
         if self._proc.stderr is None:
             return ""
-        return self._proc.stderr.read() or ""
+        out = self._proc.stderr.read() or ""
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", "replace")
+        return out
 
     def kill(self):
         if self._proc.poll() is None:

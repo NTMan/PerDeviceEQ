@@ -851,3 +851,37 @@ def test_a_volume_tick_is_not():
     b._ingest(snap)
     snap["sources"][0]["volume"] = 0.42
     assert b._ingest(snap) is False
+
+
+# --- the handle speaks text whichever mode it was spawned in ------
+
+class _Bytes:
+    """A process whose stderr is a binary pipe, which is what the
+    capture side has: its stdout is raw f32 and cannot be decoded."""
+    returncode = 1
+
+    class stderr:
+        @staticmethod
+        def read():
+            return b"fake pw-record: no pw-play deposit\n"
+
+
+class _Text:
+    returncode = 1
+
+    class stderr:
+        @staticmethod
+        def read():
+            return "pw-play: cannot open\n"
+
+
+def test_stderr_is_text_from_a_binary_pipe():
+    """A caller building a message out of it got a TypeError instead
+    of a diagnostic, and the diagnostic was the whole point."""
+    h = StreamHandle(_Bytes())
+    assert h.stderr_read().strip().endswith("no pw-play deposit")
+    assert isinstance(h.stderr_read(), str)
+
+
+def test_stderr_is_text_from_a_text_pipe_too():
+    assert StreamHandle(_Text()).stderr_read().startswith("pw-play")

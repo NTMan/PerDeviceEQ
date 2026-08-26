@@ -437,9 +437,12 @@ class CaptureStream:
         said on its way out. A bare exit code names the actor and not
         the cause, and the cause is usually in that last line."""
         why = (self.proc.stderr_read() or "").strip()
-        return ("pw-record exited early (rc=%s)%s"
+        # the LAST line: a python traceback ends with its exception,
+        # which is the sentence worth carrying. Say so when there is
+        # nothing, or a silent death reads like a lost diagnostic
+        return ("pw-record exited early (rc=%s): %s"
                 % (self.proc.returncode,
-                   (": " + why.splitlines()[-1]) if why else ""))
+                   why.splitlines()[-1] if why else "it said nothing"))
 
     def wait_frames(self, n_frames, timeout, cancel=None):
         need = n_frames * self.channels * 4
