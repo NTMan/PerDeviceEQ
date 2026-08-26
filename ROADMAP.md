@@ -65,12 +65,25 @@ His goal lines ride each task verbatim.
    is the yardstick the AXON and the sub will be measured
    against.
 
+   **Verdict (Aug 26): still open, and now bigger than it was.**
+   The hardware is all here and none of it sold -- iLoud Micro
+   Monitor, NUX AXON 3, Adam D3V which was never in the plan,
+   and the sub. So the comparison is no longer one reference
+   against the ladder but four desktop speakers, with the sub
+   and without, on one rig and one method. That is an article
+   about choosing desktop speakers for a computer, and it is
+   what the yardstick is for.
+
 3. **Preamp automation closes its loop.** His bug filed as a
    question -- why must the automation be jiggled after a
    floor toggle -- root found (the loading gate muted the
    re-land) and fixed. Goal: fix the preamp automation
    bug; acceptance = his Auto number moves by itself on
    the toggle, no hand on the automation.
+
+   **Verdict (Aug 26): done.** The re-land runs outside the
+   loading gate in `_on_floor_toggled`, and his Auto number
+   moves by itself on the toggle.
 
 4. **The solver's beasts.** (a) the argmax mask at saturated
    anchors -- the 58/88 duplicates die, the boost cap regains
@@ -85,6 +98,17 @@ His goal lines ride each task verbatim.
    the accomplice, the joint refine's sign flip was the parent
    (see "fit: the sign leash and the saturated anchor's halo").
 
+   **Verdict (Aug 26).** (b) landed and the speed-up is felt:
+   `_refine` leashes every band's frequency to `span_oct`
+   octaves around its anchor (`GREEDY_SPAN_OCT` in placement,
+   `PRUNE_SPAN_OCT` in the prune), and the prune re-refines
+   only the bands a removed one actually reaches
+   (`PRUNE_OVERLAP_DB`), holding the rest. (c) is REJECTED by
+   the architect rather than pending: the solver does not need
+   to know about the floor, because the blind zone computed
+   from the takes -- and widenable by hand -- already says
+   where it must not spend.
+
 5. **The stress probe enters the sprint.** Challenged in by
    the architect (my parking reasons did not survive: it
    algorithmizes well, the goal is reachable -- only the
@@ -96,6 +120,13 @@ His goal lines ride each task verbatim.
    his ear (the ear found 54 where the zone said 38.3 -- the
    probe must find 54 too).
 
+   **Verdict (Aug 26): the measurement shipped, the automatic
+   floor did not.** Every take now confesses `thd_db`, `h2_db`,
+   `h3_db` and `thd_noise_db`; the takes panel graphs them, and
+   the EQ page carries a warning band along the floor handle's
+   own strip. The automatic floor was tried and its result did
+   not satisfy the architect, which decided task 6.
+
 6. **[Off | Auto | Set].** The Floor button becomes an
    AdwToggleGroup (he found the component) speaking the
    Measure grammar: Auto follows the zone -- and after task 5,
@@ -104,6 +135,14 @@ His goal lines ride each task verbatim.
    the session-loudness preamp mode coexists with Auto, so
    Manual is not dubious. Goal: the floor working in
    auto, in manual, and off.
+
+   **Verdict (Aug 26): resolved the other way -- Off and Set,
+   no Auto.** The floor is a fully manual organ; the ceiling
+   came down entirely and the trust zone lost its protection
+   authority, keeping its fit jurisdiction and its honesty
+   marks on the graph. A hand sweeps the handle until the
+   distortion is gone -- and since Aug 26 it sweeps with the
+   warning band under its finger rather than by ear alone.
 
 7. **Exchange v1, the design round.** The agenda grew by his
    questions: is it a service page of its own; what lives on
@@ -125,20 +164,52 @@ His goal lines ride each task verbatim.
    mixed into per-device-eq -- but the exchange's reading room
    is its natural first client if he builds it.
 
+   **Verdict (Aug 26): settled without a service.** The profile
+   is self-sufficient -- it carries its own measurement, its rig
+   and its calibration passports -- and content addressing was
+   added so a package names itself. No exchange service is being
+   built; the git-CMS idea stays its own project.
+
 8. **The sub and the AXON, on hardware arrival.** Goal:
    full-weight sound -- headphone-grade, but on speakers. Deliverable includes an INSTRUCTION -- how to
    wire and tune the 2.1 stack (crossover seam, level, phase,
    ARC X off, their DSP frozen flat for measurement) with our
    own UMIK as the instrument.
 
-9. **Release 4.1.0, the finale.** Goal: ship every sprint
+   **Verdict (Aug 26): the hardware is all here.** AXON and Adam
+   D3V both measured, the sub measured with and without, and the
+   comparison task 2 wants is now possible.
+
+9. **Release 5.0.0, the finale.** Goal: ship every sprint
    feature -- bump_version, notes for speaker protection with
    its range handles, the zone in the fit, the headroom fixes;
    COPR, flatpak bundle and AppImage converge.
+   **The number changed from 4.1.0 on Aug 26, and not as
+   ceremony**: the profile body schema is 5, and a profile of
+   any earlier version is skipped rather than migrated.
+   Distortion is not metadata that can be filled in later -- a
+   take either recorded its harmonics while the sweep played or
+   it did not -- so there is nothing to convert, and the notes
+   must say plainly that earlier profiles want re-measuring.
 
 10. **The globals-row icon family.** Goal: visual polish
     -- icons for the eye, Floor and Auto strip when the family
     is picked.
+    **Status (Aug 26): two exist**, `pde-find-gain-symbolic`
+    and `pde-level-symbolic`. Still stock or textual: the eye
+    (`view-reveal-symbolic`), and Floor and Auto, which are
+    words. And the find-gain glyph is REJECTED -- it draws a
+    ruler where the row wants the shape the microphone card
+    uses, with a loudspeaker in place of the microphone and a
+    ladder of bars beside it.
+
+11. **The routing rework, never on this list.** It changed
+    how a microphone and a sink are stored -- capture columns
+    declared by hand, a microphone nobody chose having no
+    columns, targets riding in the sink's card rather than in
+    a constant, a target captured by the capsule a hand points
+    at. Twenty-two commits, and the architect's verdict on it
+    is that it was worth the disruption.
 
 ## Shipped
 
