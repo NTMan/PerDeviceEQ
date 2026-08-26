@@ -81,7 +81,74 @@ itself in its own words or not at all.
 The solver's laws (see SOLVER.md) assume their input is
 worth obeying. The trust court is what makes that assumption
 honest: the zone it certifies becomes the fit's frequency
-jurisdiction, the floor it testifies becomes the speaker's
-protection, and the score at the front of the strip is the
-one number that says whether the rest of the strip deserves
-to be read.
+jurisdiction and the honesty marks on the graph, and the
+score at the front of the strip is the one number that says
+whether the rest of the strip deserves to be read.
+
+## Part III -- what the court does not judge
+
+The court judges the MEASUREMENT. It has nothing to say
+about the device the measurement is of, and two organs that
+look like they belong to it do not.
+
+### Distortion is evidence, not a term in the score
+
+Every take records what it heard besides the tone: the
+second and third harmonic, the total harmonic distortion,
+and the same figure with the noise included. None of it
+moves the score, and none of it narrows the band.
+
+That looks inconsistent beside the SNR penalty above, and
+the difference is the whole point. Noise is a property of
+the MEASUREMENT -- it says how much of what was captured is
+not the device -- so a noisy take really did learn less, and
+the court docks it. Distortion is a property of the DEVICE.
+A driver that rasps at 30 Hz is being measured correctly;
+the take is telling the truth, at some cost to the device's
+reputation and none to its own. Docking the score for it
+would punish the instrument for the honesty of its report,
+and would quietly make a bad speaker look like a bad
+measurement.
+
+So the harmonics are published rather than judged. They are
+drawn under each take's response in the takes list,
+summarised as `THD@1k` in the panel's header, and summed
+across the profile into the warning band along the Floor
+handle's strip -- worst channel at each frequency, painted
+by how far the measured distortion passes the point at which
+it is heard, which moves with frequency because hearing
+does. A profile whose takes carry no confession is not
+painted at all: an absence of evidence and an absence of
+distortion must not wear the same colour.
+
+Where they bear on trust, they bear on yours, not the
+court's. A boost drawn where the device already rasps buys
+more rasp, and that is a reason to doubt the EQ decision --
+never a reason to doubt the sweep that revealed it.
+
+### The Floor is a hand, not a verdict
+
+An earlier version of this document said the zone testifies
+the floor and the floor becomes the speaker's protection.
+That authority has been withdrawn. The Floor is a fully
+manual organ now: Off, or Set to a frequency a hand chose,
+seeded at 40 Hz merely as a place to grab. The ceiling is
+gone entirely.
+
+The reason is a confusion the old arrangement invited. A
+zone edge says where the MEASUREMENT stops being
+repeatable. A floor says where the DRIVER stops being able.
+Those are different questions, they resolve to different
+frequencies, and letting one number answer both means
+cutting bass wherever the measurement merely got noisy --
+protection asserted on evidence that was never about
+excursion. The zone keeps what it can actually testify to:
+jurisdiction for the fit, and the marks on the graph that
+say where the curve is worth reading. It never gates
+playback.
+
+What replaced the automatic floor is the hand, better
+informed: the warning band described above lies along the
+handle's own strip, so a floor is swept up until the
+distortion under the finger goes out, rather than by ear
+alone.
