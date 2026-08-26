@@ -38,17 +38,6 @@ from . import debug
 INVALID_POSITION = 0xFFFFFFFF   # Gtk.INVALID_LIST_POSITION
 
 
-def _trim(desc, head):
-    """`desc` without the card's own name in front of it. Exact
-    prefix or nothing: a label is cosmetic, and a guess that
-    half-matches would mangle a name instead of leaving it alone."""
-    if head and desc.startswith(head + " "):
-        rest = desc[len(head) + 1:].strip()
-        if rest:
-            return rest
-    return desc
-
-
 class PickerCore:
     """Rows, placement and pick semantics, GTK-free."""
 
@@ -114,11 +103,16 @@ class PickerCore:
         six inputs and five outputs, grows a second level. Group where
         grouping pays and nowhere else.
 
-        The group's own label is the CARD's description. A child's
-        label drops that description when it is an exact prefix of it
-        -- "M62" then "IN 1" rather than "M62" then "M62 IN 1" -- and
-        that trim is presentational only: it either matches exactly or
-        does nothing, and the node is never identified by it.
+        NAMES ARE PASSED THROUGH, NEVER EDITED. A child shows what
+        PipeWire calls it; if that repeats the card's own name, that
+        is the graph's redundancy to answer for and not ours. The one
+        exception is not an exception: a DOOR is a row this app
+        composes itself out of a port and a card ("Analogue Output -
+        M62"), and under the card's own submenu it shows the port
+        half, which it carries as a field. Nothing is taken apart by
+        looking for a separator -- a port really called
+        "Line - Rear panel" would not survive that, and a name is
+        evidence, not decoration.
         """
         rows = self.rows()
         by_card = {}
@@ -127,6 +121,7 @@ class PickerCore:
                 by_card.setdefault(s["card"], []).append(s["name"])
         card_of = {s["name"]: s.get("card") for s in self.sinks}
         label_of = {s["name"]: s.get("card_desc") for s in self.sinks}
+        port_of = {s["name"]: s.get("port") for s in self.sinks}
         out, seen = [], set()
         for node, desc in rows:
             card = card_of.get(node)
@@ -138,7 +133,7 @@ class PickerCore:
                 continue
             seen.add(card)
             head = label_of.get(node) or desc
-            kids = [(n, _trim(d, head))
+            kids = [(n, port_of.get(n) or d)
                     for n, d in rows if card_of.get(n) == card]
             out.append((head, None, kids))
         return out
@@ -180,9 +175,11 @@ class NodeMenu:
     THE CHECK COMES FROM THE ACTION. The pick action is STATEFUL and
     the items carry targets, which is what makes a menu item draw a
     radio mark -- so the chosen row is marked exactly as a combo row
-    marked it. A submenu cannot carry a mark, so a group whose child
-    is the chosen one says so in its own label ("M62 . AUX"): the
-    first level points at the mark, the second shows it.
+    marked it. A submenu cannot carry a mark and the group does NOT
+    spell the chosen child into its own label: that read as the
+    card's name followed by a name beginning with the card's name.
+    The row itself already shows the full name of what is chosen,
+    before the menu is opened at all.
 
     THE MODEL IS NOT REBUILT WHILE THE MENU IS OPEN. The heartbeat
     calls refresh() several times a second, and a model swapped under
@@ -246,10 +243,7 @@ class NodeMenu:
             if kids is None:
                 out.append((label, node, None))
                 continue
-            chosen = next((d for n, d in kids if n == self.core.node),
-                          None)
-            head = ("%s \u00b7 %s" % (label, chosen)) if chosen else label
-            out.append((head, None, tuple(kids)))
+            out.append((label, None, tuple(kids)))
         return out
 
     def _sync(self):

@@ -119,9 +119,21 @@ def _door_desc(route):
 
     The card is still named, because several cards have a port called
     Speakers and a row that says only "Speakers" is a coin toss."""
-    port = route.get("description") or route.get("name") or "?"
+    port = door_port(route)
     card = route.get("card")
     return "%s - %s" % (port, card) if card else port
+
+
+def door_port(route):
+    """The port's own name, without the card after it.
+
+    It exists so nothing has to take `_door_desc`'s string apart
+    again: a chooser that already shows the card (a menu grouped by
+    it) wants this half, and taking the joined form apart by looking
+    for " - " would eventually eat a port genuinely called
+    "Line - Rear panel".
+    """
+    return route.get("description") or route.get("name") or "?"
 
 
 def _offerable(route):
@@ -165,6 +177,7 @@ def list_playback_entries_from(sinks):
             d["default"] = False
             d["prio"] = -1
             d["desc"] = _door_desc(r)
+            d["port"] = door_port(r)
             doors.append(d)
     return out + doors
 
@@ -595,6 +608,7 @@ def list_capture_entries_from(sources):
             e["gain"] = None
             e["prio"] = -1
             e["desc"] = _door_desc(r)
+            e["port"] = door_port(r)
             doors.append(e)
         if len(routes) < 2:
             e = dict(s)

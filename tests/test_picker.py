@@ -202,7 +202,8 @@ def test_shell_builds_the_two_levels(monkeypatch):
     p.refresh(UMIK + M62)
     assert btn.labels() == ["Umik-1 Gain 24dB", "M62"]
     sub = btn.menu.items[1][1]
-    assert [lab for lab, _ in sub.items] == ["IN 1", "IN 2", "AUX"]
+    assert [lab for lab, _ in sub.items] == ["M62 IN 1", "M62 IN 2",
+                                             "M62 AUX"]
 
 
 def test_shell_marks_the_chosen_node(monkeypatch):
@@ -214,19 +215,23 @@ def test_shell_marks_the_chosen_node(monkeypatch):
     assert p._act.get_state().get_string() == "aux"
 
 
-def test_shell_group_names_its_chosen_child(monkeypatch):
-    """A submenu cannot carry a mark, so the group says where it is."""
+def test_shell_group_label_stays_the_card(monkeypatch):
+    """The group does not spell the chosen child into its own label:
+    that read as the card's name followed by a name beginning with
+    the card's name. The ROW shows what is chosen, before the menu is
+    opened at all."""
     p, btn, _ = _shell(monkeypatch)
     p.refresh(UMIK + M62)
     p.select("aux")
-    assert btn.labels()[1] == "M62 \u00b7 AUX"
+    assert btn.labels()[1] == "M62"
+    assert btn.label == "M62 AUX"
 
 
 def test_shell_pick_arrives_by_name(monkeypatch):
     p, btn, picks = _shell(monkeypatch)
     p.refresh(UMIK + M62)
     p._act.activate("in2")
-    assert picks == [("in2", "IN 2")] or picks == [("in2", "M62 IN 2")]
+    assert picks == [("in2", "M62 IN 2")]
     assert p.core.node == "in2"
 
 
@@ -244,7 +249,7 @@ def test_shell_veto_rolls_the_core_back(monkeypatch):
     p.refresh(UMIK + M62)
     p.select("umik")
     p._act.activate("aux")
-    assert picks == [("aux", "AUX")] or picks == [("aux", "M62 AUX")]
+    assert picks == [("aux", "M62 AUX")]
     assert p.core.node == "umik"
 
 
@@ -302,16 +307,30 @@ def test_a_wide_card_becomes_one_group_in_place():
     assert len(out) == 2          # the card appears ONCE, in place
 
 
-def test_the_child_label_drops_the_card_it_is_already_under():
+def test_a_child_shows_the_name_the_graph_gave_it():
+    """No editing. If a node repeats its card's name, that is the
+    graph's redundancy to answer for; a name is evidence."""
     _, _, kids = _core(M62).groups()[0]
-    assert [d for _, d in kids] == ["IN 1", "IN 2", "AUX"]
+    assert [d for _, d in kids] == ["M62 IN 1", "M62 IN 2", "M62 AUX"]
 
 
-def test_a_label_that_does_not_start_with_the_card_is_left_alone():
-    rows = [dict(r) for r in M62]
-    rows[2]["desc"] = "Line input"
+def test_a_door_shows_its_port_because_it_carries_one():
+    """A door's row is composed by this app out of a port and a card.
+    Under the card's own submenu it shows the port half -- taken from
+    the FIELD, never by splitting the joined string, which would
+    eventually eat a port really called "Line - Rear panel"."""
+    rows = [{"name": "a", "desc": "M62 IN 1", "card": 7,
+             "card_desc": "M62"},
+            {"name": "b", "desc": "Line - Rear panel - M62",
+             "port": "Line - Rear panel", "card": 7,
+             "card_desc": "M62"}]
     _, _, kids = _core(rows).groups()[0]
-    assert [d for _, d in kids] == ["IN 1", "IN 2", "Line input"]
+    assert [d for _, d in kids] == ["M62 IN 1", "Line - Rear panel"]
+
+
+def test_the_group_label_is_the_card_and_nothing_else():
+    c = _core(M62, "aux")
+    assert c.groups()[0][0] == "M62"
 
 
 def test_a_node_the_graph_lost_is_a_leaf_at_the_top():
