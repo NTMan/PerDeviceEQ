@@ -31,6 +31,10 @@ _CSS = """
                       color: @warning_fg_color; }
 .chantab-count.bad  { background-color: @error_bg_color;
                       color: @error_fg_color; }
+.chantab-meter trough { min-width: 6px; border-radius: 3px;
+                        background-color: alpha(currentColor, 0.15); }
+.chantab-meter block.filled { border-radius: 3px;
+                              background-color: @accent_bg_color; }
 """
 
 _TONES = ("done", "warn", "bad")
@@ -68,21 +72,25 @@ class ChannelTabs:
         self._on_pick = on_pick
         self._buttons = {}
         self._counts = {}
+        self._meters = {}
         self._keys = []
         self._selected = None
         self._quiet = False
 
     # ---- building ------------------------------------------------------
-    def rebuild(self, keys, partner=None, selected=None):
+    def rebuild(self, keys, partner=None, selected=None,
+                meters=False):
         """Draw one tab per key. `partner` maps a key to the other half
         of its pair; a partner equal to the key, or missing, prints
-        nothing."""
+        nothing. With `meters` each tab carries a thin vertical bar on
+        its trailing edge -- see meter()."""
         child = self.box.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
             self.box.remove(child)
             child = nxt
         self._buttons, self._counts = {}, {}
+        self._meters = {}
         self._keys = list(keys or [])
         want = selected if selected in self._keys else (
             self._keys[0] if self._keys else None)
@@ -109,7 +117,29 @@ class ChannelTabs:
                 count.add_css_class("chantab-count")
                 count.set_visible(False)
                 body.append(count)
-                btn.set_child(body)
+                if meters:
+                    # the bar rides the TRAILING edge, beside the
+                    # label rather than under it: a tab grows a
+                    # second line when it names a partner, and a
+                    # bar inside the label box would move with it
+                    row = Gtk.Box(
+                        orientation=Gtk.Orientation.HORIZONTAL,
+                        spacing=6)
+                    row.append(body)
+                    bar = Gtk.LevelBar()
+                    bar.set_orientation(Gtk.Orientation.VERTICAL)
+                    bar.set_inverted(True)
+                    bar.set_min_value(0.0)
+                    bar.set_max_value(1.0)
+                    bar.set_value(0.0)
+                    bar.set_size_request(6, -1)
+                    bar.set_valign(Gtk.Align.FILL)
+                    bar.add_css_class("chantab-meter")
+                    row.append(bar)
+                    self._meters[key] = bar
+                    btn.set_child(row)
+                else:
+                    btn.set_child(body)
                 btn.set_active(key == want)
                 btn.connect("toggled", self._on_toggled, key)
                 if first is None:
@@ -153,6 +183,18 @@ class ChannelTabs:
     @property
     def keys(self):
         return list(self._keys)
+
+    def meter(self, key):
+        """The tab's level bar, or None when built without meters.
+        The window registers it so the paint pass drives it, which
+        is why every tab carries one rather than only the chosen
+        tab: finding a microphone means watching the tabs one has
+        NOT picked."""
+        return self._meters.get(key)
+
+    def meters(self):
+        """Every (key, bar) pair, for registering them at once."""
+        return list(self._meters.items())
 
     def widget(self, key):
         return self._buttons.get(key)

@@ -2894,10 +2894,17 @@ class MeasureWindow(Adw.Window):
         self.col_tabs.rebuild(
             keys, partner=partner,
             selected=(self._label_of_col(self.mic_col)
-                      if self.mic_col is not None else None))
+                      if self.mic_col is not None else None),
+            meters=True)
+        # every tab's bar is registered, not just the chosen one:
+        # the job here is FINDING a microphone, and that is done by
+        # tapping a capsule and watching the tabs one has not picked
+        for lab, mb in self.col_tabs.meters():
+            col = self._col_of_label.get(lab)
+            if col is not None:
+                self._meter_bars.setdefault(col, []).append(mb)
+                mb.set_value(self._meter_fraction(col))
         box.append(bar)
-        if self.mic_col is not None:
-            box.append(self._meter_bar(self.mic_col))
         if not self.mic_cols:
             # the card is there and nothing has been said about it yet,
             # which is a state to invite out of, not to report
