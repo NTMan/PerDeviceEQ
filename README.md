@@ -300,7 +300,31 @@ cannot clip behind the meter's back.
 | `~/.local/share/wireplumber/scripts/90-per-device-eq.lua`        | the persistence hook (a static script, installed verbatim from the repo) |
 | `~/.local/state/wireplumber/per-device-eq`                       | the hook's saved graphs (written by the hook; restored at startup)       |
 | `~/.config/wireplumber/wireplumber.conf.d/90-per-device-eq.conf` | loads the hook and creates the `per-device-eq` metadata object           |
+| `~/.config/per-device-eq/export-targets/*.json`                  | your own export targets (see below); never created by the app, read if a hand makes it |
 | `profiles/clean.json`, `/usr/share/per-device-eq/profiles/`      | built-in / system profiles                                               |
+
+### Export targets of your own
+
+The export wizard's list of targets is built-ins plus JSON drop-ins from
+`~/.config/per-device-eq/export-targets/`. The app never creates that
+directory; make it and the wizard reads it.
+
+One file holds one target object or a list of them. A target needs an
+`id`, a `name` and a `writer` from the set the wizard knows
+(`pdeq`, `parametric`, `graphiceq`, `poweramp`, `fixed`), and may carry
+`ext`, `note`, `max_bands` and `presets`. **A drop-in whose `id` matches
+a built-in replaces it in place**; new ids are appended in filename
+order. A malformed file or entry is skipped with a line on stderr rather
+than taking the wizard down.
+
+That is the seam for a player we do not ship a target for, and for
+overriding one we do ship when a particular receiver has its own habits.
+
+```json
+{ "id": "my-player", "name": "My player", "writer": "parametric",
+  "ext": ".txt", "max_bands": 8,
+  "note": "eight bands, no shelves" }
+```
 
 ## Development: audit tools & tests
 
