@@ -80,6 +80,7 @@ def list_sinks(dump=None, default=None):
     dump = dump if dump is not None else pw_dump()
     if default is None:
         default = default_sink_name()
+    _cards = card_names(dump)
     sinks = []
     for o in dump:
         if o.get("type") != "PipeWire:Interface:Node":
@@ -91,6 +92,8 @@ def list_sinks(dump=None, default=None):
                 continue
             sinks.append({"id": o["id"], "name": name,
                           "desc": p.get("node.description") or name,
+                          "card": p.get("device.id"),
+                          "card_desc": _cards.get(p.get("device.id")),
                           "prio": p.get("priority.session") or 0,
                           "routes": card_output_ports(name, dump),
                           # the channel list rides along: the dump is
@@ -165,6 +168,26 @@ def list_playback_entries_from(sinks):
             doors.append(d)
     return out + doors
 
+def card_names(dump):
+    """{device id: its description} for every card in the dump.
+
+    The picker groups by the CARD a node belongs to, and the card is
+    `device.id` on the node -- never a prefix of the description. The
+    M62's nodes happen to be described "M62 IN 1", "M62 AUX" and so
+    on, which makes grouping by the first word look right and fail on
+    the first card whose description does not repeat its own name.
+    """
+    out = {}
+    for o in dump or []:
+        if o.get("type") != "PipeWire:Interface:Device":
+            continue
+        p = (o.get("info") or {}).get("props") or {}
+        desc = p.get("device.description") or p.get("device.nick")
+        if desc:
+            out[o.get("id")] = desc
+    return out
+
+
 def list_sources(dump=None):
     """Audio/Source nodes (measurement mics live here): id, name, desc,
     priority.session, sorted by priority. No 'default' flag on purpose --
@@ -172,6 +195,7 @@ def list_sources(dump=None):
     measurement rig, so the measure window pre-selects the last-used
     source (per-sink recall) instead of the default."""
     dump = dump if dump is not None else pw_dump()
+    _cards = card_names(dump)
     sources = []
     for o in dump:
         if o.get("type") != "PipeWire:Interface:Node":
@@ -184,6 +208,8 @@ def list_sources(dump=None):
             routes = card_input_ports(name, dump)
             sources.append({"id": o["id"], "name": name,
                             "desc": p.get("node.description") or name,
+                            "card": p.get("device.id"),
+                            "card_desc": _cards.get(p.get("device.id")),
                             "prio": p.get("priority.session") or 0,
                             "routes": routes,
                             # as on the sink side: the dump is in hand

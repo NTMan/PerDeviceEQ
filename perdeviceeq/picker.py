@@ -38,6 +38,17 @@ from . import debug
 INVALID_POSITION = 0xFFFFFFFF   # Gtk.INVALID_LIST_POSITION
 
 
+def _trim(desc, head):
+    """`desc` without the card's own name in front of it. Exact
+    prefix or nothing: a label is cosmetic, and a guess that
+    half-matches would mangle a name instead of leaving it alone."""
+    if head and desc.startswith(head + " "):
+        rest = desc[len(head) + 1:].strip()
+        if rest:
+            return rest
+    return desc
+
+
 class PickerCore:
     """Rows, placement and pick semantics, GTK-free."""
 
@@ -89,6 +100,48 @@ class PickerCore:
         if self.node is None and self.placeholder:
             rows.insert(0, (None, self.placeholder))
         return rows
+
+    def groups(self):
+        """The same rows arranged for a TWO-LEVEL chooser.
+
+        Returns a list of entries in the order rows() gives, each
+        either a leaf `(label, node, None)` or a group
+        `(label, None, [(node, label), ...])`.
+
+        THE RULE THAT KEEPS IT FROM BEING AN IRRITATION: a card with
+        ONE node stays a LEAF at the top level. A UMIK-1 is still one
+        click; only a card like the M62, whose UCM profile hands out
+        six inputs and five outputs, grows a second level. Group where
+        grouping pays and nowhere else.
+
+        The group's own label is the CARD's description. A child's
+        label drops that description when it is an exact prefix of it
+        -- "M62" then "IN 1" rather than "M62" then "M62 IN 1" -- and
+        that trim is presentational only: it either matches exactly or
+        does nothing, and the node is never identified by it.
+        """
+        rows = self.rows()
+        by_card = {}
+        for s in self.sinks:
+            if s.get("card") is not None:
+                by_card.setdefault(s["card"], []).append(s["name"])
+        card_of = {s["name"]: s.get("card") for s in self.sinks}
+        label_of = {s["name"]: s.get("card_desc") for s in self.sinks}
+        out, seen = [], set()
+        for node, desc in rows:
+            card = card_of.get(node)
+            # a gone node, the placeholder, or a lone card: a leaf
+            if card is None or len(by_card.get(card, ())) < 2:
+                out.append((desc, node, None))
+                continue
+            if card in seen:
+                continue
+            seen.add(card)
+            head = label_of.get(node) or desc
+            kids = [(n, _trim(d, head))
+                    for n, d in rows if card_of.get(n) == card]
+            out.append((head, None, kids))
+        return out
 
     def index_of(self, name, rows=None):
         rows = self.rows() if rows is None else rows

@@ -382,3 +382,54 @@ def test_the_mirror_shows_the_placeholder():
     p = _mirror(c)
     assert p.dd.get_selected() == 0
     assert p._shown[0] == (None, "Not chosen")
+
+
+# --- two levels: a card with several nodes, and one without --------
+
+M62 = [{"name": "in1", "desc": "M62 IN 1", "card": 7,
+        "card_desc": "M62"},
+       {"name": "in2", "desc": "M62 IN 2", "card": 7,
+        "card_desc": "M62"},
+       {"name": "aux", "desc": "M62 AUX", "card": 7, "card_desc": "M62"}]
+UMIK = [{"name": "umik", "desc": "Umik-1 Gain 24dB", "card": 3,
+         "card_desc": "Umik-1"}]
+
+
+def test_a_lone_card_stays_one_click():
+    """The rule that keeps the second level from being an irritation:
+    a card with one node is a LEAF, not a submenu of one."""
+    assert _core(UMIK).groups() == [("Umik-1 Gain 24dB", "umik", None)]
+
+
+def test_a_wide_card_becomes_one_group_in_place():
+    out = _core(UMIK + M62).groups()
+    assert out[0] == ("Umik-1 Gain 24dB", "umik", None)
+    head, node, kids = out[1]
+    assert (head, node) == ("M62", None)
+    assert [n for n, _ in kids] == ["in1", "in2", "aux"]
+    assert len(out) == 2          # the card appears ONCE, in place
+
+
+def test_the_child_label_drops_the_card_it_is_already_under():
+    _, _, kids = _core(M62).groups()[0]
+    assert [d for _, d in kids] == ["IN 1", "IN 2", "AUX"]
+
+
+def test_a_label_that_does_not_start_with_the_card_is_left_alone():
+    rows = [dict(r) for r in M62]
+    rows[2]["desc"] = "Line input"
+    _, _, kids = _core(rows).groups()[0]
+    assert [d for _, d in kids] == ["IN 1", "IN 2", "Line input"]
+
+
+def test_a_node_the_graph_lost_is_a_leaf_at_the_top():
+    """It has no card in the snapshot, so it cannot be grouped -- and
+    it must stay visible, because it is the current choice."""
+    out = _core(M62, "gone", "Gone mic").groups()
+    assert out[0] == ("Gone mic", "gone", None)
+    assert out[1][0] == "M62"
+
+
+def test_rows_without_a_card_are_ungrouped():
+    out = _core([_s("a"), _s("b")]).groups()
+    assert [n for _, n, _ in out] == ["a", "b"]
