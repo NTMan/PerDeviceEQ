@@ -147,6 +147,8 @@ modules:
         ${FLATPAK_DEST}/share/icons/hicolor/scalable/actions/pde-level-symbolic.svg
       - install -Dpm0644 data/icons/pde-floor-symbolic.svg
         ${FLATPAK_DEST}/share/icons/hicolor/scalable/actions/pde-floor-symbolic.svg
+      - install -Dpm0644 data/icons/pde-find-gain-symbolic.svg
+        ${FLATPAK_DEST}/share/icons/hicolor/scalable/actions/pde-find-gain-symbolic.svg
       - install -Dpm0644 data/io.github.ntman.PerDeviceEQ.metainfo.xml
         ${FLATPAK_DEST}/share/metainfo/io.github.ntman.PerDeviceEQ.metainfo.xml
     sources:
