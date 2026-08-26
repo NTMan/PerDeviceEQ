@@ -195,7 +195,7 @@ His goal lines ride each task verbatim.
 10. **The globals-row icon family.** Goal: visual polish
     -- icons for the eye, Floor and Auto strip when the family
     is picked.
-    **Status (Aug 26): two exist and both are drawn**,
+    **Status (Aug 26): three exist and all are drawn**,
     `pde-find-gain-symbolic` (a microphone beside a ladder of
     levels) and `pde-level-symbolic`, which was a ruler and is
     now that same shape with a loudspeaker in the microphone's
@@ -204,7 +204,16 @@ His goal lines ride each task verbatim.
     earlier line here named the WRONG glyph as the rejected
     one. Still stock or textual: the eye
     (`view-reveal-symbolic`), and Floor and Auto, which are
-    words.
+    words, and Auto STAYS a word: the button carries a state,
+    not an action, and every candidate glyph either lies (a
+    wand promises magic where this is arithmetic), abbreviates
+    the same word to one letter, or turns the state into a
+    reload. There are two Auto toggles in the app, the
+    preamp's and the fit's, and a picture on one of them would
+    split a pair that should look alike. The floor is the
+    opposite case and that is why it got one: "Floor" is a
+    term rather than an ordinary word, and the glyph shows the
+    shape where the word only names it.
 
 11. **The routing rework, never on this list.** It changed
     how a microphone and a sink are stored -- capture columns

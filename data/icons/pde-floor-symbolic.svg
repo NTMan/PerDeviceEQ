@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+     viewBox="0 0 16 16">
+  <!-- the speaker protection floor: a highpass, drawn as its own
+       response (CC0, drawn for this app). Cliff on the left, plateau
+       on the right, which is the shape a mixing desk prints beside
+       the same control.
+
+       It is a miniature of the graph this button stands under, in the
+       same orientation: that axis runs from twenty hertz on the left
+       to twenty kilohertz on the right, so the bass the floor removes
+       sits on the glyph where it sits on the graph. Read it the other
+       way round and the icon would be a lie about which end is cut.
+
+       Note for anyone editing this file: an XML comment may not
+       contain two hyphens in a row, so the house dash cannot be used
+       inside one. -->
+  <path fill="#2e3436" d="M1 14.5 H3 L8 3.5 H6 Z"/>
+  <path fill="#2e3436" d="M6 3.5 H15.5 V5.5 H6 Z"/>
+</svg>

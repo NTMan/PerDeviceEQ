@@ -77,6 +77,8 @@ install -Dpm0644 data/%{appid}.desktop \
         %{buildroot}%{_datadir}/applications/%{appid}.desktop
 install -Dpm0644 data/icons/hicolor/scalable/apps/%{appid}.svg \
         %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/%{appid}.svg
+install -Dpm0644 data/icons/pde-floor-symbolic.svg \
+        %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-floor-symbolic.svg
 install -Dpm0644 data/icons/pde-level-symbolic.svg \
         %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-level-symbolic.svg
 install -Dpm0644 data/icons/pde-find-gain-symbolic.svg \
@@ -122,6 +124,7 @@ fi
 %{_datadir}/%{name}/wireplumber/90-per-device-eq.lua
 %{_datadir}/applications/%{appid}.desktop
 %{_datadir}/icons/hicolor/scalable/apps/%{appid}.svg
+%{_datadir}/icons/hicolor/scalable/actions/pde-floor-symbolic.svg
 %{_datadir}/icons/hicolor/scalable/actions/pde-level-symbolic.svg
 %{_datadir}/icons/hicolor/scalable/actions/pde-find-gain-symbolic.svg
 %{_metainfodir}/%{appid}.metainfo.xml

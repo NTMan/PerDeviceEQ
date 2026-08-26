@@ -223,14 +223,6 @@ class MeasureWindow(Adw.Window):
         self._hi_auto = True
         self._lo_auto = True
         self._spread_driver = None      # LOO verdict, set on refresh
-        try:                       # bundled action icons: needed when
-            theme = Gtk.IconTheme.get_for_display(  # run from git; the
-                Gdk.Display.get_default())          # RPM installs them
-            theme.add_search_path(os.path.join(     # into hicolor
-                os.path.dirname(os.path.dirname(
-                    os.path.abspath(__file__))), "data", "icons"))
-        except Exception:
-            pass
         self._page = None            # selected channel's page widgets
         self._selected_ch = 0        # target the row has selected
         # what a ladder found, per (source node, active route, capture

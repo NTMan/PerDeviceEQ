@@ -895,7 +895,15 @@ class EqWindow(Adw.ApplicationWindow):
         # dressed like the preamp's Auto -- the one two-state
         # precedent the architect named; flat toggles do not
         # show their pressed state
-        self.floor_btn = Gtk.ToggleButton(label="Floor")
+        self.floor_btn = Gtk.ToggleButton()
+        self.floor_btn.set_icon_name("pde-floor-symbolic")
+        # the glyph is the filter's own response, so a hand that has
+        # never met the word "Floor" still sees which end is cut. The
+        # word survives where a word is the right medium: in the
+        # tooltip, and here for anyone who reads the screen rather
+        # than looks at it
+        self.floor_btn.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Floor"])
         self.floor_btn.set_visible(False)
         self.floor_btn.connect("toggled", self._on_floor_toggled)
         row.append(self.floor_btn)
@@ -3233,6 +3241,27 @@ class EqApplication(Adw.Application):
         super().__init__(application_id=APP_ID,
                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.win = None
+
+    def do_startup(self):
+        """Teach the icon theme where the bundled action glyphs are.
+
+        The RPM installs them into hicolor and this is a no-op there;
+        run from git they live in data/icons and nothing would find
+        them. It belongs HERE, at the one point every window is built
+        after: the measure window used to register the path in its own
+        constructor, which was invisible for as long as the only
+        glyphs were its own, and became a blank button in the main
+        window the moment the floor got one.
+        """
+        Adw.Application.do_startup(self)
+        try:
+            theme = Gtk.IconTheme.get_for_display(
+                Gdk.Display.get_default())
+            theme.add_search_path(os.path.join(
+                os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__))), "data", "icons"))
+        except Exception:
+            pass
 
     def do_activate(self):
         """Present the (single) main window; on a portable first
