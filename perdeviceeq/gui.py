@@ -891,11 +891,24 @@ class EqWindow(Adw.ApplicationWindow):
         row.append(self.meas_toggle)
         # the globals-row law (the architect's rule): everything
         # under a tab affects only the tab; the eye, Auto and
-        # the floor act profile-wide, so they share this strip
-        # dressed like the preamp's Auto -- the one two-state
-        # precedent the architect named; flat toggles do not
-        # show their pressed state
+        # the floor act profile-wide, so they share this strip.
+        #
+        # ALL THREE ARE FLAT: this strip is the plotter's own
+        # toolbar, and a toolbar wears flat. The old line here
+        # said the opposite for two reasons and both were bad.
+        # It claimed a flat toggle does not show its pressed
+        # state, which the eye has been disproving in this very
+        # strip since the day it was built: flat, on, and
+        # filled. And it took the preamp's Auto as the
+        # precedent, which does not transfer -- that one sits
+        # in a box carrying the css class "linked", welded to
+        # its spin button as one instrument, and the frame
+        # there belongs to the GROUP rather than to the button.
+        # A flat member would break the group's own outline.
+        # Nothing in this strip is linked to anything, so
+        # nothing here inherits that frame.
         self.floor_btn = Gtk.ToggleButton()
+        self.floor_btn.add_css_class("flat")
         self.floor_btn.set_icon_name("pde-floor-symbolic")
         # the glyph is the filter's own response, so a hand that has
         # never met the word "Floor" still sees which end is cut. The
@@ -911,6 +924,13 @@ class EqWindow(Adw.ApplicationWindow):
         spacer.set_hexpand(True)
         row.append(spacer)
         self.refit_btn = Gtk.ToggleButton(label="Auto")
+        # it stays a pair with the preamp's Auto in its WORD,
+        # which is what a pair of them is about; the frame is
+        # decided by the container instead, and this one has no
+        # group. Flat with a label is legal by the house's own
+        # H3, which bites at FLAT_LABEL_MAX characters, where a
+        # label stops reading as a control: "Auto" is four
+        self.refit_btn.add_css_class("flat")
         self.refit_btn.set_tooltip_text(
             "The EQ follows the measurement. Hand edits un-press "
             "this; pressing it re-fits from the stored takes and "
