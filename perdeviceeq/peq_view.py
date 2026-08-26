@@ -98,6 +98,7 @@ class PeqView(Gtk.Box):
         self._cursor = None       # pointer for the crosshair
         self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
+        self._dist = None           # (freqs, audible distortion dB)
         self._traces = {}           # name -> [(x, y, value)] as drawn
         self._under = None          # the line under the pointer
         self._under_v = None
@@ -177,6 +178,31 @@ class PeqView(Gtk.Box):
     def get_bands(self):
         return [b.to_dict() for b in self._bands]
 
+    def set_distortion(self, freqs=None, aud_db=None):
+        """Feed the strip's warning band: how loud the rubbish is
+        likely to SOUND at each swept frequency, already reduced
+        to one curve for the whole profile (the floor is one
+        handle for every channel, so the band is the worst of
+        them). None clears it -- and clearing is not the same as
+        a clean rig: a profile whose takes carry no confession
+        shows NOTHING, because absence of data and absence of
+        distortion must not wear the same colour."""
+        if not freqs or aud_db is None:
+            self._dist = None
+        else:
+            self._dist = (list(freqs), list(aud_db))
+        self._sync_strip()
+
+    def _sync_strip(self):
+        """The strip stands for either organ. The warning band
+        is not the floor's servant: a hand deciding whether to
+        engage the floor at all wants to see what it would be
+        engaging against, so the band shows with the floor off
+        and with the floor never set."""
+        self.protect_strip.set_visible(
+            self._protect is not None or self._dist is not None)
+        self.protect_strip.queue_draw()
+
     def set_protection(self, lo, visible, on_change=None):
         """Feed the protection strip: lo is the floor's
         frequency, the ONE handle -- the ceiling came down and
@@ -184,10 +210,9 @@ class PeqView(Gtk.Box):
         business marking a manual one). on_change(lo, final)
         fires throttled during a drag and once with final=True
         at its end."""
-        self._protect = lo
+        self._protect = lo if visible else None
         self._protect_cb = on_change
-        self.protect_strip.set_visible(bool(visible)
-                                       and lo is not None)
+        self._sync_strip()
         self.protect_strip.queue_draw()
 
     def _strip_geo(self):
@@ -208,11 +233,64 @@ class PeqView(Gtk.Box):
         return 10 ** (math.log10(FMIN)
                       + t * (math.log10(FMAX) - math.log10(FMIN)))
 
+    # The curve handed here is EXCEEDANCE: decibels past the
+    # level at which distortion begins to be noticed at that
+    # frequency. So the band starts at zero -- under the
+    # threshold there is nothing to warn about and nothing is
+    # painted -- and reaches full weight twelve decibels over,
+    # four times the audible amount, where a driver is plainly
+    # past its limit. The ceiling stays short of opaque: the
+    # handle and its number ride the same strip.
+    _DIST_FLOOR_DB = 0.0
+    _DIST_FULL_DB = 12.0
+    _DIST_MAX_A = 0.60
+    _DIST_BAND_PX = 7
+
+    def _draw_distortion(self, cr, h, ml, pw_):
+        """The strip's top edge, coloured where the rig is likely
+        to be heard misbehaving. Drawn first and only in its own
+        band, so the floor's own shading and its handle keep the
+        rest of the strip to themselves."""
+        if not self._dist:
+            return
+        fs, ds = self._dist
+        n = len(fs)
+        if n < 2:
+            return
+        band = min(self._DIST_BAND_PX, max(1, int(h / 3)))
+        # One paint per PIXEL, never one per sample. The sweep
+        # is measured on a 1/96-octave grid, so a pixel near 20
+        # Hz holds a fraction of a point and a pixel near 10 kHz
+        # holds a dozen; painting each sample separately let the
+        # translucent rectangles composite, and eight coats of
+        # 0.23 come out at 0.86. The top of the range then read
+        # as dark as the worst place in the bass, which is the
+        # opposite of the truth. Resolve to columns first, take
+        # the worst sample in each, then paint it once.
+        cols = {}
+        for i in range(n):
+            v = ds[i]
+            if v is None or not (v == v):        # NaN abstains
+                continue
+            x = int(self._px_of(fs[i], ml, pw_))
+            if x not in cols or v > cols[x]:
+                cols[x] = v
+        for x, v in cols.items():
+            t = ((v - self._DIST_FLOOR_DB)
+                 / (self._DIST_FULL_DB - self._DIST_FLOOR_DB))
+            a = max(0.0, min(1.0, t)) * self._DIST_MAX_A
+            if a <= 0.004:
+                continue
+            cr.set_source_rgba(0.95, 0.35, 0.25, a)
+            cr.rectangle(x, 1, 1, band)
+            cr.fill()
+
     def _draw_protect(self, _a, cr, w, h, *_):
+        ml, pw_ = self._strip_geo()
+        self._draw_distortion(cr, h, ml, pw_)
         if not self._protect:
             return
         lo = self._protect
-        ml, pw_ = self._strip_geo()
         xr = ml + pw_
         mid = h / 2.0
         cr.set_line_width(1.0)

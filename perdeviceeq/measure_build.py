@@ -666,3 +666,113 @@ def refit_and_save(store, pid, bands=None, f_lo=None, f_hi=None,
                               allow_edited=allow_edited,
                               progress=progress)
     return store.save_user(out)
+
+
+# What the strip must say is "this will be heard", and hearing
+# distortion is a matter of a THRESHOLD that moves with
+# frequency, not of a ratio. Two forces pull against each other
+# in the bass and modelling either alone gets the sign wrong: a
+# product lands where the ear is keener than it is at the
+# fundamental, which makes it stand out, while the fundamental
+# is loud and masks its own harmonics, which buries it. What is
+# left after the two is measured rather than derived, and it is
+# an old result: in the bass listeners tolerate whole percents,
+# in the midband tenths of one.
+#
+# _THRESH is that tolerance, in dB re the fundamental, at which
+# distortion begins to be noticed on programme material. The
+# strip then shows EXCEEDANCE -- how far past it a rig is --
+# which is the only quantity a warning colour can honestly
+# carry.
+_THRESH = [(20.0, -18.0), (31.5, -20.0), (50.0, -22.0),
+           (80.0, -25.0), (100.0, -26.0), (200.0, -32.0),
+           (500.0, -38.0), (1000.0, -40.0), (5000.0, -40.0),
+           (20000.0, -38.0)]
+
+
+def _threshold_db(f):
+    """Where distortion starts to be noticed at `f`, in dB re
+    the fundamental."""
+    a = np.asarray(f, float)
+    xs = np.log10([p[0] for p in _THRESH])
+    ys = np.array([p[1] for p in _THRESH], float)
+    return np.interp(np.log10(np.clip(a, 1.0, 1e6)), xs, ys)
+
+
+# An odd harmonic at the same level sounds harsher than an even
+# one -- the second thickens, the third rasps.
+_H2_DISCOUNT_DB = 4.0
+
+
+def audible_distortion(records, freqs, ppo=96):
+    """One curve for the strip under the floor handle: how loud
+    the rubbish is likely to SOUND at each swept frequency, in
+    dB re the fundamental, or None when no take confesses.
+
+    Three departures from plain THD, each argued above: the
+    harmonics are weighted by the frequency of the PRODUCT
+    rather than of the fundamental; the second is discounted
+    against the third; and the non-harmonic residue -- port
+    chuff, a passive radiator hitting its stop, a rattle
+    somewhere in the room -- is carried too, since it is what
+    the ear notices first and what no harmonic figure sees.
+    """
+    got = mean_confession(records)
+    if got is None:
+        return None
+    thd, h2, h3, noise = got
+    f = np.asarray(freqs, float)
+    if f.size != np.asarray(thd, float).size:
+        return None
+
+    def lin(a):
+        a = np.asarray(a, float) if a is not None else None
+        if a is None:
+            return np.zeros_like(f)
+        with np.errstate(all="ignore"):
+            v = 10.0 ** (a / 20.0)
+        return np.where(np.isfinite(v), v, 0.0)
+
+    w2 = 10.0 ** (-_H2_DISCOUNT_DB / 20.0)
+    parts = [lin(h2) * w2, lin(h3)]
+
+    # what the harmonics do not account for: thd_noise is the
+    # whole residue, thd the harmonic part of it
+    if noise is not None and thd is not None:
+        rest = lin(noise) ** 2 - lin(thd) ** 2
+        rest = np.sqrt(np.maximum(rest, 0.0))
+        # the residue has no home frequency to speak of: it is
+        # taken at the fundamental's own place, weight one
+        parts.append(rest)
+
+    tot = np.sqrt(sum(p ** 2 for p in parts))
+    with np.errstate(all="ignore"):
+        out = (20.0 * np.log10(np.maximum(tot, 1e-9))
+               - _threshold_db(f))
+    seen = np.isfinite(np.asarray(thd, float))
+    out[~seen] = np.nan
+    return _critical_band(out, ppo)
+
+
+def _critical_band(a, ppo, frac=1.0 / 3.0):
+    """A running median a third of an octave wide. The ear
+    integrates distortion over a critical band, so a spike one
+    bin of a 1/96-octave grid wide is not heard as distortion at
+    all; left alone it paints as darkly as a mountain that
+    spans two octaves, which is how the midband came to look as
+    bad as the bass. The median rather than a mean because the
+    point is to drop the spikes, not to spread them."""
+    a = np.asarray(a, float)
+    w = max(1, int(round(frac * float(ppo))))
+    if w < 3 or a.size < w:
+        return a
+    half = w // 2
+    pad = np.pad(a, half, mode="edge")
+    out = np.empty_like(a)
+    for i in range(a.size):
+        win = pad[i:i + 2 * half + 1]
+        if np.all(np.isnan(win)):
+            out[i] = np.nan
+        else:
+            out[i] = np.nanmedian(win)
+    return out
