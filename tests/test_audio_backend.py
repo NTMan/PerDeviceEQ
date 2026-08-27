@@ -15,6 +15,7 @@ class FakeBackend(AudioBackend):
 
     server_graph = (None, None)
     server_volume = None
+    server_mute = None
 
     def _push_graph(self, device, value):
         self.log.append(("graph", device, value))
@@ -28,6 +29,12 @@ class FakeBackend(AudioBackend):
 
     def _push_volume(self, device, cubic):
         self.log.append(("volume", device, cubic))
+
+    def _read_mute(self, device):
+        return self.server_mute
+
+    def _push_mute(self, device, mute):
+        self.log.append(("mute", device, mute))
 
     def _push_stream_mutes(self, sink, mute, prior=None):
         self.log.append(("mutes", sink, mute))
@@ -180,3 +187,44 @@ def test_queueing_speaks_with_the_callers_voice(capsys):
     assert "caller:" in err
     f.moratorium_end()
     assert ("graph", "dev", "LATE") in f.log
+
+
+# --- a fader at its far left is a MUTE, not a zero ----------------
+
+def test_a_muted_sink_is_unmuted_for_the_sweep_and_muted_back():
+    """His find: GNOME mutes rather than zeroes at the far left, and a
+    measurement that only writes a volume plays a whole sweep into a
+    silent card."""
+    f = FakeBackend()
+    f.server_mute = True
+    f.server_volume = 0.4
+    f.moratorium_begin("s1", measure_cubic=0.2)
+    assert ("mute", "s1", False) in f.log
+    assert f.log.index(("mute", "s1", False)) \
+        < f.log.index(("volume", "s1", 0.2))
+    f.log.clear()
+    f.moratorium_end()
+    # the volume comes back first, then the mute: a card muted and
+    # then given a level is left silent with a number on the fader
+    assert f.log.index(("volume", "s1", 0.4)) \
+        < f.log.index(("mute", "s1", True))
+
+
+def test_an_unmuted_sink_is_left_alone():
+    f = FakeBackend()
+    f.server_mute = False
+    f.server_volume = 0.4
+    f.moratorium_begin("s1", measure_cubic=0.2)
+    f.moratorium_end()
+    assert not [e for e in f.log if e[0] == "mute"]
+
+
+def test_no_measure_volume_means_no_mute_business():
+    """Without a measurement volume the moratorium is not setting a
+    level at all, so it has no business touching the mute either."""
+    f = FakeBackend()
+    f.server_mute = True
+    f.moratorium_begin("s1")
+    f.moratorium_end()
+    assert not [e for e in f.log if e[0] == "mute"]
+

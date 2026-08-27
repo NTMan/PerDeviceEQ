@@ -1289,6 +1289,30 @@ class PipeWireBackend(AudioBackend):
         sink_id = resolve_sink_id(device)
         set_sink_volume(sink_id, cubic)
 
+    def _read_mute(self, device):
+        """The sink's OWN mute, not its streams'. A desktop fader at
+        its far left sets this rather than a zero volume."""
+        dump = pw_dump()
+        try:
+            sink_id = resolve_sink_id(device, dump)
+        except Exception:
+            return None
+        for o in dump:
+            if o.get("id") != sink_id:
+                continue
+            params = (o.get("info") or {}).get("params") or {}
+            for entry in params.get("Props") or []:
+                if "mute" in entry:
+                    return bool(entry["mute"])
+        return None
+
+    def _push_mute(self, device, mute):
+        try:
+            sink_id = resolve_sink_id(device)
+        except Exception:
+            return
+        set_stream_mute(sink_id, mute)
+
     def _push_stream_mutes(self, sink, mute, prior=None):
         if not mute:
             for node_id in (prior or []):

@@ -132,11 +132,20 @@ class AudioBackend(ABC):
         """A measurement claims the server for ONE sweep: mute foreign
         streams (when asked), strip the DSP off `sink`, set the
         measurement volume (when given). The restore is read from the
-        SERVER at this very begin -- graph (with its source) and
-        volume -- so any process, however fresh, restores what the
-        server actually had, every sweep, exactly as the old per-sweep
-        law did. Returns the evidence dict the session records as
-        eq_profile_state. Raises if one is already active."""
+        SERVER at this very begin -- graph (with its source), volume
+        and the sink's own mute -- so any process, however fresh,
+        restores what the server actually had, every sweep, exactly as
+        the old per-sweep law did. Returns the evidence dict the
+        session records as eq_profile_state. Raises if one is already
+        active.
+
+        THE SINK'S OWN MUTE IS CLEARED with the volume, and this is
+        his finding: a desktop fader dragged to its far left does not
+        set zero, it sets MUTE, and a measurement that only writes a
+        volume then plays a whole sweep into a muted card. Setting a
+        level and leaving a mute standing is not setting a level. It
+        is restored at the end like everything else here.
+        """
         with self._lock:
             if self._moratorium is not None:
                 raise RuntimeError("moratorium already active")
@@ -150,6 +159,8 @@ class AudioBackend(ABC):
                 "graph": value,
                 "volume": (self._read_volume(sink)
                            if measure_cubic is not None else None),
+                "mute": (self._read_mute(sink)
+                         if measure_cubic is not None else None),
                 "mutes": (self._push_stream_mutes(sink, True)
                           if mute_others else None),
                 "state": state,
@@ -160,12 +171,15 @@ class AudioBackend(ABC):
                 self._push_graph(sink, None)
                 state["bypass"] = True
             if measure_cubic is not None:
+                if restore["mute"]:
+                    self._push_mute(sink, False)
                 self._push_volume(sink, measure_cubic)
             return state
 
     def moratorium_end(self):
         """Measurement over (normal end or forced stop): restore in
-        the sweep's own order -- volume back, EQ back, unmute -- then
+        the sweep's own order -- volume and the sink's own mute back,
+        EQ back, foreign streams unmuted -- then
         apply everything that accumulated, one pass, last write per
         key. Pending writes for the measured sink outrank its
         restore. Fills state["restored"]."""
@@ -179,6 +193,11 @@ class AudioBackend(ABC):
             if ("volume", sink) not in self._pending \
                     and restore["volume"] is not None:
                 self._push_volume(sink, restore["volume"])
+                # after the volume, not before: a card set back to
+                # muted and then given a level would be left silent
+                # with a number on the fader
+                if restore.get("mute"):
+                    self._push_mute(sink, True)
             if ("graph", sink) not in self._pending \
                     and restore["graph"] is not None:
                 ok = bool(self._push_graph(sink,
@@ -301,6 +320,15 @@ class AudioBackend(ABC):
     @abstractmethod
     def _read_volume(self, device):
         """The device's current cubic volume, or None."""
+
+    @abstractmethod
+    def _read_mute(self, device):
+        """Whether the DEVICE itself is muted right now, or None when
+        the server does not say. Its own flag, not its streams'."""
+
+    @abstractmethod
+    def _push_mute(self, device, mute):
+        """Set the device's own mute."""
 
     def _restore_failed(self, device, value):
         """A graph restore was refused; heirs say how to recover."""
