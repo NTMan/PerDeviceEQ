@@ -1,5 +1,7 @@
 """The level search: its policy, and the field runs that shaped it."""
 
+import math
+
 import pytest
 
 from perdeviceeq import level_run
@@ -36,21 +38,56 @@ def test_a_quiet_probe_stays_quiet():
     assert level_run.AutoLevel.verdict(-40.0, 20.0, thd_bound=False) == "quiet"
 
 
-def test_the_crossing_outranks_the_peak_floor():
-    """The first cut asked the third question INSIDE the old peak
-    window, and on his rig the crossing happens at a peak of -13.6
-    dBFS -- below AUTO_PEAK_FLOOR. So the level that answered it was
-    rejected as not hot enough before the question was reached, and
-    the hunt sailed past to full volume. He caught it from a
-    screenshot; this is the court that keeps it caught.
+def _walk(judge, start=0.15, steps=24):
+    """Drive a whole hunt over a synthetic chain. `judge(v)` returns
+    the (peak, snr, bound) that chain would give at volume v. Returns
+    (settled level, every volume tried)."""
+    a = level_run.AutoLevel()
+    v, seen = start, []
+    for _ in range(steps):
+        pk, snr, bound = judge(v)
+        a.observe(v, pk, snr, False, bound)
+        seen.append(v)
+        if a.settled():
+            break
+        nv = a.next_volume(v)
+        if abs(nv - v) < 1e-4:
+            break
+        v = nv
+    return (a.ok[0] if a.ok else None), seen
 
-    His own ladder, Liberty 5 Pro into the coupler.
+
+def test_the_hunt_does_not_overshoot_the_peak_floor():
+    """WHAT THAT COURT ALWAYS GUARDED, said as the harm rather than as
+    the mechanism.
+
+    Its first form asserted that the crossing outranks the peak floor,
+    because on his Liberty 5 Pro through the coupler the crossing sits
+    at a peak of -13.6 dBFS, BELOW the floor, and a cut that asked the
+    floor first rejected that level and sailed to full volume. He
+    caught it from a screenshot.
+
+    But the runaway was the RAMP: doubling the cubic is eighteen
+    decibels a step, so one rejection threw the hunt across everything
+    above it. The creep cured that, and his ladders since put only
+    4.6 dB between the crossing and the floor on that same chain, with
+    the measured figure not moving across them at all. So the rule
+    worth keeping is not "the floor never binds" -- it is that the
+    hunt lands NEAR the floor rather than beyond it.
+
+    His own ladder, as measured, with the rungs between filled in.
     """
-    ladder = [(-22.8, 38.8, True), (-19.6, 42.4, True),
-              (-19.6, 42.6, True), (-16.2, 46.9, True),
-              (-13.6, 50.0, False), (-7.5, 56.2, False)]
-    said = [level_run.AutoLevel.verdict(pk, snr, False, b) for pk, snr, b in ladder]
-    assert said == ["quiet", "quiet", "quiet", "quiet", "ok", "ok"]
+    def liberty(v):
+        # peak follows the level one for one; the crossing at -13.6
+        pk = -13.6 + 60.0 * math.log10(max(v, 1e-6) / 0.30)
+        return pk, 50.0, pk < -13.6
+
+    got, seen = _walk(liberty)
+    assert got is not None, seen
+    peak = -13.6 + 60.0 * math.log10(got / 0.30)
+    # near the floor, not beyond it, and nowhere near full volume
+    assert peak <= level_run.AUTO_PEAK_FLOOR + 1.5, (peak, seen)
+    assert max(seen) < 0.9, seen
 
 
 def test_without_a_judgement_the_peak_floor_still_rules():
@@ -72,7 +109,13 @@ def test_the_hunt_closes_on_the_lowest_ok_not_the_first():
     the old behaviour wearing new clothes, which is what he saw in a
     screenshot. An ok level is a CEILING to close on."""
     def judge(v):
-        return ((-25.0, 45.0, True) if v < 0.76 else (-13.0, 50.0, False))
+        # A PHYSICAL CHAIN: the peak follows the level. It used to
+        # stand still at -25 and -13 whatever the volume, which is the
+        # very signature a whole afternoon was spent identifying as a
+        # broken rig -- and it put both "ok" rungs under the peak
+        # floor. The rule under test is the CLOSING, not the peak.
+        pk = -11.0 + 60.0 * math.log10(max(v, 1e-6) / 0.80)
+        return pk, (45.0 if v < 0.76 else 50.0), v < 0.76
 
     a = level_run.AutoLevel()
     v, seen = 0.04, []
@@ -132,13 +175,17 @@ def test_a_closed_bracket_ends_the_hunt_even_on_a_quiet_probe():
     steps and stopped short on a bound -- with the answer, 69, already
     in hand three sweeps earlier."""
     a = level_run.AutoLevel()
+
+    def peak(v):                      # a physical chain, as above
+        return -11.5 + 60.0 * math.log10(max(v, 1e-6) / 0.69)
+
     for v, bound in ((0.15, True), (0.30, True), (0.60, True),
                      (0.80, False), (0.69, False), (0.64, True)):
-        a.observe(v, -20.0, 45.0, False, bound)
+        a.observe(v, peak(v), 45.0, False, bound)
     assert a.settled()
     assert a.ok[0] == pytest.approx(0.69)
     # and the probe that closed it was judged quiet, not ok
-    assert a.verdict(-20.0, 45.0, False, True) == "quiet"
+    assert a.verdict(peak(0.64), 45.0, False, True) == "quiet"
 
 
 def test_a_take_warns_from_the_snr_it_reports():

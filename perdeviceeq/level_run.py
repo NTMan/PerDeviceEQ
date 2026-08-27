@@ -103,11 +103,27 @@ class AutoLevel:
         -16 dBFS, well inside the old window, so the hunt stopped early
         and every THD number afterwards was a ceiling.
 
-        ORDER MATTERS: the crossing decides where it can, and the peak
-        floor is what remains when nothing can be said about the
-        figure. The floor exists to keep a capture robust, and an SNR
-        near fifty with a figure that IS a measurement is not a fragile
-        capture.
+        THE PEAK FLOOR BINDS IN EVERY BRANCH. It used to be asked
+        only where the crossing had nothing to say, because on his
+        Liberty the crossing arrives at a peak of -13.6 dBFS -- below
+        the floor -- and an early cut that rejected that level sailed
+        to full volume. The runaway was the RAMP, though, not the
+        order of the questions: doubling the cubic threw the hunt
+        across everything above one rejection, and the creep has since
+        cured it.
+
+        What the field then measured is why the floor is back: on both
+        of his chains, climbing from the crossing up to the floor
+        costs NOTHING in the reading. The M62 moved +0.00 and +0.97 dB
+        of distortion for 2.8 dB of level; the CM106 moved -0.11,
+        -0.96 and -1.85 for 4.6 dB. Clearing the crossing says the
+        figure is VISIBLE. It does not say the capture is ROBUST, and
+        those are two questions -- so the second one is asked again,
+        and the decibels it buys are free.
+
+        The last-decibel escape stays: a device that cannot reach the
+        floor at full volume must be able to say so rather than be
+        walked to silence.
 
         NOT A PRECISE OPTIMUM, and the code should not pretend
         otherwise: three ladders on one earphone put the crossing at
@@ -122,11 +138,11 @@ class AutoLevel:
         if not (snr >= mc.SNR_WARN_DB + AUTO_SNR_MARGIN_DB
                 or (snr >= mc.SNR_WARN_DB and last_dB)):
             return "quiet"
-        if thd_bound is False:
-            return "ok"
+        if peak < AUTO_PEAK_FLOOR and not last_dB:
+            return "quiet"
         if thd_bound is True:
             return "ok" if last_dB else "quiet"
-        return "ok" if peak >= AUTO_PEAK_FLOOR else "quiet"
+        return "ok"
 
     def observe(self, v, peak, snr, clipped, thd_bound=None,
                 margin_db=None):
