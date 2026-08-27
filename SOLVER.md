@@ -144,6 +144,46 @@ about where the measurement ends is not a protection feature.
 
 ## Part II -- the mathematics
 
+### The grid, and why its top edge is 19897 Hz
+
+Everything below is computed on a grid uniform in log2: 96
+points per octave from 20 Hz, `f_lo * 2**(i/96)`. Three things
+are worth knowing about it, because the question comes back.
+
+**It was chosen freely, not from a standard.** There is a
+standard next door and it does not govern us: IEC 61260-1
+specifies fractional-octave FILTER banks, anchors them at
+1000 Hz exactly, and prefers base ten (`G = 10**0.3`), noting
+that base-two designs drift out of conformance the further
+they sit from the reference. We match it on none of those --
+different anchor, different base -- and we do not need to,
+because we do not produce band levels. We sample a magnitude
+curve.
+
+**Comparability does not depend on it.** Published headphone
+data (oratory1990, Crinacle, Rtings, Innerfidelity) each
+arrives on its own axis, and AutoEq brings them together by
+INTERPOLATING onto a sampling of its own. The bridge between
+sources is interpolation, not a shared axis. What decides
+whether a measurement is comparable is the fixture and the
+calibration.
+
+**And a whole number of points per octave cannot have round
+band edges.** For both 20 and 20000 to be nodes,
+`log2(1000) * ppo` would have to be a whole number, and
+`log2(1000)` is irrational -- so no integer ppo can do it, at
+any resolution or anchor. Endpoints land on nodes only if the
+grid is defined by its endpoints, which makes the spacing
+95.93 points per octave.
+
+That is the trade, and it is settled in favour of the whole
+number: the spacing is a quantity the smoothing and the fit
+divide by, while the round edge is a quantity the eye likes.
+So the last node inside the band is 19897 Hz, and a fit that
+reaches it has discarded nothing. A zone ending BELOW it --
+19330, 18114 -- is a real edge, four or thirteen nodes down,
+and means what it says.
+
 ### The target
 
 The grid is clipped to the trust zone `[lo, hi]`. The level
