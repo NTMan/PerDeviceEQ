@@ -25,9 +25,19 @@ as about a decibel louder. If it does not, the microphone is not in
 the path being measured, and every further rung is a sweep into
 nothing. This is not a hypothetical: a whole evening's ladders were
 run with the coupler plugged into a different card, and the eight
-rungs came back with a peak that never moved and distortion figures
-between six and a hundred and seventy per cent. The tool said
-"channel 0 of 2" in small print and went on measuring the room.
+rungs came back with distortion figures between six and a hundred and
+seventy per cent. The tool said "channel 0 of 2" in small print and
+went on measuring the room.
+
+AND THE THING THAT FOLLOWS IS THE RESPONSE, NOT THE PEAK. His CM106
+carries a DC offset some thirty-six decibels above its own noise, so
+the peak sample belongs to that offset and not to the sweep: seven
+decibels of level went by with the peak parked at -39, on a chain
+whose microphone had just been confirmed by knocking on the capsule.
+The sweep's own level is the response the deconvolution recovers,
+which cannot contain a constant, and that is what is watched here.
+The peak stays in the table, because it is what the search's brake
+reads and what clipping shows up in.
 
 BEFORE RUNNING IT: the sweep plays into whatever is on the coupler.
 Bring the card's own analogue output level down first, and start below
@@ -97,11 +107,19 @@ def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
     peak_db = 20.0 * math.log10(peak) if peak > 0 else -120.0
     clipped = peak >= 0.999
     got = mc.analyze_take(chan, sweep, freqs)
+    # the sweep's own level: the median of the recovered response
+    # across the band the coupler can be trusted in. A constant
+    # offset cannot survive the deconvolution, so this follows the
+    # level where the peak sample does not.
+    band = (np.asarray(freqs) >= 100.0) & (np.asarray(freqs) <= 8000.0)
+    mag = np.asarray(got.mag_db, float)[band]
+    mag = mag[np.isfinite(mag)]
+    resp = float(np.median(mag)) if mag.size else None
     at = mb.thd_at(freqs, got.thd_db, got.thd_noise_db)
     margin = mb.thd_margin_db(freqs, got.thd_db, got.thd_noise_db)
     snr = (float(got.snr_db) if got.snr_db is not None
            and math.isfinite(float(got.snr_db)) else None)
-    return peak_db, snr, clipped, at, margin
+    return peak_db, resp, snr, clipped, at, margin
 
 
 def main():
@@ -160,15 +178,15 @@ def main():
           % (a.rungs, a.step_db, 100 * a.start, a.stop_peak))
     print("SWEEPS WILL PLAY. Bring the card's own output level down "
           "first.\n")
-    print("  %-7s %-8s %-9s %-7s %-11s %-8s %s"
-          % ("rung", "level", "peak", "SNR", "THD@1k", "margin",
-             "verdict"))
+    print("  %-7s %-8s %-9s %-9s %-7s %-11s %-8s %s"
+          % ("rung", "level", "peak", "response", "SNR", "THD@1k",
+             "margin", "verdict"))
 
-    rows, peaks = [], []
+    rows, resps = [], []
     v = level_run._clamp(a.start)
     try:
         for i in range(1, a.rungs + 1):
-            peak, snr, clipped, at, margin = rung(
+            peak, resp, snr, clipped, at, margin = rung(
                 sink, source, sink["name"], wav, duration, width,
                 sweep.fs, sweep, freqs, column, v)
             said = level_run.AutoLevel.verdict(
@@ -176,21 +194,23 @@ def main():
             thd = ("n/a" if at is None else
                    "%s%s%%" % ("<=" if at[1] else "",
                                mb.pct_word(at[0])))
-            print("  %-7d %-8.0f%% %-9.1f %-7s %-11s %-8s %s"
+            print("  %-7d %-8.0f%% %-9.1f %-9s %-7s %-11s %-8s %s"
                   % (i, 100 * v, peak,
+                     "n/a" if resp is None else "%.1f" % resp,
                      "n/a" if snr is None else "%.1f" % snr, thd,
                      "n/a" if margin is None else "%+.1f dB" % margin,
                      said))
-            peaks.append(peak)
+            if resp is not None:
+                resps.append(resp)
             if at is not None and margin is not None and not at[1]:
                 rows.append((peak, 20.0 * math.log10(at[0] / 100.0)))
 
             # DOES THE CAPTURE FOLLOW THE LEVEL? If not, the mic is
             # not in this path and the remaining rungs are sweeps
             # into nothing.
-            if len(peaks) == TRACK_AFTER:
-                x = np.arange(len(peaks), dtype=float) * a.step_db
-                got = float(np.polyfit(x, np.array(peaks), 1)[0])
+            if len(resps) == TRACK_AFTER:
+                x = np.arange(len(resps), dtype=float) * a.step_db
+                got = float(np.polyfit(x, np.array(resps), 1)[0])
                 if got < TRACK_MIN:
                     print("\n  the capture followed the level at %.2f "
                           "dB per dB over %d rungs -- stopping."
