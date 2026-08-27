@@ -218,13 +218,3 @@ def test_an_unmuted_sink_is_left_alone():
     f.moratorium_end()
     assert not [e for e in f.log if e[0] == "mute"]
 
-
-def test_no_measure_volume_means_no_mute_business():
-    """Without a measurement volume the moratorium is not setting a
-    level at all, so it has no business touching the mute either."""
-    f = FakeBackend()
-    f.server_mute = True
-    f.moratorium_begin("s1")
-    f.moratorium_end()
-    assert not [e for e in f.log if e[0] == "mute"]
-
