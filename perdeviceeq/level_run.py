@@ -244,20 +244,33 @@ class AutoLevel:
         past the ceiling, and never more than the ramp would have
         asked anyway.
         """
-        step = AUTO_RAMP_NEAR if self.near else AUTO_RAMP
+        step_db = 60.0 * math.log10(AUTO_RAMP_NEAR if self.near
+                                    else AUTO_RAMP)
+        creep_db = 60.0 * math.log10(AUTO_RAMP_NEAR)
         pk = self.lo[1] if self.lo else None
         if pk is None or not math.isfinite(pk):
-            return v * step
-        # PAST the aim, not onto it: a step that lands exactly on the
-        # aim leaves the probe a rounding error below it, judged quiet
-        # again, and the search asks for the same level forever. Half
-        # a decibel is enough to cross and far less than a creep step.
-        want = (AUTO_PEAK_FLOOR + AUTO_PEAK_BAND + 0.5) - pk
+            return v * 10.0 ** (step_db / 60.0)
+
+        # THE CEILING CAPS EVERY STEP, whatever the reason for asking.
+        # The first cut capped it only where the peak was BELOW the
+        # aim and fell back to the full ramp where it was already
+        # above -- which is exactly where a probe sits when it is
+        # quiet for some OTHER reason, an untrustworthy SNR being the
+        # one that bit. His run: peak already at -10.5, nothing left
+        # to want, so the ramp doubled 19% to 38% and the sweep hit
+        # 0.0 dBFS. No step may predict a peak past the ceiling.
         head = AUTO_PEAK_CEIL - pk
-        db = min(want, head)
-        if db <= 0.0:
-            return v * step
-        return v * min(step, 10.0 ** (db / 60.0))
+        # PAST the aim, not onto it: a step landing exactly on the aim
+        # leaves the probe a rounding error below it, judged quiet
+        # again, and the search asks for the same level forever.
+        want = (AUTO_PEAK_FLOOR + AUTO_PEAK_BAND + 0.5) - pk
+        if want > 0.0:
+            db = min(step_db, want, head)
+        else:
+            # already past the aim and still not accepted: creep,
+            # because whatever is refusing is not the level
+            db = min(creep_db, head)
+        return v * 10.0 ** (db / 60.0) if db > 0.0 else v
 
 
 def summary(volume, probes):
@@ -291,8 +304,8 @@ class Probe:
 def hunt(sink, source, channels, sink_name=None, analyze=0,
          sweep=None, freqs=None,
          pre_silence=1.0, post_silence=0.5, play_map=None,
-         on_probe=None, should_stop=None, start=AUTO_START_VOLUME,
-         max_adjust=AUTO_MAX_ADJUST):
+         on_probe=None, on_level=None, should_stop=None,
+         start=AUTO_START_VOLUME, max_adjust=AUTO_MAX_ADJUST):
     """Sweep at rising levels until the rig can see under the device.
 
     Returns (volume, probes). The volume is the walk's whole product;
@@ -303,6 +316,14 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
 
     `on_probe(probe)` is called after each sweep and `should_stop()` is
     asked before each, so a caller can narrate and interrupt.
+
+    `on_level(volume, step)` is called BEFORE each sweep, and this one
+    is about safety rather than narration. Announcing the level after
+    the sweep tells a person what already played into their ears: his
+    near miss was a walk that reached 80% with the wrong earphone in
+    the coupler, and the only reason the next rung -- full volume --
+    did not play is that he read the line and hit stop in time. A
+    level is worth knowing while it can still be refused.
     """
     sweep = sweep or mc.generate_sweep(262144, 48000, 20.0, 20000.0)
     freqs = mc.log_grid() if freqs is None else freqs
@@ -322,6 +343,9 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
         for step in range(1, int(max_adjust) + 1):
             if should_stop is not None and should_stop():
                 break
+            # BEFORE THE SOUND, not after it
+            if on_level is not None:
+                on_level(v, step)
             # ONE CLAIM PER SWEEP, as the take does: the level moves
             # between rungs, and the moratorium is where a measurement
             # volume is set

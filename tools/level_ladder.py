@@ -186,6 +186,10 @@ def main():
     v = level_run._clamp(a.start)
     try:
         for i in range(1, a.rungs + 1):
+            # BEFORE the sound. A level is worth knowing while it can
+            # still be refused, not once it has been in someone's ears.
+            print("  %-7d %-8.0f%% about to sweep..." % (i, 100 * v),
+                  end="\r", flush=True)
             peak, resp, snr, clipped, at, margin = rung(
                 sink, source, sink["name"], wav, duration, width,
                 sweep.fs, sweep, freqs, column, v)

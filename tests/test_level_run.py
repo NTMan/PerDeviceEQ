@@ -2,6 +2,7 @@
 
 import math
 
+import numpy as np
 import pytest
 
 from perdeviceeq import level_run
@@ -331,3 +332,61 @@ def test_a_climb_with_nothing_measured_yet_still_ramps():
     and the old ramp is what remains."""
     a = level_run.AutoLevel()
     assert a.next_volume(0.15) == pytest.approx(0.15 * level_run.AUTO_RAMP)
+
+
+def test_no_step_predicts_a_peak_past_the_ceiling():
+    """His second field run, after the climb was first aimed: probe
+    at 19% came back at a peak of -10.5, already PAST the aim, so
+    there was nothing left to want -- and the first cut fell back to
+    the full ramp there, doubled to 38%, and the sweep hit 0.0 dBFS.
+
+    A probe sits past the aim and is still refused when something
+    OTHER than the level is refusing it, an untrustworthy SNR being
+    the case in hand. Whatever the reason, the ceiling caps the step.
+    """
+    a = level_run.AutoLevel()
+    v = 0.19
+    a.observe(v, -10.5, 34.1, False, False, margin_db=10.0)
+    nv = a.next_volume(v)
+    predicted = -10.5 + 60.0 * math.log10(nv / v)
+    assert predicted <= level_run.AUTO_PEAK_CEIL, (nv, predicted)
+    # and it creeps rather than ramps: the level is not the problem
+    step = 60.0 * math.log10(level_run.AUTO_RAMP_NEAR)
+    assert predicted - (-10.5) == pytest.approx(step, abs=0.2)
+
+
+def test_the_level_is_announced_before_the_sweep(monkeypatch, tmp_path):
+    """HIS NEAR MISS, and the reason this hook exists: a walk reached
+    80% with the wrong earphone in the coupler, and the only thing
+    that stopped the next rung -- full volume -- was that he read the
+    line and hit stop. A level announced AFTER the sweep is a level
+    that has already been in someone's ears.
+
+    So on_level fires before the sound, and with the volume that is
+    about to play."""
+    seen = []
+
+    class FakeBack:
+        def moratorium_begin(self, *a, **k):
+            # by the time a claim is made the level must already have
+            # been announced
+            assert seen, "the sweep was claimed before it was announced"
+
+        def moratorium_end(self):
+            pass
+
+    monkeypatch.setattr(level_run.pw_backend, "backend",
+                        lambda: FakeBack())
+    monkeypatch.setattr(level_run, "write_sweep_files",
+                        lambda *a, **k: str(tmp_path / "s.wav"))
+    monkeypatch.setattr(
+        level_run, "run_take",
+        lambda *a, **k: (np.zeros((48000, 1)), {}))
+
+    level_run.hunt({"name": "s"}, {"name": "m"}, 1, sink_name="s",
+                   on_level=lambda v, step: seen.append((round(v, 4),
+                                                         step)),
+                   max_adjust=2)
+    assert seen and seen[0][1] == 1
+    assert seen[0][0] == pytest.approx(level_run.AUTO_START_VOLUME,
+                                       abs=0.05)

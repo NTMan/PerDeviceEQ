@@ -4285,6 +4285,15 @@ class MeasureWindow(Adw.Window):
         number; nothing it does is a take, so nothing has to be
         discarded afterwards to pretend it was not one.
         """
+        def about_to(v, step):
+            """BEFORE the sweep, because after it the level has
+            already been in someone's ears. His near miss: a walk at
+            80% with the wrong earphone in the coupler, stopped only
+            because he read the line in time."""
+            self._post_status(
+                "%s: about to sweep at %d%%  (step %d)"
+                % (self.ch_keys[ch], round(100 * v), step))
+
         def said(p):
             thd = ("n/a" if p.thd_pct is None else
                    "%s%s%%%s" % ("<=" if p.thd_bound else "",
@@ -4308,7 +4317,8 @@ class MeasureWindow(Adw.Window):
             pre_silence=self.session.cfg.pre_silence,
             post_silence=self.session.cfg.post_silence,
             play_map=self.session._channel_map(ch),
-            on_probe=said, should_stop=lambda: self._stop_asked)
+            on_probe=said, on_level=about_to,
+            should_stop=lambda: self._stop_asked)
         return vol, level_run.summary(vol, probes)
 
     def _measure_worker(self, ch):
