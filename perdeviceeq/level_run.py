@@ -49,6 +49,22 @@ AUTO_SETTLE_RATIO = 1.12        # stop closing on the lowest ok within
                                 # finer than the crossing's own wobble
 AUTO_SNR_MARGIN_DB = 1.0        # aim past clean, not onto its edge
 AUTO_PEAK_FLOOR = -12.0         # quieter wastes capture robustness
+
+# ONE LEVEL SERVES A WHOLE RIG, and a rig's channels are not equally
+# sensitive: his Origin in the coupler answers 1.1 dB louder on FL
+# than on FR, so a hunt that lands the PROBED channel exactly on the
+# floor leaves the other one just under it -- which is what his first
+# profile after the floor came back showed, FL at -11.0 and FR at
+# -12.1. The band is the room left for that difference. It is not a
+# second floor: the floor says where a capture stops being robust,
+# this says how far apart two channels of one rig may be and still
+# both clear it.
+#
+# A decibel is what his own ladders make it worth: on the M62 it moves
+# the landing from -11.2 to -10.2 for +0.4 dB of measured distortion,
+# and on the CM106 from -11.8 to -10.9 with the reading going DOWN,
+# because there it is still tracking its own floor.
+AUTO_PEAK_BAND = 1.0
 AUTO_PEAK_CEIL = -2.0           # louder risks the converter
 AUTO_EXPLORE_CEIL = 0.80        # the ramp stops here until a probe AT
                                 # it is still quiet
@@ -138,7 +154,7 @@ class AutoLevel:
         if not (snr >= mc.SNR_WARN_DB + AUTO_SNR_MARGIN_DB
                 or (snr >= mc.SNR_WARN_DB and last_dB)):
             return "quiet"
-        if peak < AUTO_PEAK_FLOOR and not last_dB:
+        if peak < AUTO_PEAK_FLOOR + AUTO_PEAK_BAND and not last_dB:
             return "quiet"
         if thd_bound is True:
             return "ok" if last_dB else "quiet"
@@ -207,9 +223,41 @@ class AutoLevel:
         elif self.hi:                            # too loud, no floor yet
             nv = self.hi[0] * AUTO_CLIP_BACKOFF
         else:                                    # climb for the loud end
-            nv = min(v * (AUTO_RAMP_NEAR if self.near else AUTO_RAMP),
-                     self.ceil)
+            nv = min(self._climb(v), self.ceil)
         return _clamp(nv)
+
+    def _climb(self, v):
+        """How much louder to ask for when there is no bracket yet.
+
+        THE RAMP DOUBLES THE CUBIC, which is eighteen decibels a
+        step. That was survivable only because the search used to
+        settle before taking a second one: his very first probe
+        cleared the bar and the ramp never ran. With the floor aimed
+        at, more probes are quiet, and the first field run doubled
+        15% to 30% and came back at 0.0 dBFS -- a sweep clipped into
+        an earphone, on a card that can destroy one.
+
+        So the step is CHOSEN rather than doubled. The peak follows
+        the level one for one -- measured, 1.00 dB per dB on both of
+        his ladders -- so the search knows exactly how far it has to
+        go: enough to reach the aim, never enough to predict a peak
+        past the ceiling, and never more than the ramp would have
+        asked anyway.
+        """
+        step = AUTO_RAMP_NEAR if self.near else AUTO_RAMP
+        pk = self.lo[1] if self.lo else None
+        if pk is None or not math.isfinite(pk):
+            return v * step
+        # PAST the aim, not onto it: a step that lands exactly on the
+        # aim leaves the probe a rounding error below it, judged quiet
+        # again, and the search asks for the same level forever. Half
+        # a decibel is enough to cross and far less than a creep step.
+        want = (AUTO_PEAK_FLOOR + AUTO_PEAK_BAND + 0.5) - pk
+        head = AUTO_PEAK_CEIL - pk
+        db = min(want, head)
+        if db <= 0.0:
+            return v * step
+        return v * min(step, 10.0 ** (db / 60.0))
 
 
 def summary(volume, probes):

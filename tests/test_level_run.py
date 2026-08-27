@@ -85,8 +85,14 @@ def test_the_hunt_does_not_overshoot_the_peak_floor():
     got, seen = _walk(liberty)
     assert got is not None, seen
     peak = -13.6 + 60.0 * math.log10(got / 0.30)
-    # near the floor, not beyond it, and nowhere near full volume
-    assert peak <= level_run.AUTO_PEAK_FLOOR + 1.5, (peak, seen)
+    # Near the aim, not beyond it, and nowhere near full volume. The
+    # tolerance is ONE CREEP STEP, because that is the search's whole
+    # resolution: the step is a ratio on the CUBIC volume, and 1.12
+    # there is 60*log10(1.12) = 2.95 dB, not the decibel it reads as.
+    # What this court forbids is a runaway, not the granularity.
+    step_db = 60.0 * math.log10(level_run.AUTO_RAMP_NEAR)
+    aim = level_run.AUTO_PEAK_FLOOR + level_run.AUTO_PEAK_BAND
+    assert peak <= aim + step_db + 0.2, (peak, step_db, seen)
     assert max(seen) < 0.9, seen
 
 
@@ -114,7 +120,8 @@ def test_the_hunt_closes_on_the_lowest_ok_not_the_first():
         # very signature a whole afternoon was spent identifying as a
         # broken rig -- and it put both "ok" rungs under the peak
         # floor. The rule under test is the CLOSING, not the peak.
-        pk = -11.0 + 60.0 * math.log10(max(v, 1e-6) / 0.80)
+        pk = (level_run.AUTO_PEAK_FLOOR + level_run.AUTO_PEAK_BAND
+              + 1.0 + 60.0 * math.log10(max(v, 1e-6) / 0.80))
         return pk, (45.0 if v < 0.76 else 50.0), v < 0.76
 
     a = level_run.AutoLevel()
@@ -177,7 +184,8 @@ def test_a_closed_bracket_ends_the_hunt_even_on_a_quiet_probe():
     a = level_run.AutoLevel()
 
     def peak(v):                      # a physical chain, as above
-        return -11.5 + 60.0 * math.log10(max(v, 1e-6) / 0.69)
+        return (level_run.AUTO_PEAK_FLOOR + level_run.AUTO_PEAK_BAND
+                + 0.5 + 60.0 * math.log10(max(v, 1e-6) / 0.69))
 
     for v, bound in ((0.15, True), (0.30, True), (0.60, True),
                      (0.80, False), (0.69, False), (0.64, True)):
@@ -295,3 +303,31 @@ def test_autolevel_bisects_between_brackets():
 
 
 # --- the glitch probe imports and parses (hardware tool, smoke only) --------
+
+
+def test_the_climb_is_aimed_and_never_predicts_a_clip():
+    """His field run, the first after the floor gained its band: probe
+    at 15% came back at a peak of -16.4 dBFS, the ramp doubled to 30%,
+    and the sweep hit 0.0 dBFS -- clipped into an earphone on a card
+    that can destroy one. The ramp doubles the CUBIC, eighteen
+    decibels a step, and it had only ever been safe because the search
+    settled before taking a second one.
+
+    The peak follows the level one for one, so the step is chosen."""
+    a = level_run.AutoLevel()
+    a.observe(0.15, -16.4, 46.1, False, False, margin_db=4.0)
+    nv = a.next_volume(0.15)
+    predicted = -16.4 + 60.0 * math.log10(nv / 0.15)
+    assert predicted <= level_run.AUTO_PEAK_CEIL, (nv, predicted)
+    # it crosses the aim rather than landing on it, by half a decibel:
+    # a step that lands exactly there leaves the probe a rounding
+    # error below and the search asks for the same level forever
+    aim = level_run.AUTO_PEAK_FLOOR + level_run.AUTO_PEAK_BAND
+    assert aim < predicted <= aim + 1.0, (nv, predicted)
+
+
+def test_a_climb_with_nothing_measured_yet_still_ramps():
+    """Before any quiet probe is recorded there is no peak to aim by,
+    and the old ramp is what remains."""
+    a = level_run.AutoLevel()
+    assert a.next_volume(0.15) == pytest.approx(0.15 * level_run.AUTO_RAMP)
