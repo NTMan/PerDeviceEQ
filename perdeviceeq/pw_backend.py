@@ -1218,6 +1218,21 @@ def set_sink_volume(sink_id, cubic):
                            % r.stderr.strip())
 
 
+def set_sink_mute(sink_id, mute):
+    """The same lesson as its volume twin above, learned twice: wpctl
+    writes through to the device Route where one exists, and a raw
+    Props write on an ALSA sink does not stick. `set_stream_mute` is
+    the Props verb and is right for application streams, which have
+    no route behind them; using it on a SINK left a desktop fader's
+    mute standing while the level was set, and a whole sweep played
+    into a silent card. Raises on failure, like the volume."""
+    r = _run(["wpctl", "set-mute", str(sink_id),
+              "1" if mute else "0"])
+    if r.returncode != 0:
+        raise RuntimeError("wpctl set-mute failed: %s"
+                           % r.stderr.strip())
+
+
 class StreamHandle:
     """A live capture or playback stream. read(n) for captures
     (raw interleaved bytes from stdout), wait() for playbacks,
@@ -1311,7 +1326,7 @@ class PipeWireBackend(AudioBackend):
             sink_id = resolve_sink_id(device)
         except Exception:
             return
-        set_stream_mute(sink_id, mute)
+        set_sink_mute(sink_id, mute)
 
     def _push_stream_mutes(self, sink, mute, prior=None):
         if not mute:

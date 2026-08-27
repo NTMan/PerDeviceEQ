@@ -75,6 +75,18 @@ def test_volume_resolves_the_sink_and_speaks_wpctl(rig):
     assert ["wpctl", "set-volume", "10", "0.4200"] in calls
 
 
+def test_a_sinks_mute_speaks_wpctl_not_props(rig):
+    """The same lesson as the volume above, and it cost a sweep: a raw
+    Props write does not stick on an ALSA sink, so a desktop fader's
+    mute stood while the level was set and the card played nothing.
+    The Props verb stays for application streams, which have no route
+    behind them."""
+    b, calls = rig
+    b._push_mute("test_sink", False)
+    assert ["wpctl", "set-mute", "10", "0"] in calls
+    assert not any(c[0] == "pw-cli" and "Props" in c for c in calls)
+
+
 def test_mutes_touch_only_unmuted_foreigners(rig):
     b, calls = rig
     prior = b._push_stream_mutes("test_sink", True)
