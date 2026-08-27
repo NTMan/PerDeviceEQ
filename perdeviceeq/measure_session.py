@@ -470,8 +470,19 @@ class MeasureSession:
 
         v0, raw0, muted = sink_volume_state(dump, self.sink["id"])
         if muted:
-            raise RefusalError("sink is muted; unmute it and set "
-                               "the working listening level first")
+            # NOT A REFUSAL ANY MORE. It was one because clearing the
+            # mute rode on writing the volume, and a sink already
+            # standing at the measurement level got neither -- so the
+            # session refused rather than play a sweep into silence.
+            # The moratorium now clears and restores the mute on its
+            # own, as it does the level: they are two knobs, not one
+            # act with a passenger. What survives is the note, because
+            # the level restored afterwards is a level nobody was
+            # listening at.
+            self.precondition_notes.append(
+                "the sink was muted; it is unmuted for each sweep and "
+                "muted again after, and the level recorded as the "
+                "listening one is whatever the fader held")
         if v0 is None:
             self.precondition_notes.append(
                 "WARNING: could not read the sink volume from "

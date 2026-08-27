@@ -159,8 +159,15 @@ class AudioBackend(ABC):
                 "graph": value,
                 "volume": (self._read_volume(sink)
                            if measure_cubic is not None else None),
-                "mute": (self._read_mute(sink)
-                         if measure_cubic is not None else None),
+                # ALWAYS, not only when a level is written. A mute is
+                # not part of setting a level, it is the other half of
+                # the same act: we move the knob and put it back, and
+                # the mute is a knob. Tying it to the volume left a
+                # hole exactly where nothing needed writing -- a sink
+                # already standing at the measurement level, and muted,
+                # got neither the write nor the unmute and played a
+                # whole sweep into silence
+                "mute": self._read_mute(sink),
                 "mutes": (self._push_stream_mutes(sink, True)
                           if mute_others else None),
                 "state": state,
@@ -170,9 +177,9 @@ class AudioBackend(ABC):
             if restore["graph"] is not None:
                 self._push_graph(sink, None)
                 state["bypass"] = True
+            if restore["mute"]:
+                self._push_mute(sink, False)
             if measure_cubic is not None:
-                if restore["mute"]:
-                    self._push_mute(sink, False)
                 self._push_volume(sink, measure_cubic)
             return state
 
@@ -193,11 +200,14 @@ class AudioBackend(ABC):
             if ("volume", sink) not in self._pending \
                     and restore["volume"] is not None:
                 self._push_volume(sink, restore["volume"])
-                # after the volume, not before: a card set back to
-                # muted and then given a level would be left silent
-                # with a number on the fader
-                if restore.get("mute"):
-                    self._push_mute(sink, True)
+            # after the volume, not before: a card set back to muted
+            # and then given a level would be left silent with a
+            # number on the fader. Outside that branch, though: the
+            # mute is restored whether or not a level was written,
+            # because it is now cleared the same way
+            if ("volume", sink) not in self._pending \
+                    and restore.get("mute"):
+                self._push_mute(sink, True)
             if ("graph", sink) not in self._pending \
                     and restore["graph"] is not None:
                 ok = bool(self._push_graph(sink,

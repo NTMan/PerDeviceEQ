@@ -897,3 +897,57 @@ def test_stderr_is_text_from_a_binary_pipe():
 
 def test_stderr_is_text_from_a_text_pipe_too():
     assert StreamHandle(_Text()).stderr_read().startswith("pw-play")
+
+
+# --- the mute is a knob, not a passenger --------------------------
+
+def _muted_rig(monkeypatch):
+    """The same graph with the SINK itself muted, which the plain rig
+    is not."""
+    import copy as _copy
+    dump = _copy.deepcopy(FAKE_DUMP)
+    for o in dump:
+        if o.get("id") == 10:
+            o["info"]["params"]["Props"][0]["mute"] = True
+    calls = []
+
+    def fake_run(cmd, timeout=2.0):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="",
+                                     stderr="")
+    monkeypatch.setattr(pwb, "_run", fake_run)
+    monkeypatch.setattr(pwb, "pw_dump", lambda: dump)
+    return PipeWireBackend(), calls
+
+
+def test_the_mute_is_cleared_even_when_no_level_is_written(monkeypatch):
+    """His question: we may touch the volume knob but not the mute?
+    They are the same act. Clearing the mute used to ride inside the
+    branch that writes a level, so a sink already standing AT the
+    measurement level -- and muted -- got neither the write nor the
+    unmute, and played a whole sweep into silence."""
+    b, calls = _muted_rig(monkeypatch)
+    b.moratorium_begin("test_sink", None, mute_others=False)
+    try:
+        assert ["wpctl", "set-mute", "10", "0"] in calls
+    finally:
+        b.moratorium_end()
+
+
+def test_and_it_is_put_back_without_one_too(monkeypatch):
+    b, calls = _muted_rig(monkeypatch)
+    b.moratorium_begin("test_sink", None, mute_others=False)
+    b.moratorium_end()
+    assert ["wpctl", "set-mute", "10", "1"] in calls
+
+
+def test_an_unmuted_sink_is_not_touched(monkeypatch):
+    """And nothing is written where nothing was set: the plain rig's
+    sink carries no mute at all."""
+    b, calls = _muted_rig(monkeypatch)      # shape, then clear it
+    for o in pwb.pw_dump():
+        if o.get("id") == 10:
+            o["info"]["params"]["Props"][0]["mute"] = False
+    b.moratorium_begin("test_sink", None, mute_others=False)
+    b.moratorium_end()
+    assert not any(c[:2] == ["wpctl", "set-mute"] for c in calls)
