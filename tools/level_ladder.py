@@ -75,14 +75,14 @@ STOP_PEAK_DBFS = -6.0
 # generous -- a chain in the path tracks nearly one for one -- and it
 # leaves room for a device whose own compression eats some of the rise.
 #
-# FOUR RUNGS, NOT THREE, and the number is his data rather than my
-# taste. Three was not enough: one of the three bad evenings drifted
-# +1.0 dB across its first three rungs by luck of the room and would
-# have walked on. Over four, his two good runs read 0.94 and 1.00
-# while all three bad ones read 0.45 or less -- a gap wide enough to
-# put a line through.
+# THE FIRST RUNG IS DROPPED FROM THE FIT: a chain wakes up on it. His
+# bluetooth walk jumped ten decibels from the first rung to the second
+# and then stood still for six more, and a fit including that jump
+# reads +3.1 and walks on happily. Dropping it, the same walk reads
+# +0.05 and stops, while both good wired walks read exactly +1.00
+# either way.
 TRACK_MIN = 0.5
-TRACK_AFTER = 4
+TRACK_AFTER = 5         # rungs to collect; the fit uses the last four
 
 
 def find(entries, needle):
@@ -209,11 +209,12 @@ def main():
             # not in this path and the remaining rungs are sweeps
             # into nothing.
             if len(resps) == TRACK_AFTER:
-                x = np.arange(len(resps), dtype=float) * a.step_db
-                got = float(np.polyfit(x, np.array(resps), 1)[0])
+                y = np.array(resps[1:])
+                x = np.arange(y.size, dtype=float) * a.step_db
+                got = float(np.polyfit(x, y, 1)[0])
                 if got < TRACK_MIN:
                     print("\n  the capture followed the level at %.2f "
-                          "dB per dB over %d rungs -- stopping."
+                          "dB per dB over rungs 2..%d -- stopping."
                           % (got, TRACK_AFTER))
                     print("  A capture in the path being measured "
                           "tracks the level nearly one for one, so "
