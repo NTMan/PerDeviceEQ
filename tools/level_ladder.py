@@ -93,7 +93,7 @@ def find(entries, needle):
 
 
 def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
-         column, v):
+         column, v, at_hz=1000.0):
     """One sweep at volume `v`, read the way the session reads it."""
     back = pw_backend.backend()
     back.moratorium_begin(name, v, mute_others=True)
@@ -115,8 +115,9 @@ def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
     mag = np.asarray(got.mag_db, float)[band]
     mag = mag[np.isfinite(mag)]
     resp = float(np.median(mag)) if mag.size else None
-    at = mb.thd_at(freqs, got.thd_db, got.thd_noise_db)
-    margin = mb.thd_margin_db(freqs, got.thd_db, got.thd_noise_db)
+    at = mb.thd_at(freqs, got.thd_db, got.thd_noise_db, f0=at_hz)
+    margin = mb.thd_margin_db(freqs, got.thd_db, got.thd_noise_db,
+                              f0=at_hz)
     snr = (float(got.snr_db) if got.snr_db is not None
            and math.isfinite(float(got.snr_db)) else None)
     return peak_db, resp, snr, clipped, at, margin
@@ -134,6 +135,11 @@ def main():
                          " the search's own start)")
     ap.add_argument("--step-db", type=float, default=1.0)
     ap.add_argument("--rungs", type=int, default=8)
+    ap.add_argument("--at", type=float, default=1000.0,
+                    help="frequency the distortion figure is read at, "
+                         "in Hz (default 1000, the datasheet's). A "
+                         "port chuffs in the bass, so --at 40 is where"
+                         " that lives")
     ap.add_argument("--stop-peak", type=float, default=STOP_PEAK_DBFS,
                     help="stop climbing once a rung reads above this "
                          "peak, in dBFS (default %.1f)" % STOP_PEAK_DBFS)
@@ -178,8 +184,10 @@ def main():
           % (a.rungs, a.step_db, 100 * a.start, a.stop_peak))
     print("SWEEPS WILL PLAY. Bring the card's own output level down "
           "first.\n")
+    head = "THD@%s" % (("%gk" % (a.at / 1000.0)) if a.at >= 1000.0
+                       else "%g" % a.at)
     print("  %-7s %-8s %-9s %-9s %-7s %-11s %-8s %s"
-          % ("rung", "level", "peak", "response", "SNR", "THD@1k",
+          % ("rung", "level", "peak", "response", "SNR", head,
              "margin", "verdict"))
 
     rows, resps = [], []
@@ -192,7 +200,7 @@ def main():
                   end="\r", flush=True)
             peak, resp, snr, clipped, at, margin = rung(
                 sink, source, sink["name"], wav, duration, width,
-                sweep.fs, sweep, freqs, column, v)
+                sweep.fs, sweep, freqs, column, v, a.at)
             said = level_run.AutoLevel.verdict(
                 peak, snr, clipped, at[1] if at else None)
             thd = ("n/a" if at is None else
