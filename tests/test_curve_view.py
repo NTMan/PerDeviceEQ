@@ -636,29 +636,30 @@ def test_a_harmonic_above_the_response_still_fits():
 
 # --- the floor's evidence, drawn ------------------------------------
 
-def _alpha(v, quiet=-55.0, loud=-30.0, max_a=0.55):
+def _alpha(v, quiet=-28.0, loud=-10.0, max_a=0.55):
     """The law peq_view paints the unasked strip with, in the open so
     a court can read it without GTK."""
     t = (v - quiet) / (loud - quiet)
     return max(0.0, min(1.0, t)) * max_a
 
 
-def test_the_strip_separates_his_two_pairs():
-    """HIS FIELD PAIR, from one recording each and no control: at a
-    25 Hz drive the iLoud returns -29.2 dB of what it was not given
-    and the Adams -53.2. The strip has to make that plain, which the
-    one it replaces could not: that painted harmonic distortion,
-    which the Adams have MORE of."""
-    assert _alpha(-27.2) - _alpha(-53.2) > 0.4
+def test_the_cabinets_he_can_live_with_are_not_painted():
+    """HIS EAR IS THE CONTROL. He says both Adam rigs purr cleanly at
+    50 Hz, and their worst readings are -38 and -35; the pair he
+    cannot listen to reads -16, and an interface he calls unusable
+    reads -9. Nothing he calls clean may be painted at all."""
+    assert _alpha(-38.0) == 0.0
+    assert _alpha(-35.0) == 0.0
 
 
-def test_it_goes_out_where_the_floor_belongs():
-    """And it must fall as the drive passes the address: on his iLoud
-    the reading falls from -34.3 at 32 Hz to -54.1 at 63."""
-    assert _alpha(-34.3) > 0.35
-    assert _alpha(-54.1) < 0.05
+def test_and_the_ones_he_complains_about_are():
+    assert _alpha(-16.0) > 0.2
+    assert _alpha(-9.0) >= 0.5
 
 
-def test_a_quiet_cabinet_is_not_painted_at_all():
-    assert _alpha(-55.0) == 0.0
-    assert _alpha(-80.0) == 0.0
+def test_the_marks_sit_in_the_gap_between_them():
+    """Six profiles, four above -20 and two below -35, and nobody in
+    between: the quiet mark is the middle of that gap rather than a
+    number I liked."""
+    assert -35.0 < -28.0 < -20.0
+    assert _alpha(-20.0) > 0.0

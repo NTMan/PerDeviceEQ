@@ -225,12 +225,29 @@ class PeqView(Gtk.Box):
     # room and above it the cabinet is plainly answering with sound
     # of its own. His iLoud reads -29 at 25 Hz where his Adams read
     # -53, and that is the whole span this ink has to cover.
-    # -55 and -30 are the span his two pairs mark out: at a 25 Hz
-    # drive his iLoud returns -27.2 dB of what it was not given and
-    # his Adams -53.2, and the iLoud's own reading falls to -44 by
-    # 40 Hz, near where he says the port stops being noticeable.
-    _UNASKED_QUIET_DB = -55.0
-    _UNASKED_LOUD_DB = -30.0
+    # THE MARKS ARE A GAP IN HIS OWN COLLECTION, not a taste. Six
+    # profiles of schema 6, sorted by their worst reading:
+    #
+    #     NUX AXON-3 over USB     -9    unusable for correction
+    #     iLoud Micro Monitor    -16    the pair he cannot listen to
+    #     iLoud, second profile  -18
+    #     NUX AXON-3, analogue   -20
+    #     ------------------------------ fifteen decibels of nothing
+    #     Adam D3V + iLoud Sub   -35    "clean purring, no artefacts"
+    #     Adam D3V               -38
+    #
+    # Everything he calls a problem sits above -20 and everything he
+    # calls clean sits below -35, with nobody in between. So nothing
+    # is painted under -28, the middle of that gap, and the ink
+    # reaches full weight at -10 where a rig returns what it was not
+    # given in full measure. At these marks both his Adams are silent
+    # across the band and the other four light.
+    #
+    # My first cut had -55 and -30 and painted his Adams faintly. He
+    # said the pair purrs cleanly at 50 Hz and he was right: I had
+    # read my own table with the sign backwards.
+    _UNASKED_QUIET_DB = -28.0
+    _UNASKED_LOUD_DB = -10.0
     _UNASKED_MAX_A = 0.55
     _UNASKED_BAND_PX = 7
 
