@@ -366,10 +366,13 @@ def test_it_corrects_for_the_band_the_mask_eats():
     rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
     v = np.asarray(mc.unasked_return(rec, sw, freqs), float)
     f = np.asarray(freqs)
-    # and nothing is reported once the drive has passed the band:
-    # what sits there then is the room's tail of what already
-    # played, which is reverberation and not a return
-    assert not np.isfinite(v[f >= 400]).any()
+    # and nothing is reported once the tracked orders reach the
+    # band: past there the gaps between widely spaced orders count
+    # as unasked and a strong harmonic's skirt leaks into them. His
+    # first schema-6 profile showed it as a false dark band at 200
+    # Hz, where the second harmonic sits on the band's edge.
+    top = mc.UNASKED_BAND[0] / mc.UNASKED_ORDERS
+    assert not np.isfinite(v[f >= top]).any()
     # and the readings that remain are real numbers, not -inf
     got = v[np.isfinite(v)]
     assert got.size and float(np.min(got)) > -200.0

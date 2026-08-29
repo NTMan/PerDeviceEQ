@@ -649,14 +649,14 @@ def test_the_strip_separates_his_two_pairs():
     and the Adams -53.2. The strip has to make that plain, which the
     one it replaces could not: that painted harmonic distortion,
     which the Adams have MORE of."""
-    assert _alpha(-29.2) - _alpha(-53.2) > 0.4
+    assert _alpha(-27.2) - _alpha(-53.2) > 0.4
 
 
 def test_it_goes_out_where_the_floor_belongs():
     """And it must fall as the drive passes the address: on his iLoud
-    the reading collapses from -34.2 at 32 Hz to -56.8 at 50."""
-    assert _alpha(-34.2) > 0.35
-    assert _alpha(-56.8) == 0.0
+    the reading falls from -34.3 at 32 Hz to -54.1 at 63."""
+    assert _alpha(-34.3) > 0.35
+    assert _alpha(-54.1) < 0.05
 
 
 def test_a_quiet_cabinet_is_not_painted_at_all():

@@ -418,16 +418,24 @@ def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
 # a floor wants and it agrees with what he hears.
 #
 #     drive, Hz     iLoud open   Adam D3V     (400-800 Hz return,
-#      22-30          -27.2       -56.2        re what was asked)
-#      30-40          -33.5       -61.9
-#      40-52          -51.2       -62.9
+#      25             -27.2       -53.2        re what was asked)
+#      32             -34.3       -60.5
+#      40             -44.4       -54.7
 #
 # A rag in the port moves it barely two decibels, and that is
 # honest rather than disappointing: plugging a vent sends the cone
 # further, so one source is traded for another. The quantity is
 # "this cabinet returns what it was not given", not "this port
 # hisses" -- and a floor answers both alike.
-UNASKED_ORDERS = 11             # multiples counted as asked-for
+# The orders counted as asked-for, and the band must sit ABOVE all
+# of them. Five is what extract_harmonics tracks, and going higher
+# does not help: with many orders inside the band they stand far
+# apart relative to their own width, the gaps between them get
+# counted as "not asked for", and the skirts of a strong harmonic
+# leak straight into those gaps. His first schema-6 profile showed
+# it -- the strip lit at 200 Hz, where the second harmonic sits on
+# the band's edge and nothing else could have been there.
+UNASKED_ORDERS = 5
 UNASKED_BAND = (400.0, 800.0)   # where his vent returned
 UNASKED_WIN = 4096
 
@@ -441,8 +449,14 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
     the frequency the sweep held at its start to the one at its end,
     times each order up to UNASKED_ORDERS -- a sweep does not sit
     still, and near the bottom it travels far, so a point mask would
-    dump most of a clean sweep into the residue. NaN where the
-    recording gives no frame at that drive.
+    dump most of a clean sweep into the residue.
+
+    Frames stop once the tracked orders reach the band, which on the
+    shipped sweep is a drive of about 63 Hz. Past that there is no
+    honest reading: the orders stand far apart inside the band, the
+    gaps between them count as unasked, and the skirt of a strong
+    harmonic leaks into those gaps. NaN there, and NaN wherever the
+    recording gives no frame at all.
     """
     fs = float(sweep.fs)
     x = np.asarray(recording, float).ravel()
@@ -471,7 +485,7 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
         # of content already played -- reverberation, not a return.
         # That confound drowned an earlier attempt at this measure
         # and it is excluded by construction rather than argued away.
-        if f1 >= band[0]:
+        if UNASKED_ORDERS * f1 * 2.0 ** (1.0 / 12.0) >= band[0]:
             break
         asked = np.zeros(len(f), bool)
         for o in range(1, UNASKED_ORDERS + 1):
@@ -484,18 +498,9 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
         got = float(S[asked].sum())
         if got <= 0.0:
             continue
-        # THE MASK EATS THE BAND AS THE DRIVE RISES, and without
-        # this the measure dies of its own arithmetic: with eleven
-        # orders masked, a drive of 73 Hz covers 400-800 entirely
-        # and the residue reads as silence. Correct by the share of
-        # the band still free, and abstain when too little is.
-        free = inband & ~asked
-        share = float(free.sum()) / float(max(inband.sum(), 1))
-        if share < 0.25:
-            continue
         drives.append(math.sqrt(f0 * f1))
         askeds.append(got)
-        rests.append(float(S[free].sum()) / share)
+        rests.append(float(S[inband].sum()))
     if len(drives) < 4:
         return None
     d = np.asarray(drives)

@@ -491,8 +491,18 @@ class EqWindow(Adw.ApplicationWindow):
         for rows in by_ch.values():
             a = np.array([[np.nan if v is None else float(v)
                            for v in r] for r in rows], float)
+            # THE COLUMN IS NaN ABOVE THE BAND by construction --
+            # past 400 Hz the drive has overtaken it and nothing is
+            # measured there -- so a plain nanmean warns about an
+            # empty slice on every one of those frequencies, dozens
+            # of lines per profile load. Average only where there is
+            # something to average.
             with np.errstate(all="ignore"):
-                mean = np.nanmean(a, axis=0)
+                cnt = np.sum(np.isfinite(a), axis=0)
+                tot = np.nansum(np.where(np.isfinite(a), a, 0.0),
+                                axis=0)
+                mean = np.where(cnt > 0, tot / np.maximum(cnt, 1),
+                                np.nan)
             worst = mean if worst is None else np.fmax(worst, mean)
         if worst is None:
             return (None, None)

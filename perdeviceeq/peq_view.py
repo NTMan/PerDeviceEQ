@@ -226,9 +226,9 @@ class PeqView(Gtk.Box):
     # of its own. His iLoud reads -29 at 25 Hz where his Adams read
     # -53, and that is the whole span this ink has to cover.
     # -55 and -30 are the span his two pairs mark out: at a 25 Hz
-    # drive his iLoud returns -29.2 dB of what it was not given and
-    # his Adams -53.2, and the iLoud's own reading collapses to -56.8
-    # by 50 Hz, which is where he says the floor wants to be.
+    # drive his iLoud returns -27.2 dB of what it was not given and
+    # his Adams -53.2, and the iLoud's own reading falls to -44 by
+    # 40 Hz, near where he says the port stops being noticeable.
     _UNASKED_QUIET_DB = -55.0
     _UNASKED_LOUD_DB = -30.0
     _UNASKED_MAX_A = 0.55
