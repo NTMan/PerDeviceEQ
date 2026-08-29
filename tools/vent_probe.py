@@ -56,6 +56,11 @@ from perdeviceeq.sweep_io import run_take                # noqa: E402
 # where his vent's hump sat: eight to sixteen times the tone, well
 # clear of the harmonics that matter and below the room's hiss
 DEFAULT_BAND = (400.0, 800.0)
+
+# His four walks, two a side: plugged -0.06 and -0.01 dB per dB of
+# capture, open +0.44 and +0.42. The marks sit either side of that gap.
+VENT_SLOPE_SILENT = 0.10
+VENT_SLOPE_SPEAKS = 0.20
 HARMONIC_HALFWIDTH_HZ = 4.0     # what counts as "on" a multiple
 ORDERS = 200                    # multiples masked out
 
@@ -201,10 +206,12 @@ def main():
           % (a.tone, a.band[0], a.band[1]))
     print("A TONE WILL PLAY, and it climbs. The level is the graph's;")
     print("bring the card's own output down first, but not to zero.\n")
-    print("  %-8s %-9s %-11s %-11s %s"
-          % ("dBFS", "peak", "harmonics", "VENT NOISE", "pulse 1x/2x"))
+    print("  %-8s %-9s %-11s %-11s %-12s %s"
+          % ("dBFS", "peak", "harmonics", "VENT NOISE", "pulse 1x/2x",
+             "note"))
 
     rows = []
+    prev_pk = None
     for i in range(a.rungs):
         lvl = a.from_dbfs + i * a.step_db
         dur = tone_wav(wav, a.tone, mc.DEFAULT_FS, a.seconds, lvl)
@@ -223,32 +230,54 @@ def main():
             print("  %-8.0f %-9.1f nothing came back" % (lvl, pk_db))
             continue
         _, harm, vent, ratio = got
-        rows.append((lvl, vent, harm))
-        print("  %-8.0f %-9.1f %-11.1f %-11.1f %s"
+        # DID THE CAPTURE FOLLOW? A limiter takes the top of the walk
+        # away, and above it nothing measured belongs to the driver.
+        note = ""
+        if prev_pk is not None and (pk_db - prev_pk) < 0.6 * a.step_db:
+            note = "limited (+%.1f dB for %.0f asked)" % (
+                pk_db - prev_pk, a.step_db)
+        prev_pk = pk_db
+        rows.append((lvl, vent, harm, pk_db, bool(note)))
+        print("  %-8.0f %-9.1f %-11.1f %-11.1f %-12s %s"
               % (lvl, pk_db, harm, vent,
-                 "--" if not np.isfinite(ratio) else "%+.1f dB" % ratio))
+                 "--" if not np.isfinite(ratio) else "%+.1f dB" % ratio,
+                 note))
         if pk_db > -3.0:
             print("\n  the capture is at the top of its scale -- stopping")
             break
 
     print("\n  vent noise and harmonics are BOTH relative to the tone.")
-    print("  A vent has a threshold: look for the rung where its column")
-    print("  jumps while the harmonic column keeps its steady climb.")
-    if len(rows) >= 3:
-        x = np.array([r[0] for r in rows])
-        jump = np.diff([r[1] for r in rows])
-        step = np.diff([r[2] for r in rows])
-        j = int(np.argmax(jump - step))
-        if jump[j] - step[j] > 3.0:
-            print("  Sharpest such rung: %g dBFS, where the vent rose "
-                  "%+.1f dB\n  against the harmonics' %+.1f."
-                  % (x[j + 1], jump[j], step[j]))
+    clean = [r for r in rows if not r[4]]
+    if len(clean) >= 3:
+        pk = np.array([r[3] for r in clean])
+        vn = np.array([r[1] for r in clean])
+        slope = float(np.polyfit(pk, vn, 1)[0])
+        print("  The vent column climbs %+.2f dB per dB of capture, "
+              "over %d rungs\n  the limiter left alone."
+              % (slope, len(clean)))
+        if slope >= VENT_SLOPE_SPEAKS:
+            print("  THAT IS THE CABINET TALKING: noise that grows "
+                  "with the drive comes\n  from the box, not from "
+                  "the room.")
+        elif slope <= VENT_SLOPE_SILENT:
+            print("  Flat, so that column is the room and the "
+                  "microphone -- this cabinet\n  is not adding to it "
+                  "at these levels.")
         else:
-            print("  No rung stands out: nothing here behaves like a "
-                  "vent letting go.")
-    print("\n  A RAG IN THE PORT IS THE CONTROL. Plugged, the vent")
-    print("  column should collapse while the harmonics RISE, because")
-    print("  an unloaded cone travels further.")
+            print("  Between the marks (%.2f quiet, %.2f speaking): "
+                  "not decided."
+                  % (VENT_SLOPE_SILENT, VENT_SLOPE_SPEAKS))
+    else:
+        print("  Too few rungs below the limiter to read a slope.")
+    if len(clean) < len(rows):
+        print("  %d rung(s) left out of that reading: the capture did "
+              "not follow\n  the level, so a limiter was measured "
+              "and not the driver."
+              % (len(rows) - len(clean)))
+    print("\n  A RAG IN THE PORT IS THE CONTROL, and the only way this")
+    print("  probe can prove which cabinet it is hearing: plugged, the")
+    print("  slope should fall to nothing while the harmonics RISE, an")
+    print("  unloaded cone travelling further.")
     return 0
 
 
