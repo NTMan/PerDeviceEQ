@@ -303,3 +303,73 @@ def test_the_noise_floor_rides_the_confession():
     gap = (np.asarray(td.thd_db, float)
            - np.asarray(td.thd_noise_db, float))[band]
     assert float(np.median(gap)) > 15.0
+
+
+# --- what the sweep never asked for ---------------------------------
+
+def test_a_clean_rig_returns_nothing_it_was_not_given():
+    """A sweep plays ONE frequency at a time, so anything coming back
+    at that moment on some other frequency was not asked for."""
+    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
+    freqs = mc.log_grid()
+    rng = np.random.default_rng(4)
+    pre = np.zeros(int(1.1 * sw.fs))
+    rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
+    rec = rec + rng.normal(0, 1e-6, rec.size)
+    a = mc.unasked_return(rec, sw, freqs)
+    assert a is not None
+    v = np.asarray(a, float)
+    got = v[np.isfinite(v)]
+    assert got.size > 10
+    assert float(np.nanmedian(got)) < -40.0, float(np.nanmedian(got))
+
+
+def test_a_rig_that_returns_what_it_was_not_given_is_caught():
+    """HIS PAIR is why this exists: harmonics could not tell his Adam
+    D3V from his iLoud Micro Monitor -- the Adams show MORE of them --
+    and this separates them by 29 dB from a single recording. Here the
+    same thing synthetically: a rig that answers a low drive with a
+    band it was never given."""
+    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
+    freqs = mc.log_grid()
+    rng = np.random.default_rng(5)
+    t = np.arange(sw.n_samples) / sw.fs
+    f_inst = sw.f_start * np.exp(t / sw.sweep_rate_l)
+    noise = rng.normal(0, 1.0, sw.n_samples)
+    X = np.fft.rfft(noise)
+    ff = np.fft.rfftfreq(noise.size, 1.0 / sw.fs)
+    X[(ff < 400) | (ff > 800)] = 0
+    hiss = np.fft.irfft(X, noise.size)
+    hiss *= 0.02 / (np.std(hiss) + 1e-12)
+    dirty = sw.signal + (f_inst < 60.0) * hiss
+    pre = np.zeros(int(1.1 * sw.fs))
+    post = np.zeros(int(0.5 * sw.fs))
+    clean = mc.unasked_return(
+        np.concatenate([pre, sw.signal, post]), sw, freqs)
+    got = mc.unasked_return(
+        np.concatenate([pre, dirty, post]), sw, freqs)
+    f = np.asarray(freqs)
+    low = (f > 25) & (f < 55)
+    a = float(np.nanmedian(np.asarray(clean, float)[low]))
+    b = float(np.nanmedian(np.asarray(got, float)[low]))
+    assert b - a > 15.0, (a, b)
+
+
+def test_it_corrects_for_the_band_the_mask_eats():
+    """The asked-for mask grows with the drive: with eleven orders
+    masked, a drive of 73 Hz covers 400-800 entirely and the residue
+    would read as silence. The share still free is divided out, and
+    the reading abstains when too little of the band is left."""
+    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
+    freqs = mc.log_grid()
+    pre = np.zeros(int(1.1 * sw.fs))
+    rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
+    v = np.asarray(mc.unasked_return(rec, sw, freqs), float)
+    f = np.asarray(freqs)
+    # and nothing is reported once the drive has passed the band:
+    # what sits there then is the room's tail of what already
+    # played, which is reverberation and not a return
+    assert not np.isfinite(v[f >= 400]).any()
+    # and the readings that remain are real numbers, not -inf
+    got = v[np.isfinite(v)]
+    assert got.size and float(np.min(got)) > -200.0

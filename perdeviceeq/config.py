@@ -95,12 +95,16 @@ TYPE_TO_LABEL = {"PK": "bq_peaking", "LSC": "bq_lowshelf",
                  # hand -- they never join TYPE_NAMES below
                  "HP": "bq_highpass", "LP": "bq_lowpass"}
 TYPE_NAMES = ["PK", "LSC", "HSC"]
-SCHEMA_VERSION = 5      # profile body schema. 5 is the 711/THD epoch:
-#                         a take's harmonic confession is provenance
-#                         recorded at measurement time; no converter can
-#                         materialize one, so pre-5 profiles are
-#                         deprecated and there are no converters --
-#                         re-measure with the current core.
+SCHEMA_VERSION = 6      # profile body schema. 6 adds what a take
+#                         returned that the sweep never asked for --
+#                         another confession recorded while the sweep
+#                         played, and like the harmonics of epoch 5 no
+#                         converter can materialize one. So pre-6
+#                         profiles are deprecated and there are no
+#                         converters -- re-measure with the current
+#                         core. His words on why it is not optional:
+#                         he does not want half-complete profiles
+#                         living alongside whole ones.
 # the optional v3 blocks the store/GUI carry verbatim through save /
 # import / export; producers own their shape (see perdeviceeq/profiles.py)
 V3_BLOCKS = ("provenance", "device", "fit", "measurement")

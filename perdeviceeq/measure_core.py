@@ -313,6 +313,8 @@ class Take:
     h3_db: object = None      # 3rd ditto
     thd_db: object = None     # power sum of harmonics 2..5, same axis
     thd_noise_db: object = None  # the floor of the same measurement
+    unasked_db: object = None  # what came back that the sweep never
+    #                            asked for, at the frequency it asked
 
 
 def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
@@ -338,7 +340,9 @@ def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
     the THD itself. A reading within a few dB of this line is the
     instrument speaking, not the device; the field corpse was a
     quiet run whose mid-band THD stopped following the drive
-    because it had landed on this very floor, invisibly."""
+    because it had landed on this very floor, invisibly.
+    invisibly."""
+
     fs = sweep.fs
     L = sweep.sweep_rate_l
     fmax_img = min(sweep.f_end, 0.45 * fs)
@@ -398,6 +402,114 @@ def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
             psum(floors))
 
 
+# WHAT A SWEEP NEVER ASKED FOR. At any moment a sweep plays ONE
+# frequency, so anything returning at that moment on some other
+# frequency -- not the tone, not a multiple of it -- was not asked
+# for: a port rushing, a radiator on its stop, a rub, a rattle.
+# Farina's images cannot see it, because they exist only at whole
+# multiples, and no harmonic figure can either.
+#
+# HIS PAIR IS WHY THIS EXISTS. A day of measurement could not tell
+# his Adam D3V from his iLoud Micro Monitor -- at matched level the
+# Adams show MORE harmonic distortion, and the same noise floor.
+# This quantity separates them by 29 dB from a single recording,
+# with no control needed, and it says WHERE: on his iLoud the return
+# collapses by 18 dB as the drive passes 40 Hz, which is the address
+# a floor wants and it agrees with what he hears.
+#
+#     drive, Hz     iLoud open   Adam D3V     (400-800 Hz return,
+#      22-30          -27.2       -56.2        re what was asked)
+#      30-40          -33.5       -61.9
+#      40-52          -51.2       -62.9
+#
+# A rag in the port moves it barely two decibels, and that is
+# honest rather than disappointing: plugging a vent sends the cone
+# further, so one source is traded for another. The quantity is
+# "this cabinet returns what it was not given", not "this port
+# hisses" -- and a floor answers both alike.
+UNASKED_ORDERS = 11             # multiples counted as asked-for
+UNASKED_BAND = (400.0, 800.0)   # where his vent returned
+UNASKED_WIN = 4096
+
+
+def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
+                   win=UNASKED_WIN, hop=None):
+    """Energy returning outside the sweep's own family, per drive
+    frequency, in dB relative to what the sweep asked for there.
+
+    Walks the recording in time. A frame's ASKED-FOR band runs from
+    the frequency the sweep held at its start to the one at its end,
+    times each order up to UNASKED_ORDERS -- a sweep does not sit
+    still, and near the bottom it travels far, so a point mask would
+    dump most of a clean sweep into the residue. NaN where the
+    recording gives no frame at that drive.
+    """
+    fs = float(sweep.fs)
+    x = np.asarray(recording, float).ravel()
+    if x.ndim > 1 or x.size < win * 2:
+        return None
+    hop = hop or win // 4
+    thr = 0.02 * float(np.max(np.abs(x)) or 1.0)
+    start = int(np.argmax(np.abs(x) > thr))
+    w = np.hanning(win)
+    f = np.fft.rfftfreq(win, 1.0 / fs)
+    bin_hz = fs / win
+    inband = (f >= band[0]) & (f < band[1])
+    lo_cut = int(sweep.f_start / bin_hz)
+    drives, rests, askeds = [], [], []
+    stop = min(x.size - win, start + int(sweep.duration_s * fs))
+    for s in range(start, stop, hop):
+        S = np.abs(np.fft.rfft(x[s:s + win] * w)) ** 2
+        t0 = (s - start) / fs
+        t1 = (s - start + win) / fs
+        f0 = sweep.f_start * math.exp(t0 / sweep.sweep_rate_l)
+        f1 = sweep.f_start * math.exp(t1 / sweep.sweep_rate_l)
+        if f1 > sweep.f_end:
+            break
+        # ONLY WHERE THE BAND IS STILL AHEAD OF THE SWEEP. Once the
+        # drive passes the band, what sits there is the room's tail
+        # of content already played -- reverberation, not a return.
+        # That confound drowned an earlier attempt at this measure
+        # and it is excluded by construction rather than argued away.
+        if f1 >= band[0]:
+            break
+        asked = np.zeros(len(f), bool)
+        for o in range(1, UNASKED_ORDERS + 1):
+            a = o * f0 * 2.0 ** (-1.0 / 12.0)
+            b = min(o * f1 * 2.0 ** (1.0 / 12.0), fs / 2.0)
+            if a >= fs / 2.0:
+                break
+            asked[int(a / bin_hz):int(b / bin_hz) + 1] = True
+        asked[:lo_cut] = False
+        got = float(S[asked].sum())
+        if got <= 0.0:
+            continue
+        # THE MASK EATS THE BAND AS THE DRIVE RISES, and without
+        # this the measure dies of its own arithmetic: with eleven
+        # orders masked, a drive of 73 Hz covers 400-800 entirely
+        # and the residue reads as silence. Correct by the share of
+        # the band still free, and abstain when too little is.
+        free = inband & ~asked
+        share = float(free.sum()) / float(max(inband.sum(), 1))
+        if share < 0.25:
+            continue
+        drives.append(math.sqrt(f0 * f1))
+        askeds.append(got)
+        rests.append(float(S[free].sum()) / share)
+    if len(drives) < 4:
+        return None
+    d = np.asarray(drives)
+    ratio = np.asarray(rests) / np.asarray(askeds)
+    with np.errstate(all="ignore"):
+        db = 10.0 * np.log10(np.maximum(ratio, 1e-30))
+    out = np.full(len(freqs), np.nan)
+    lo, hi = d.min(), d.max()
+    inside = (np.asarray(freqs) >= lo) & (np.asarray(freqs) <= hi)
+    if inside.any():
+        out[inside] = np.interp(np.asarray(freqs)[inside], d, db)
+    return out
+
+
 def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
                  pre_taper_ms=10.0, post_ms=350.0, reg=1e-8):
     """One recording of one sweep -> raw magnitude curve + per-take stats."""
@@ -406,10 +518,11 @@ def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
                                   post_ms)
     mag = ir_to_magnitude(seg, sweep.fs, freqs)
     snr, sig_db, noise_db = estimate_snr(recording, peak, sweep)
-    h2, h3, thd, nfl = extract_harmonics(ir, sweep, freqs, peak,
-                                         mag)
+    h2, h3, thd, nfl = extract_harmonics(ir, sweep, freqs, peak, mag)
+    unasked = unasked_return(recording, sweep, freqs)
     return Take(freqs, mag, 1000.0 * peak / sweep.fs, snr, sig_db, noise_db,
-                h2_db=h2, h3_db=h3, thd_db=thd, thd_noise_db=nfl)
+                h2_db=h2, h3_db=h3, thd_db=thd, thd_noise_db=nfl,
+                unasked_db=unasked)
 
 
 def average_takes(takes):

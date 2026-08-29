@@ -92,7 +92,8 @@ def take_dict(rec, session_id, key, freqs):
             "repaired": int(rec.repaired),
             "chan_vol": _num(rec.chan_vol, 6),
             "soft_vol": _num(rec.soft_vol, 6)}
-    for key in ("h2_db", "h3_db", "thd_db", "thd_noise_db"):
+    for key in ("h2_db", "h3_db", "thd_db", "thd_noise_db",
+                "unasked_db"):
         arr = getattr(rec, key, None)
         if arr is None:
             continue

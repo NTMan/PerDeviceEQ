@@ -182,9 +182,10 @@ class ProfileStore:
                 continue
             if p.get("version") != SCHEMA_VERSION:
                 print("per-device-eq: skipping %s (profile schema "
-                      "v%s, pre-THD -- deprecated; a harmonic "
-                      "confession cannot be converted in, re-measure "
-                      "with the current core)"
+                      "v%s -- deprecated; a take's confession, "
+                      "harmonic or otherwise, is recorded while the "
+                      "sweep plays and cannot be converted in, "
+                      "re-measure with the current core)"
                       % (path, p.get("version", 1)), file=sys.stderr)
                 continue
             pid = p.get("id") or os.path.splitext(fn)[0]
