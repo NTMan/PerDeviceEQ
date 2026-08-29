@@ -182,7 +182,7 @@ def main(argv=None):
     p.add_argument("--fs", type=int, default=mc.DEFAULT_FS)
     p.add_argument("--f-start", type=float, default=mc.DEFAULT_F_START)
     p.add_argument("--f-end", type=float, default=mc.DEFAULT_F_END)
-    p.add_argument("--pre-silence", type=float, default=1.0)
+    p.add_argument("--pre-silence", type=float, default=1.10)
     p.add_argument("--post-silence", type=float, default=0.5)
     p.add_argument("--mute-others", action="store_true",
                    help="mute foreign streams on the sink instead of "

@@ -42,7 +42,22 @@ from datetime import datetime, timezone
 import numpy as np
 from scipy import signal as sg
 
-DEFAULT_N = 262144            # 256k samples, ~5.46 s @ 48 kHz
+# 128k samples, ~2.73 s @ 48 kHz. HALVED FROM 256k, and it costs
+# nothing measurable: three takes a side on his monitors, same mic,
+# same room, same fader, gave the same SNR (46-49 either way), the
+# same THD at 1 kHz to a tenth, and a response inside the ordinary
+# spread between reseatings -- 0.44 dB median against 0.48.
+#
+# What it BUYS is the reason. Farina's image of ratio r sits
+# L*ln(r) before the linear IR, and L falls with the sweep, so a
+# shorter sweep pulls every image closer and brings ratios the
+# recording could not reach into view. At 256k even the fourth and
+# fifth orders needed more lead than the take records and were
+# silently skipped -- our "THD over orders 2..5" was really 2 and 3.
+# At 128k with 1.1 s of lead the whole ladder to sixteen fits.
+#
+# And the take is 2.6 s shorter, which nobody will mourn.
+DEFAULT_N = 131072
 DEFAULT_FS = 48000
 SWEEP_LEVEL_DBFS = -6.0       # fixed digital sweep level, by protocol
 DEFAULT_F_START = 20.0

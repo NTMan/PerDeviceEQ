@@ -93,8 +93,13 @@ def test_take_spread_discard_finalize(shim_state, tmp_path):
         assert out1.spread_db is None                 # one take, no fan yet
         assert out1.take.clipped == 0
         assert out1.take.repaired == 0
-        # shim delay (~800 ms) + the wav's own 1.0 s pre-silence
-        assert 1700.0 < out1.take.delay_ms < 1900.0
+        # The shim's own ~800 ms plus the wav's pre-silence, and that
+        # second term is READ rather than written down: it was 1.0 s
+        # and became 1.10 when the sweep was halved, and a court that
+        # spells the sum out fails on the arithmetic rather than on
+        # anything it meant to guard.
+        lead = 1000.0 * ms.SessionConfig.pre_silence
+        assert lead + 700.0 < out1.take.delay_ms < lead + 900.0
         assert os.path.basename(out1.take.wav_path) == "take01.wav"
         assert os.path.exists(out1.take.wav_path)
         assert_matches_chain(out1.take.freq_hz, out1.take.mag_db)

@@ -160,7 +160,12 @@ class SessionConfig:
     fs: int = mc.DEFAULT_FS
     f_start: float = mc.DEFAULT_F_START
     f_end: float = mc.DEFAULT_F_END
-    pre_silence: float = 1.0
+    # 1.10 s, and the number is Farina's rather than a habit: the
+    # image of ratio r sits L*ln(r) before the linear IR, so at the
+    # 2.73 s sweep the ladder to sixteen needs 1.10 s of silence in
+    # front of it. One second reached only to ratio nine, and at the
+    # old 5.46 s sweep it reached only to three.
+    pre_silence: float = 1.10
     post_silence: float = 0.5
     cal: str = None
     smoothing: int = 6
