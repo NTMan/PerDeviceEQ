@@ -315,6 +315,8 @@ class Take:
     thd_noise_db: object = None  # the floor of the same measurement
     unasked_db: object = None  # what came back that the sweep never
     #                            asked for, at the frequency it asked
+    unasked_floor_db: object = None  # the same band read from the
+    #                            take's own silence: the line it clears
 
 
 def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
@@ -451,6 +453,14 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
     still, and near the bottom it travels far, so a point mask would
     dump most of a clean sweep into the residue.
 
+    Returns (db, floor_db). THE FLOOR IS THE POINT: the same band,
+    the same window, read from the silence the take records BEFORE
+    the sweep -- what this mic in this room returns when nothing is
+    played. A reading close to it is the instrument speaking, not
+    the cabinet, exactly as thd_noise_db is read against thd_db.
+    Both are expressed against what the sweep asked for at that
+    drive, so their difference is the margin.
+
     Frames stop once the tracked orders reach the band, which on the
     shipped sweep is a drive of about 63 Hz. Past that there is no
     honest reading: the orders stand far apart inside the band, the
@@ -470,6 +480,20 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
     bin_hz = fs / win
     inband = (f >= band[0]) & (f < band[1])
     lo_cut = int(sweep.f_start / bin_hz)
+    # THE SILENCE THE TAKE ALREADY RECORDS, read the same way: this
+    # is what the mic and the room return in this band when nothing
+    # is played, and it is the line the reading has to clear.
+    floor_e = None
+    if start > win:
+        vals = []
+        for s0 in range(0, start - win, max(win // 2, 1)):
+            Sq = np.abs(np.fft.rfft(x[s0:s0 + win] * np.hanning(win)))
+            vals.append(float((Sq ** 2)[
+                (np.fft.rfftfreq(win, 1.0 / fs) >= band[0])
+                & (np.fft.rfftfreq(win, 1.0 / fs) < band[1])].sum()))
+        if vals:
+            floor_e = float(np.median(vals))
+
     drives, rests, askeds = [], [], []
     stop = min(x.size - win, start + int(sweep.duration_s * fs))
     for s in range(start, stop, hop):
@@ -502,17 +526,24 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
         askeds.append(got)
         rests.append(float(S[inband].sum()))
     if len(drives) < 4:
-        return None
+        return None, None
     d = np.asarray(drives)
-    ratio = np.asarray(rests) / np.asarray(askeds)
+    a = np.asarray(askeds)
     with np.errstate(all="ignore"):
-        db = 10.0 * np.log10(np.maximum(ratio, 1e-30))
-    out = np.full(len(freqs), np.nan)
+        db = 10.0 * np.log10(np.maximum(np.asarray(rests) / a, 1e-30))
+        fdb = (None if floor_e is None else
+               10.0 * np.log10(np.maximum(floor_e / a, 1e-30)))
+    f_arr = np.asarray(freqs)
     lo, hi = d.min(), d.max()
-    inside = (np.asarray(freqs) >= lo) & (np.asarray(freqs) <= hi)
-    if inside.any():
-        out[inside] = np.interp(np.asarray(freqs)[inside], d, db)
-    return out
+    inside = (f_arr >= lo) & (f_arr <= hi)
+
+    def spread(v):
+        out = np.full(len(freqs), np.nan)
+        if inside.any() and v is not None:
+            out[inside] = np.interp(f_arr[inside], d, v)
+        return out
+
+    return spread(db), (None if fdb is None else spread(fdb))
 
 
 def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
@@ -524,10 +555,10 @@ def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
     mag = ir_to_magnitude(seg, sweep.fs, freqs)
     snr, sig_db, noise_db = estimate_snr(recording, peak, sweep)
     h2, h3, thd, nfl = extract_harmonics(ir, sweep, freqs, peak, mag)
-    unasked = unasked_return(recording, sweep, freqs)
+    unasked, unasked_floor = unasked_return(recording, sweep, freqs)
     return Take(freqs, mag, 1000.0 * peak / sweep.fs, snr, sig_db, noise_db,
                 h2_db=h2, h3_db=h3, thd_db=thd, thd_noise_db=nfl,
-                unasked_db=unasked)
+                unasked_db=unasked, unasked_floor_db=unasked_floor)
 
 
 def average_takes(takes):

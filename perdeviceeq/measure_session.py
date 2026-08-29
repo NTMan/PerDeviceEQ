@@ -217,6 +217,8 @@ class TakeRecord:
     thd_noise_db: object = None     # the floor of the same reading
     unasked_db: object = None       # what came back that the sweep
     #                                 never asked for, per drive
+    unasked_floor_db: object = None  # the same band from the take's
+    #                                 own silence: the line it clears
 
 
 def spread_trust_bound(spread, n_takes):
@@ -805,7 +807,8 @@ class MeasureSession:
                          h2_db=t.h2_db, h3_db=t.h3_db,
                          thd_db=t.thd_db,
                          thd_noise_db=t.thd_noise_db,
-                         unasked_db=t.unasked_db)
+                         unasked_db=t.unasked_db,
+                         unasked_floor_db=t.unasked_floor_db)
         # whether the headline figure is a measurement or a bound is
         # a fact about the take, so it rides with the take rather than
         # a status line the next sweep wipes

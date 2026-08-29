@@ -316,7 +316,7 @@ def test_a_clean_rig_returns_nothing_it_was_not_given():
     pre = np.zeros(int(1.1 * sw.fs))
     rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
     rec = rec + rng.normal(0, 1e-6, rec.size)
-    a = mc.unasked_return(rec, sw, freqs)
+    a, floor = mc.unasked_return(rec, sw, freqs)
     assert a is not None
     v = np.asarray(a, float)
     got = v[np.isfinite(v)]
@@ -344,9 +344,9 @@ def test_a_rig_that_returns_what_it_was_not_given_is_caught():
     dirty = sw.signal + (f_inst < 60.0) * hiss
     pre = np.zeros(int(1.1 * sw.fs))
     post = np.zeros(int(0.5 * sw.fs))
-    clean = mc.unasked_return(
+    clean, _ = mc.unasked_return(
         np.concatenate([pre, sw.signal, post]), sw, freqs)
-    got = mc.unasked_return(
+    got, _ = mc.unasked_return(
         np.concatenate([pre, dirty, post]), sw, freqs)
     f = np.asarray(freqs)
     low = (f > 25) & (f < 55)
@@ -364,7 +364,8 @@ def test_it_corrects_for_the_band_the_mask_eats():
     freqs = mc.log_grid()
     pre = np.zeros(int(1.1 * sw.fs))
     rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
-    v = np.asarray(mc.unasked_return(rec, sw, freqs), float)
+    got, _ = mc.unasked_return(rec, sw, freqs)
+    v = np.asarray(got, float)
     f = np.asarray(freqs)
     # and nothing is reported once the tracked orders reach the
     # band: past there the gaps between widely spaced orders count
@@ -376,3 +377,25 @@ def test_it_corrects_for_the_band_the_mask_eats():
     # and the readings that remain are real numbers, not -inf
     got = v[np.isfinite(v)]
     assert got.size and float(np.min(got)) > -200.0
+
+
+def test_the_take_carries_the_floor_the_reading_must_clear():
+    """The same band read from the silence the take records BEFORE
+    the sweep: what this mic in this room returns when nothing is
+    played. Without it there is no way to tell a quiet cabinet from
+    a loud room, which is the trap every earlier version of this
+    measure fell into."""
+    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
+    freqs = mc.log_grid()
+    rng = np.random.default_rng(9)
+    pre = np.zeros(int(1.1 * sw.fs))
+    rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
+    rec = rec + rng.normal(0, 1e-4, rec.size)
+    got, floor = mc.unasked_return(rec, sw, freqs)
+    assert floor is not None
+    a = np.asarray(got, float)
+    b = np.asarray(floor, float)
+    ok = np.isfinite(a) & np.isfinite(b)
+    assert ok.any()
+    # on a rig that adds nothing, the reading sits on its own floor
+    assert abs(float(np.median(a[ok] - b[ok]))) < 6.0
