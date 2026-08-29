@@ -392,8 +392,6 @@ class EqWindow(Adw.ApplicationWindow):
         button, because this runs when the canvas is REBUILT.
         The button syncs at the top of a profile load, when
         self._canvas still holds the profile being left."""
-        d = (self._canvas or {}).get("dist")
-        self.view.set_distortion(*(d if d else (None, None)))
         ov = self._overlay_curve()
         if ov is None:
             self.view.set_curves(None, None)
@@ -461,60 +459,6 @@ class EqWindow(Adw.ApplicationWindow):
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
         self._on_edit()
 
-    def _audible_distortion(self, m):
-        """One warning curve for the whole profile: the WORST of
-        its channels at every frequency. The floor is a single
-        handle for the card, so a band that whispers about the
-        clean channel while the other one rattles would be worse
-        than none. (freqs, dB) or None when nothing confesses."""
-        takes = (m or {}).get("takes") or []
-        if not takes:
-            return None
-        grid = (m or {}).get("grid") or {}
-        ppo = grid.get("ppo")
-        f_lo = grid.get("f_lo")
-        if not ppo or not f_lo:
-            return None
-        n = 0
-        for t in takes:
-            arr = t.get("thd_db")
-            if arr:
-                n = max(n, len(arr))
-        if n < 2:
-            return None
-        freqs = [float(f_lo) * 2.0 ** (i / float(ppo))
-                 for i in range(n)]
-        from . import measure_build as mb
-        import numpy as np
-
-        class _R:
-            pass
-
-        worst = None
-        by_ch = {}
-        for t in takes:
-            by_ch.setdefault(t.get("channel"), []).append(t)
-        for recs in by_ch.values():
-            rs = []
-            for t in recs:
-                r = _R()
-                for k in ("thd_db", "h2_db", "h3_db",
-                          "thd_noise_db"):
-                    setattr(r, k, t.get(k))
-                rs.append(r)
-            try:
-                cur = mb.audible_distortion(rs, freqs,
-                                            ppo=float(ppo))
-            except Exception:
-                cur = None
-            if cur is None:
-                continue
-            worst = cur if worst is None else np.fmax(worst, cur)
-        if worst is None:
-            return None
-        return freqs, [None if not np.isfinite(v) else float(v)
-                       for v in worst]
-
     def _overlay_curve(self):
         """(freqs, measured, spread, trust_band) for the slot on
         screen, or None: no canvas, overlay off, or this tab feeds
@@ -560,7 +504,6 @@ class EqWindow(Adw.ApplicationWindow):
             cache["err"] = str(e)
             results = {}
         rep = trust.assess(p)
-        cache["dist"] = self._audible_distortion(m)
         lo_all = hi_all = None
         for key, r in results.items():
             d = r["data"]
