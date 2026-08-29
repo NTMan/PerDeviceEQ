@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT))
 
 from perdeviceeq import fit_peq                     # noqa: E402
+from perdeviceeq.config import SCHEMA_VERSION      # noqa: E402
 from perdeviceeq import eq                            # noqa: E402
 
 
@@ -78,8 +79,12 @@ def test_cli_writes_importable_v2_profile(tmp_path):
         capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     p = json.loads(out.read_text())
-    # exactly the shape gui._import_profile / ProfileStore expect (v2)
-    assert p["version"] == 5
+    # exactly the shape gui._import_profile / ProfileStore expect,
+    # and the schema is READ rather than written down here: it went
+    # to 6 when a take began recording its high-order confession,
+    # and a court that repeats the number fails on the arithmetic
+    # instead of on anything it meant to guard
+    assert p["version"] == SCHEMA_VERSION
     assert p["ch_keys"] == ["FL", "FR"]
     assert p["preamp"] == 0.0                  # the app derives Safe/Session
     for key in ("FL", "FR"):
@@ -105,7 +110,7 @@ def test_fit_profiles_direct_call():
     prof = fit_peq.fit_profiles(results, name="Unit", bands=12,
                                 f_lo=20.0, f_hi=12000.0)
     assert prof["name"] == "Unit"
-    assert prof["version"] == 5
+    assert prof["version"] == SCHEMA_VERSION
     assert prof["ch_keys"] == ["FL", "FR"]
     assert prof["preamp"] == 0.0
     for key in ("FL", "FR"):
