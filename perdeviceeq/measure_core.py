@@ -441,6 +441,21 @@ UNASKED_ORDERS = 5
 UNASKED_BAND = (400.0, 800.0)   # where his vent returned
 UNASKED_WIN = 4096
 
+# HOW FAR THE SWEEP ITSELF MUST STAND OVER THE SILENCE before a
+# frame is allowed to speak. The reading is a RATIO to what was
+# played, so when the drive sinks toward the noise the denominator
+# goes with it and the ratio climbs -- his walk down to a captured
+# peak of -21 dBFS read -26 dB at 25 Hz where the same rig reads
+# -55 at its working level. That is the measurement drowning, not
+# the cabinet waking up.
+#
+# Twenty decibels, with room to spare: at the level a measurement
+# actually runs at, his Adam stands 31 to 56 dB over its own
+# silence across the whole band, so nothing is lost there. Eleven
+# decibels quieter and the bottom of the band starts abstaining,
+# which is where the reading had stopped meaning anything anyway.
+UNASKED_DRIVE_OVER_SILENCE_DB = 20.0
+
 
 def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
                    win=UNASKED_WIN, hop=None):
@@ -480,19 +495,24 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
     bin_hz = fs / win
     inband = (f >= band[0]) & (f < band[1])
     lo_cut = int(sweep.f_start / bin_hz)
-    # THE SILENCE THE TAKE ALREADY RECORDS, read the same way: this
-    # is what the mic and the room return in this band when nothing
-    # is played, and it is the line the reading has to clear.
-    floor_e = None
+    # THE SILENCE THE TAKE ALREADY RECORDS, kept as spectra so the
+    # same frames answer two questions: what the room returns in the
+    # residue band when nothing plays, and -- under whatever mask a
+    # frame ends up using -- whether the drive itself is above that
+    # noise at all.
+    quiet = []
     if start > win:
-        vals = []
         for s0 in range(0, start - win, max(win // 2, 1)):
-            Sq = np.abs(np.fft.rfft(x[s0:s0 + win] * np.hanning(win)))
-            vals.append(float((Sq ** 2)[
-                (np.fft.rfftfreq(win, 1.0 / fs) >= band[0])
-                & (np.fft.rfftfreq(win, 1.0 / fs) < band[1])].sum()))
-        if vals:
-            floor_e = float(np.median(vals))
+            quiet.append(np.abs(np.fft.rfft(x[s0:s0 + win] * w)) ** 2)
+    if not quiet:
+        # NO SILENCE, NO READING. The onset is found by amplitude, so
+        # a recording noisy enough to trip the threshold on its first
+        # sample leaves none -- and without it there is no way to ask
+        # whether the sweep even reaches a given frequency. Reporting
+        # ungated numbers there is worse than reporting none: that is
+        # exactly the drowned reading this gate exists to suppress.
+        return None, None
+    floor_e = float(np.median([float(q[inband].sum()) for q in quiet]))
 
     drives, rests, askeds = [], [], []
     stop = min(x.size - win, start + int(sweep.duration_s * fs))
@@ -521,6 +541,12 @@ def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
         asked[:lo_cut] = False
         got = float(S[asked].sum())
         if got <= 0.0:
+            continue
+        # DOES THE SWEEP EVEN REACH HERE? The reading is a ratio to
+        # what was played, so a drive sinking toward the noise
+        # inflates it without the cabinet doing anything at all.
+        q = float(np.median([float(qq[asked].sum()) for qq in quiet]))
+        if got < q * 10.0 ** (UNASKED_DRIVE_OVER_SILENCE_DB / 10.0):
             continue
         drives.append(math.sqrt(f0 * f1))
         askeds.append(got)

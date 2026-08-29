@@ -399,3 +399,37 @@ def test_the_take_carries_the_floor_the_reading_must_clear():
     assert ok.any()
     # on a rig that adds nothing, the reading sits on its own floor
     assert abs(float(np.median(a[ok] - b[ok]))) < 6.0
+
+
+def test_a_drive_that_sinks_toward_the_noise_abstains():
+    """HIS WALK DOWNWARD found it: the reading is a RATIO to what was
+    played, so when the drive sinks toward the noise the denominator
+    goes with it and the ratio climbs. At a captured peak of -21 dBFS
+    his Adams read -26 dB at 25 Hz where the same rig reads -55 at
+    its working level -- the measurement drowning, not the cabinet
+    waking up.
+
+    So a frame speaks only where the sweep stands clear of the take's
+    own silence."""
+    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
+    freqs = mc.log_grid()
+    rng = np.random.default_rng(12)
+    pre = np.zeros(int(1.1 * sw.fs))
+    post = np.zeros(int(0.5 * sw.fs))
+
+    def walk(level_db, noise):
+        y = sw.signal * (10.0 ** (level_db / 20.0))
+        rec = np.concatenate([pre, y, post])
+        return rec + rng.normal(0, noise, rec.size)
+
+    # the quiet one is buried in earnest: my first cut of this court
+    # put the sweep eleven decibels ABOVE the noise and called it
+    # drowned, and a sweep concentrates its energy in the band the
+    # mask covers, so it passed the gate exactly as it should have
+    loud, _ = mc.unasked_return(walk(-6.0, 1e-5), sw, freqs)
+    quiet, _ = mc.unasked_return(walk(-40.0, 3e-2), sw, freqs)
+    assert loud is not None
+    assert np.isfinite(np.asarray(loud, float)).any()
+    # buried in the noise, the walk has nothing to say at all
+    assert (quiet is None
+            or not np.isfinite(np.asarray(quiet, float)).any())
