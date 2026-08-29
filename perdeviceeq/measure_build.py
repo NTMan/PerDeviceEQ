@@ -93,7 +93,7 @@ def take_dict(rec, session_id, key, freqs):
             "chan_vol": _num(rec.chan_vol, 6),
             "soft_vol": _num(rec.soft_vol, 6)}
     for key in ("h2_db", "h3_db", "thd_db", "thd_noise_db",
-                "unasked_db", "unasked_floor_db"):
+                "hohd_db", "hohd_floor_db"):
         arr = getattr(rec, key, None)
         if arr is None:
             continue
@@ -390,6 +390,13 @@ def _session_block(session):
                              or {"profile": None, "bypass": None}),
         "path_clean": (session.path_clean
                        or {"verified": None, "unknown_nodes": []}),
+        # WHAT THE LEVEL SEARCH SAID ABOUT ITSELF, and it has never
+        # reached a profile before: process_takes assembles a levels
+        # block and this builder, which makes the saved session, did
+        # not know it existed. So every profile this project has
+        # written is silent about how its level was chosen.
+        "auto_level": (dict(getattr(session, "_level_found", None)
+                            or {}) or None),
     }
 
 

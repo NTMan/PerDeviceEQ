@@ -632,34 +632,3 @@ def test_a_harmonic_above_the_response_still_fits():
     lo, hi = cv.window_db(curves)
     assert hi - lo <= cv.MAX_SPAN_DB + 2 * cv.GRID_STEPS[-1]
     assert lo < -1.0 < hi
-
-
-# --- the floor's evidence, drawn ------------------------------------
-
-def _alpha(v, quiet=-28.0, loud=-10.0, max_a=0.55):
-    """The law peq_view paints the unasked strip with, in the open so
-    a court can read it without GTK."""
-    t = (v - quiet) / (loud - quiet)
-    return max(0.0, min(1.0, t)) * max_a
-
-
-def test_the_cabinets_he_can_live_with_are_not_painted():
-    """HIS EAR IS THE CONTROL. He says both Adam rigs purr cleanly at
-    50 Hz, and their worst readings are -38 and -35; the pair he
-    cannot listen to reads -16, and an interface he calls unusable
-    reads -9. Nothing he calls clean may be painted at all."""
-    assert _alpha(-38.0) == 0.0
-    assert _alpha(-35.0) == 0.0
-
-
-def test_and_the_ones_he_complains_about_are():
-    assert _alpha(-16.0) > 0.2
-    assert _alpha(-9.0) >= 0.5
-
-
-def test_the_marks_sit_in_the_gap_between_them():
-    """Six profiles, four above -20 and two below -35, and nobody in
-    between: the quiet mark is the middle of that gap rather than a
-    number I liked."""
-    assert -35.0 < -28.0 < -20.0
-    assert _alpha(-20.0) > 0.0

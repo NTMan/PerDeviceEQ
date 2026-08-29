@@ -305,131 +305,54 @@ def test_the_noise_floor_rides_the_confession():
     assert float(np.median(gap)) > 15.0
 
 
-# --- what the sweep never asked for ---------------------------------
+# --- the high-order group -------------------------------------------
 
-def test_a_clean_rig_returns_nothing_it_was_not_given():
-    """A sweep plays ONE frequency at a time, so anything coming back
-    at that moment on some other frequency was not asked for."""
+def test_high_orders_are_read_as_one_group_against_their_own_noise():
+    """HIS THREE RIGS settled this. Harmonics above the fifth cannot
+    be separated from each other in a room -- image k sits L*ln(k)
+    before the linear IR, so neighbours crowd as L/k while the room's
+    tail runs for hundreds of milliseconds -- and they do not need to
+    be. Read as one stretch, nothing but multiples of the tone can
+    land there.
+
+    A rig that adds no high orders reads its own noise floor, so the
+    margin is about zero. That zero is the line, and it comes from
+    the measurement rather than from anyone's collection."""
     sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
     freqs = mc.log_grid()
-    rng = np.random.default_rng(4)
-    pre = np.zeros(int(1.1 * sw.fs))
-    rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
-    rec = rec + rng.normal(0, 1e-6, rec.size)
-    a, floor = mc.unasked_return(rec, sw, freqs)
-    assert a is not None
-    v = np.asarray(a, float)
-    got = v[np.isfinite(v)]
-    assert got.size > 10
-    assert float(np.nanmedian(got)) < -40.0, float(np.nanmedian(got))
-
-
-def test_a_rig_that_returns_what_it_was_not_given_is_caught():
-    """HIS PAIR is why this exists: harmonics could not tell his Adam
-    D3V from his iLoud Micro Monitor -- the Adams show MORE of them --
-    and this separates them by 29 dB from a single recording. Here the
-    same thing synthetically: a rig that answers a low drive with a
-    band it was never given."""
-    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
-    freqs = mc.log_grid()
-    rng = np.random.default_rng(5)
-    t = np.arange(sw.n_samples) / sw.fs
-    f_inst = sw.f_start * np.exp(t / sw.sweep_rate_l)
-    noise = rng.normal(0, 1.0, sw.n_samples)
-    X = np.fft.rfft(noise)
-    ff = np.fft.rfftfreq(noise.size, 1.0 / sw.fs)
-    X[(ff < 400) | (ff > 800)] = 0
-    hiss = np.fft.irfft(X, noise.size)
-    hiss *= 0.02 / (np.std(hiss) + 1e-12)
-    dirty = sw.signal + (f_inst < 60.0) * hiss
-    pre = np.zeros(int(1.1 * sw.fs))
-    post = np.zeros(int(0.5 * sw.fs))
-    clean, _ = mc.unasked_return(
-        np.concatenate([pre, sw.signal, post]), sw, freqs)
-    got, _ = mc.unasked_return(
-        np.concatenate([pre, dirty, post]), sw, freqs)
-    f = np.asarray(freqs)
-    low = (f > 25) & (f < 55)
-    a = float(np.nanmedian(np.asarray(clean, float)[low]))
-    b = float(np.nanmedian(np.asarray(got, float)[low]))
-    assert b - a > 15.0, (a, b)
-
-
-def test_it_corrects_for_the_band_the_mask_eats():
-    """The asked-for mask grows with the drive: with eleven orders
-    masked, a drive of 73 Hz covers 400-800 entirely and the residue
-    would read as silence. The share still free is divided out, and
-    the reading abstains when too little of the band is left."""
-    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
-    freqs = mc.log_grid()
-    pre = np.zeros(int(1.1 * sw.fs))
-    rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
-    got, _ = mc.unasked_return(rec, sw, freqs)
-    v = np.asarray(got, float)
-    f = np.asarray(freqs)
-    # and nothing is reported once the tracked orders reach the
-    # band: past there the gaps between widely spaced orders count
-    # as unasked and a strong harmonic's skirt leaks into them. His
-    # first schema-6 profile showed it as a false dark band at 200
-    # Hz, where the second harmonic sits on the band's edge.
-    top = mc.UNASKED_BAND[0] / mc.UNASKED_ORDERS
-    assert not np.isfinite(v[f >= top]).any()
-    # and the readings that remain are real numbers, not -inf
-    got = v[np.isfinite(v)]
-    assert got.size and float(np.min(got)) > -200.0
-
-
-def test_the_take_carries_the_floor_the_reading_must_clear():
-    """The same band read from the silence the take records BEFORE
-    the sweep: what this mic in this room returns when nothing is
-    played. Without it there is no way to tell a quiet cabinet from
-    a loud room, which is the trap every earlier version of this
-    measure fell into."""
-    sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
-    freqs = mc.log_grid()
-    rng = np.random.default_rng(9)
-    pre = np.zeros(int(1.1 * sw.fs))
-    rec = np.concatenate([pre, sw.signal, np.zeros(int(0.5 * sw.fs))])
-    rec = rec + rng.normal(0, 1e-4, rec.size)
-    got, floor = mc.unasked_return(rec, sw, freqs)
-    assert floor is not None
-    a = np.asarray(got, float)
-    b = np.asarray(floor, float)
+    rng = np.random.default_rng(21)
+    pre = np.zeros(int(1.5 * sw.fs))
+    post = np.zeros(int(0.8 * sw.fs))
+    rec = np.concatenate([pre, sw.signal, post])
+    rec = rec + rng.normal(0, 1e-5, rec.size)
+    got = mc.analyze_take(rec, sw, freqs)
+    assert got.hohd_db is not None and got.hohd_floor_db is not None
+    a = np.asarray(got.hohd_db, float)
+    b = np.asarray(got.hohd_floor_db, float)
     ok = np.isfinite(a) & np.isfinite(b)
     assert ok.any()
-    # on a rig that adds nothing, the reading sits on its own floor
-    assert abs(float(np.median(a[ok] - b[ok]))) < 6.0
+    assert abs(float(np.median(a[ok] - b[ok]))) < 8.0
 
 
-def test_a_drive_that_sinks_toward_the_noise_abstains():
-    """HIS WALK DOWNWARD found it: the reading is a RATIO to what was
-    played, so when the drive sinks toward the noise the denominator
-    goes with it and the ratio climbs. At a captured peak of -21 dBFS
-    his Adams read -26 dB at 25 Hz where the same rig reads -55 at
-    its working level -- the measurement drowning, not the cabinet
-    waking up.
-
-    So a frame speaks only where the sweep stands clear of the take's
-    own silence."""
+def test_a_rig_full_of_high_orders_clears_that_floor():
+    """And one that buzzes stands well clear of it. Twelve harmonics
+    from the 8th up, which is what a rub or a vent puts out and what
+    an honest motor nonlinearity does not."""
     sw = mc.generate_sweep(mc.DEFAULT_N, 48000, 20.0, 20000.0)
     freqs = mc.log_grid()
-    rng = np.random.default_rng(12)
-    pre = np.zeros(int(1.1 * sw.fs))
-    post = np.zeros(int(0.5 * sw.fs))
-
-    def walk(level_db, noise):
-        y = sw.signal * (10.0 ** (level_db / 20.0))
-        rec = np.concatenate([pre, y, post])
-        return rec + rng.normal(0, noise, rec.size)
-
-    # the quiet one is buried in earnest: my first cut of this court
-    # put the sweep eleven decibels ABOVE the noise and called it
-    # drowned, and a sweep concentrates its energy in the band the
-    # mask covers, so it passed the gate exactly as it should have
-    loud, _ = mc.unasked_return(walk(-6.0, 1e-5), sw, freqs)
-    quiet, _ = mc.unasked_return(walk(-40.0, 3e-2), sw, freqs)
-    assert loud is not None
-    assert np.isfinite(np.asarray(loud, float)).any()
-    # buried in the noise, the walk has nothing to say at all
-    assert (quiet is None
-            or not np.isfinite(np.asarray(quiet, float)).any())
+    rng = np.random.default_rng(22)
+    t = np.arange(sw.n_samples) / sw.fs
+    ph = (2 * np.pi * sw.f_start * sw.sweep_rate_l
+          * (np.exp(t / sw.sweep_rate_l) - 1))
+    dirty = sw.signal.copy()
+    for k in range(8, 20):
+        dirty = dirty + 0.02 * np.sin(k * ph)
+    pre = np.zeros(int(1.5 * sw.fs))
+    post = np.zeros(int(0.8 * sw.fs))
+    rec = np.concatenate([pre, dirty, post])
+    rec = rec + rng.normal(0, 1e-5, rec.size)
+    got = mc.analyze_take(rec, sw, freqs)
+    a = np.asarray(got.hohd_db, float)
+    b = np.asarray(got.hohd_floor_db, float)
+    ok = np.isfinite(a) & np.isfinite(b)
+    assert float(np.median(a[ok] - b[ok])) > 20.0

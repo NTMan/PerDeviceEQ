@@ -656,3 +656,35 @@ def test_the_headline_band_is_one_kilohertz():
     rec.freq_hz = [50.0, 1000.0, 2000.0]
     rec.thd_noise_db = [-95.0, -67.0, -95.0]    # only 1 kHz is on its floor
     assert measure_build.thd_bound_note(rec) is not None
+
+
+def test_the_saved_session_carries_what_the_search_said():
+    """IT NEVER DID BEFORE. process_takes assembles a levels block and
+    this builder, which makes the session that lands in the profile,
+    did not know it existed -- so every profile written by this
+    project is silent about how its level was chosen, and the ladder
+    the search walks had nowhere to arrive."""
+    class S:
+        started_utc = "2026-08-29T18:00:00Z"
+        sink_ident = {"name": "sink", "description": "d",
+                      "device_api": "alsa"}
+        sweep = mc.generate_sweep(1 << 14, 48000, 20.0, 20000.0)
+        eq_state = None
+        path_clean = None
+        _level_found = {"enabled": True, "adjustments": 3,
+                        "initial": 0.15, "final": 0.4,
+                        "in_window": True}
+    blk = measure_build._session_block(S())
+    assert blk["auto_level"]["adjustments"] == 3
+    assert blk["auto_level"]["initial"] == 0.15
+    assert blk["auto_level"]["in_window"] is True
+
+
+def test_a_session_with_no_search_says_nothing_about_one():
+    class S:
+        started_utc = None
+        sink_ident = {"name": "sink"}
+        sweep = mc.generate_sweep(1 << 14, 48000, 20.0, 20000.0)
+        eq_state = None
+        path_clean = None
+    assert measure_build._session_block(S())["auto_level"] is None

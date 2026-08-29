@@ -313,10 +313,9 @@ class Take:
     h3_db: object = None      # 3rd ditto
     thd_db: object = None     # power sum of harmonics 2..5, same axis
     thd_noise_db: object = None  # the floor of the same measurement
-    unasked_db: object = None  # what came back that the sweep never
-    #                            asked for, at the frequency it asked
-    unasked_floor_db: object = None  # the same band read from the
-    #                            take's own silence: the line it clears
+    hohd_db: object = None    # harmonics of order 8..40 as one group
+    hohd_floor_db: object = None  # and the same window from the IR's
+    #                            tail: zero margin means nothing there
 
 
 def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
@@ -404,172 +403,70 @@ def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
             psum(floors))
 
 
-# WHAT A SWEEP NEVER ASKED FOR. At any moment a sweep plays ONE
-# frequency, so anything returning at that moment on some other
-# frequency -- not the tone, not a multiple of it -- was not asked
-# for: a port rushing, a radiator on its stop, a rub, a rattle.
-# Farina's images cannot see it, because they exist only at whole
-# multiples, and no harmonic figure can either.
+# THE HIGH-ORDER GROUP, read by ORDER rather than by a band of
+# frequencies. A defect -- a rubbing coil, a buzzing joint, a vent
+# letting go -- puts its energy into harmonics far above the fifth,
+# where the driver's own honest nonlinearity has long since died
+# away. Those orders cannot be separated from each other in a room
+# (image k sits L*ln(k) before the linear IR, so neighbours crowd as
+# L/k while the room's tail runs for hundreds of ms), and they do not
+# need to be: the whole stretch between the images of order 8 and
+# order 40 is read as one, and nothing but multiples of the tone can
+# land there -- a room's reflections have no reason to fall on
+# L*ln(k).
 #
-# HIS PAIR IS WHY THIS EXISTS. A day of measurement could not tell
-# his Adam D3V from his iLoud Micro Monitor -- at matched level the
-# Adams show MORE harmonic distortion, and the same noise floor.
-# This quantity separates them by 29 dB from a single recording,
-# with no control needed, and it says WHERE: on his iLoud the return
-# collapses by 18 dB as the drive passes 40 Hz, which is the address
-# a floor wants and it agrees with what he hears.
+# HIS THREE RIGS, three takes each, margin over the floor below:
 #
-#     drive, Hz     iLoud open   Adam D3V     (400-800 Hz return,
-#      25             -27.2       -53.2        re what was asked)
-#      32             -34.3       -60.5
-#      40             -44.4       -54.7
+#                              25    32    40    50    63 Hz
+#     iLoud, port open        9.8  23.5  20.1  18.9  22.6
+#     iLoud, port PLUGGED    -2.0  11.1  -1.8  -4.3   9.1
+#     Adam D3V                1.1  -1.3   4.6  -2.0   3.2
 #
-# A rag in the port moves it barely two decibels, and that is
-# honest rather than disappointing: plugging a vent sends the cone
-# further, so one source is traded for another. The quantity is
-# "this cabinet returns what it was not given", not "this port
-# hisses" -- and a floor answers both alike.
-# The orders counted as asked-for, and the band must sit ABOVE all
-# of them. Five is what extract_harmonics tracks, and going higher
-# does not help: with many orders inside the band they stand far
-# apart relative to their own width, the gaps between them get
-# counted as "not asked for", and the skirts of a strong harmonic
-# leak straight into those gaps. His first schema-6 profile showed
-# it -- the strip lit at 200 Hz, where the second harmonic sits on
-# the band's edge and nothing else could have been there.
-UNASKED_ORDERS = 5
-UNASKED_BAND = (400.0, 800.0)   # where his vent returned
-UNASKED_WIN = 4096
-
-# HOW FAR THE SWEEP ITSELF MUST STAND OVER THE SILENCE before a
-# frame is allowed to speak. The reading is a RATIO to what was
-# played, so when the drive sinks toward the noise the denominator
-# goes with it and the ratio climbs -- his walk down to a captured
-# peak of -21 dBFS read -26 dB at 25 Hz where the same rig reads
-# -55 at its working level. That is the measurement drowning, not
-# the cabinet waking up.
-#
-# Twenty decibels, with room to spare: at the level a measurement
-# actually runs at, his Adam stands 31 to 56 dB over its own
-# silence across the whole band, so nothing is lost there. Eleven
-# decibels quieter and the bottom of the band starts abstaining,
-# which is where the reading had stopped meaning anything anyway.
-UNASKED_DRIVE_OVER_SILENCE_DB = 20.0
+# The Adams purr and read zero. The iLoud chuffs and reads twenty. A
+# rag in its port takes it back to zero. The line is not a taste and
+# not a number from anyone's collection: it is ZERO, where the
+# reading rises out of the same measurement's own noise, exactly as
+# thd_noise_db serves thd_db.
+HOHD_ORDERS = (8.0, 40.0)
 
 
-def unasked_return(recording, sweep, freqs, band=UNASKED_BAND,
-                   win=UNASKED_WIN, hop=None):
-    """Energy returning outside the sweep's own family, per drive
-    frequency, in dB relative to what the sweep asked for there.
+def high_order_group(ir, sweep, freqs, peak, main_mag_db,
+                     orders=HOHD_ORDERS):
+    """Harmonics of order 8..40 as one group, and the same window
+    read from the IR's tail as its floor.
 
-    Walks the recording in time. A frame's ASKED-FOR band runs from
-    the frequency the sweep held at its start to the one at its end,
-    times each order up to UNASKED_ORDERS -- a sweep does not sit
-    still, and near the bottom it travels far, so a point mask would
-    dump most of a clean sweep into the residue.
-
-    Returns (db, floor_db). THE FLOOR IS THE POINT: the same band,
-    the same window, read from the silence the take records BEFORE
-    the sweep -- what this mic in this room returns when nothing is
-    played. A reading close to it is the instrument speaking, not
-    the cabinet, exactly as thd_noise_db is read against thd_db.
-    Both are expressed against what the sweep asked for at that
-    drive, so their difference is the margin.
-
-    Frames stop once the tracked orders reach the band, which on the
-    shipped sweep is a drive of about 63 Hz. Past that there is no
-    honest reading: the orders stand far apart inside the band, the
-    gaps between them count as unasked, and the skirt of a strong
-    harmonic leaks into those gaps. NaN there, and NaN wherever the
-    recording gives no frame at all.
+    Returns (db, floor_db) against the fundamental, or (None, None)
+    when the stretch runs off the recording. The floor comes from
+    AFTER the linear IR has decayed rather than from the quiet land
+    before the images: at these orders the group begins 0.64 s ahead
+    of the linear IR on the shipped sweep, and no take records that
+    far back.
     """
-    fs = float(sweep.fs)
-    x = np.asarray(recording, float).ravel()
-    if x.ndim > 1 or x.size < win * 2:
-        return None
-    hop = hop or win // 4
-    thr = 0.02 * float(np.max(np.abs(x)) or 1.0)
-    start = int(np.argmax(np.abs(x) > thr))
-    w = np.hanning(win)
-    f = np.fft.rfftfreq(win, 1.0 / fs)
-    bin_hz = fs / win
-    inband = (f >= band[0]) & (f < band[1])
-    lo_cut = int(sweep.f_start / bin_hz)
-    # THE SILENCE THE TAKE ALREADY RECORDS, kept as spectra so the
-    # same frames answer two questions: what the room returns in the
-    # residue band when nothing plays, and -- under whatever mask a
-    # frame ends up using -- whether the drive itself is above that
-    # noise at all.
-    quiet = []
-    if start > win:
-        for s0 in range(0, start - win, max(win // 2, 1)):
-            quiet.append(np.abs(np.fft.rfft(x[s0:s0 + win] * w)) ** 2)
-    if not quiet:
-        # NO SILENCE, NO READING. The onset is found by amplitude, so
-        # a recording noisy enough to trip the threshold on its first
-        # sample leaves none -- and without it there is no way to ask
-        # whether the sweep even reaches a given frequency. Reporting
-        # ungated numbers there is worse than reporting none: that is
-        # exactly the drowned reading this gate exists to suppress.
+    k_lo, k_hi = float(min(orders)), float(max(orders))
+    L, fs = sweep.sweep_rate_l, float(sweep.fs)
+    a = peak - int(round(L * math.log(k_hi) * fs))
+    b = peak - int(round(L * math.log(k_lo) * fs))
+    if a <= 0 or b <= a + 32:
         return None, None
-    floor_e = float(np.median([float(q[inband].sum()) for q in quiet]))
-
-    drives, rests, askeds = [], [], []
-    stop = min(x.size - win, start + int(sweep.duration_s * fs))
-    for s in range(start, stop, hop):
-        S = np.abs(np.fft.rfft(x[s:s + win] * w)) ** 2
-        t0 = (s - start) / fs
-        t1 = (s - start + win) / fs
-        f0 = sweep.f_start * math.exp(t0 / sweep.sweep_rate_l)
-        f1 = sweep.f_start * math.exp(t1 / sweep.sweep_rate_l)
-        if f1 > sweep.f_end:
-            break
-        # ONLY WHERE THE BAND IS STILL AHEAD OF THE SWEEP. Once the
-        # drive passes the band, what sits there is the room's tail
-        # of content already played -- reverberation, not a return.
-        # That confound drowned an earlier attempt at this measure
-        # and it is excluded by construction rather than argued away.
-        if UNASKED_ORDERS * f1 * 2.0 ** (1.0 / 12.0) >= band[0]:
-            break
-        asked = np.zeros(len(f), bool)
-        for o in range(1, UNASKED_ORDERS + 1):
-            a = o * f0 * 2.0 ** (-1.0 / 12.0)
-            b = min(o * f1 * 2.0 ** (1.0 / 12.0), fs / 2.0)
-            if a >= fs / 2.0:
-                break
-            asked[int(a / bin_hz):int(b / bin_hz) + 1] = True
-        asked[:lo_cut] = False
-        got = float(S[asked].sum())
-        if got <= 0.0:
-            continue
-        # DOES THE SWEEP EVEN REACH HERE? The reading is a ratio to
-        # what was played, so a drive sinking toward the noise
-        # inflates it without the cabinet doing anything at all.
-        q = float(np.median([float(qq[asked].sum()) for qq in quiet]))
-        if got < q * 10.0 ** (UNASKED_DRIVE_OVER_SILENCE_DB / 10.0):
-            continue
-        drives.append(math.sqrt(f0 * f1))
-        askeds.append(got)
-        rests.append(float(S[inband].sum()))
-    if len(drives) < 4:
+    n = b - a + 1
+    w = np.hanning(n)
+    k_mid = math.sqrt(k_lo * k_hi)
+    f = np.asarray(freqs, float)
+    main = np.asarray(main_mag_db, float)
+    ok = f * k_mid < min(sweep.f_end, 0.45 * fs)
+    if not ok.any():
         return None, None
-    d = np.asarray(drives)
-    a = np.asarray(askeds)
-    with np.errstate(all="ignore"):
-        db = 10.0 * np.log10(np.maximum(np.asarray(rests) / a, 1e-30))
-        fdb = (None if floor_e is None else
-               10.0 * np.log10(np.maximum(floor_e / a, 1e-30)))
-    f_arr = np.asarray(freqs)
-    lo, hi = d.min(), d.max()
-    inside = (f_arr >= lo) & (f_arr <= hi)
-
-    def spread(v):
-        out = np.full(len(freqs), np.nan)
-        if inside.any() and v is not None:
-            out[inside] = np.interp(f_arr[inside], d, v)
-        return out
-
-    return spread(db), (None if fdb is None else spread(fdb))
+    ir = np.asarray(ir, float)
+    m = ir_to_magnitude(ir[a:b + 1] * w, sweep.fs, f[ok] * k_mid)
+    val = np.full(len(f), np.nan)
+    val[ok] = m - main[ok]
+    t0 = peak + int(0.6 * fs)
+    if t0 + n >= len(ir):
+        return val, None
+    flo = np.full(len(f), np.nan)
+    mq = ir_to_magnitude(ir[t0:t0 + n] * w, sweep.fs, f[ok] * k_mid)
+    flo[ok] = mq - main[ok]
+    return val, flo
 
 
 def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
@@ -581,10 +478,10 @@ def analyze_take(recording, sweep, freqs, pre_flat_ms=10.0,
     mag = ir_to_magnitude(seg, sweep.fs, freqs)
     snr, sig_db, noise_db = estimate_snr(recording, peak, sweep)
     h2, h3, thd, nfl = extract_harmonics(ir, sweep, freqs, peak, mag)
-    unasked, unasked_floor = unasked_return(recording, sweep, freqs)
+    hi, hi_floor = high_order_group(ir, sweep, freqs, peak, mag)
     return Take(freqs, mag, 1000.0 * peak / sweep.fs, snr, sig_db, noise_db,
                 h2_db=h2, h3_db=h3, thd_db=thd, thd_noise_db=nfl,
-                unasked_db=unasked, unasked_floor_db=unasked_floor)
+                hohd_db=hi, hohd_floor_db=hi_floor)
 
 
 def average_takes(takes):

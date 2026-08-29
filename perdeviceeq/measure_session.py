@@ -160,12 +160,23 @@ class SessionConfig:
     fs: int = mc.DEFAULT_FS
     f_start: float = mc.DEFAULT_F_START
     f_end: float = mc.DEFAULT_F_END
-    # 1.10 s, and the number is Farina's rather than a habit: the
-    # image of ratio r sits L*ln(r) before the linear IR, so at the
-    # 2.73 s sweep the ladder to sixteen needs 1.10 s of silence in
-    # front of it. One second reached only to ratio nine, and at the
-    # old 5.46 s sweep it reached only to three.
-    pre_silence: float = 1.10
+    # 1.50 s, and the number is Farina's rather than a habit: the
+    # image of order k sits L*ln(k) before the linear IR, so at the
+    # 2.73 s sweep the ladder to FORTY needs 1.46 s of silence in
+    # front of it. One second reached only to order nine, 1.10 to
+    # sixteen, and at the old 5.46 s sweep only to three.
+    #
+    # WHY FORTY AND NOT SIXTEEN, which would have been free: orders
+    # 8 to 16 are still the region of a driver's honest suspension
+    # nonlinearity. His Adams -- which purr cleanly -- stand +16 dB
+    # over their own floor there, so zero stops being a line. Taken
+    # to forty the same pair reads -1.3 and -2.0 while the pair that
+    # chuffs reads +21, because a defect's energy lives above where
+    # ordinary nonlinearity has died away.
+    #
+    # It costs 0.36 s a take, against the 2.6 s the halved sweep
+    # gave back.
+    pre_silence: float = 1.50
     post_silence: float = 0.5
     cal: str = None
     smoothing: int = 6
@@ -215,10 +226,8 @@ class TakeRecord:
     h3_db: object = None
     thd_db: object = None
     thd_noise_db: object = None     # the floor of the same reading
-    unasked_db: object = None       # what came back that the sweep
-    #                                 never asked for, per drive
-    unasked_floor_db: object = None  # the same band from the take's
-    #                                 own silence: the line it clears
+    hohd_db: object = None          # harmonics of order 8..40 as one
+    hohd_floor_db: object = None    # group, and its own noise floor
 
 
 def spread_trust_bound(spread, n_takes):
@@ -807,8 +816,8 @@ class MeasureSession:
                          h2_db=t.h2_db, h3_db=t.h3_db,
                          thd_db=t.thd_db,
                          thd_noise_db=t.thd_noise_db,
-                         unasked_db=t.unasked_db,
-                         unasked_floor_db=t.unasked_floor_db)
+                         hohd_db=t.hohd_db,
+                         hohd_floor_db=t.hohd_floor_db)
         # whether the headline figure is a measurement or a bound is
         # a fact about the take, so it rides with the take rather than
         # a status line the next sweep wipes
