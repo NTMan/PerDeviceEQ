@@ -98,6 +98,7 @@ class PeqView(Gtk.Box):
         self._cursor = None       # pointer for the crosshair
         self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
+        self._unasked = None        # (freqs, dB re what was asked)
         self._traces = {}           # name -> [(x, y, value)] as drawn
         self._under = None          # the line under the pointer
         self._under_v = None
@@ -183,7 +184,8 @@ class PeqView(Gtk.Box):
         engage the floor at all wants to see what it would be
         engaging against, so the band shows with the floor off
         and with the floor never set."""
-        self.protect_strip.set_visible(self._protect is not None)
+        self.protect_strip.set_visible(
+            self._protect is not None or self._unasked is not None)
         self.protect_strip.queue_draw()
 
     def set_protection(self, lo, visible, on_change=None):
@@ -217,8 +219,65 @@ class PeqView(Gtk.Box):
                       + t * (math.log10(FMAX) - math.log10(FMIN)))
 
 
+    # WHERE A CABINET RETURNS WHAT IT WAS NOT GIVEN. The take
+    # records it per drive frequency, in dB against what the sweep
+    # asked for there; below this it is under everything else in the
+    # room and above it the cabinet is plainly answering with sound
+    # of its own. His iLoud reads -29 at 25 Hz where his Adams read
+    # -53, and that is the whole span this ink has to cover.
+    # -55 and -30 are the span his two pairs mark out: at a 25 Hz
+    # drive his iLoud returns -29.2 dB of what it was not given and
+    # his Adams -53.2, and the iLoud's own reading collapses to -56.8
+    # by 50 Hz, which is where he says the floor wants to be.
+    _UNASKED_QUIET_DB = -55.0
+    _UNASKED_LOUD_DB = -30.0
+    _UNASKED_MAX_A = 0.55
+    _UNASKED_BAND_PX = 7
+
+    def set_unasked(self, freqs=None, db=None):
+        """The floor's own evidence: what this rig returns that was
+        never played into it, per frequency.
+
+        THE STRIP THIS REPLACES ANSWERED NOTHING. It painted
+        harmonic distortion, which is the cone's business and not
+        the cabinet's -- his Adams show more of it than the pair he
+        cannot listen to -- so it lit up for every speaker alike and
+        told him nothing about where to put a floor. This one is
+        measured against a control (a rag in the port moves the
+        rig it describes; the Adams never light at all) and it
+        collapses as the drive passes the frequency a floor wants.
+        """
+        if freqs is None or db is None or not len(freqs):
+            self._unasked = None
+        else:
+            self._unasked = (list(freqs), list(db))
+        self._sync_strip()
+
+    def _draw_unasked(self, cr, h, ml, pw_):
+        """A band along the strip's top: darker where this rig
+        answers with sound it was not given."""
+        if not self._unasked:
+            return
+        fs, vs = self._unasked
+        span = self._UNASKED_LOUD_DB - self._UNASKED_QUIET_DB
+        cols = {}
+        for f, v in zip(fs, vs):
+            if v is None or not math.isfinite(v):
+                continue
+            x = int(round(self._px_of(f, ml, pw_)))
+            cols[x] = max(cols.get(x, -1e9), float(v))
+        for x, v in cols.items():
+            t = (v - self._UNASKED_QUIET_DB) / span
+            a = max(0.0, min(1.0, t)) * self._UNASKED_MAX_A
+            if a <= 0.0:
+                continue
+            cr.set_source_rgba(0.85, 0.45, 0.1, a)
+            cr.rectangle(x, 0, 1, self._UNASKED_BAND_PX)
+            cr.fill()
+
     def _draw_protect(self, _a, cr, w, h, *_):
         ml, pw_ = self._strip_geo()
+        self._draw_unasked(cr, h, ml, pw_)
         if not self._protect:
             return
         lo = self._protect

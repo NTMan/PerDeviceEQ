@@ -32,6 +32,8 @@ for the band table, per-row sparklines, the online AutoEQ catalog.
 
 import json, math, os, sys, threading, time
 
+import numpy as np
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -392,6 +394,7 @@ class EqWindow(Adw.ApplicationWindow):
         button, because this runs when the canvas is REBUILT.
         The button syncs at the top of a profile load, when
         self._canvas still holds the profile being left."""
+        self.view.set_unasked(*self._unasked_curve())
         ov = self._overlay_curve()
         if ov is None:
             self.view.set_curves(None, None)
@@ -458,6 +461,43 @@ class EqWindow(Adw.ApplicationWindow):
         self._ensure_audible()
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
         self._on_edit()
+
+    def _unasked_curve(self):
+        """One curve for the whole profile: the WORST of its channels
+        at every frequency. The floor is a single handle for the
+        card, so a strip that whispers about the clean channel while
+        the other one answers with sound of its own would be worse
+        than none.
+        """
+        p = self.store.get(self.current_pid) or {}
+        m = (p.get("measurement") or {})
+        takes = m.get("takes") or []
+        g = m.get("grid") or {}
+        if not takes or not g:
+            return (None, None)
+        try:
+            n = max(len(t["unasked_db"]) for t in takes
+                    if t.get("unasked_db"))
+        except ValueError:
+            return (None, None)
+        lo, ppo = float(g["f_lo"]), float(g["ppo"])
+        freqs = [lo * 2.0 ** (i / ppo) for i in range(n)]
+        by_ch = {}
+        for t in takes:
+            if t.get("unasked_db"):
+                by_ch.setdefault(t.get("channel"), []).append(
+                    t["unasked_db"])
+        worst = None
+        for rows in by_ch.values():
+            a = np.array([[np.nan if v is None else float(v)
+                           for v in r] for r in rows], float)
+            with np.errstate(all="ignore"):
+                mean = np.nanmean(a, axis=0)
+            worst = mean if worst is None else np.fmax(worst, mean)
+        if worst is None:
+            return (None, None)
+        return (freqs, [None if not np.isfinite(v) else float(v)
+                        for v in worst])
 
     def _overlay_curve(self):
         """(freqs, measured, spread, trust_band) for the slot on

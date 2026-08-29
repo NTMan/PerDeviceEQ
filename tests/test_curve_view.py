@@ -632,3 +632,33 @@ def test_a_harmonic_above_the_response_still_fits():
     lo, hi = cv.window_db(curves)
     assert hi - lo <= cv.MAX_SPAN_DB + 2 * cv.GRID_STEPS[-1]
     assert lo < -1.0 < hi
+
+
+# --- the floor's evidence, drawn ------------------------------------
+
+def _alpha(v, quiet=-55.0, loud=-30.0, max_a=0.55):
+    """The law peq_view paints the unasked strip with, in the open so
+    a court can read it without GTK."""
+    t = (v - quiet) / (loud - quiet)
+    return max(0.0, min(1.0, t)) * max_a
+
+
+def test_the_strip_separates_his_two_pairs():
+    """HIS FIELD PAIR, from one recording each and no control: at a
+    25 Hz drive the iLoud returns -29.2 dB of what it was not given
+    and the Adams -53.2. The strip has to make that plain, which the
+    one it replaces could not: that painted harmonic distortion,
+    which the Adams have MORE of."""
+    assert _alpha(-29.2) - _alpha(-53.2) > 0.4
+
+
+def test_it_goes_out_where_the_floor_belongs():
+    """And it must fall as the drive passes the address: on his iLoud
+    the reading collapses from -34.2 at 32 Hz to -56.8 at 50."""
+    assert _alpha(-34.2) > 0.35
+    assert _alpha(-56.8) == 0.0
+
+
+def test_a_quiet_cabinet_is_not_painted_at_all():
+    assert _alpha(-55.0) == 0.0
+    assert _alpha(-80.0) == 0.0
