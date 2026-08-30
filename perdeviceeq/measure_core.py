@@ -429,6 +429,23 @@ def extract_harmonics(ir, sweep, freqs, peak, main_mag_db,
 # thd_noise_db serves thd_db.
 HOHD_ORDERS = (8.0, 40.0)
 
+# ABOVE THE BASS THIS QUANTITY SAYS NOTHING, and a direct look at a
+# capture was needed to see it. Read against the music where the
+# rubbish LANDS -- eighteen times the drive -- a drive of 600 Hz puts
+# that band at 11 kHz, where a loudspeaker in a room has almost
+# nothing: the divisor collapses and the reading soars on emptiness.
+# His iLoud read +19 dB at 613 Hz while the capture at that moment
+# holds -60 there, and the energy near 613 appears while the sweep is
+# at 25-33 Hz -- its own eighteenth multiple, which is the thing this
+# measure is actually for.
+#
+# 150 Hz is FROM HIS COLLECTION, NOT FROM PHYSICS, and is written
+# down so nobody mistakes it for a law: every rig of his that shows
+# anything -- the subwoofer, the AXON, the iLoud -- is marked between
+# 20 and 105 Hz and falls away above that, which is also the region a
+# floor can act in at all.
+HOHD_TOP_DRIVE_HZ = 150.0
+
 
 def high_order_group(ir, sweep, freqs, peak, main_mag_db,
                      orders=HOHD_ORDERS):

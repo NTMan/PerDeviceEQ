@@ -32,6 +32,8 @@ for the band table, per-row sparklines, the online AutoEQ catalog.
 
 import json, math, os, sys, threading, time
 
+import numpy as np
+
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -39,6 +41,7 @@ from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
 from . import (__version__, chantabs, config, debug, eq, pw_backend,
                integration)
+from . import measure_core as mc
 from .picker import NodeMenu
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
                      load_ui_state, save_ui_state,
@@ -392,6 +395,7 @@ class EqWindow(Adw.ApplicationWindow):
         button, because this runs when the canvas is REBUILT.
         The button syncs at the top of a profile load, when
         self._canvas still holds the profile being left."""
+        self.view.set_return(*self._return_curve())
         ov = self._overlay_curve()
         if ov is None:
             self.view.set_curves(None, None)
@@ -458,6 +462,84 @@ class EqWindow(Adw.ApplicationWindow):
         self._ensure_audible()
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
         self._on_edit()
+
+    def _return_curve(self):
+        """How loud this rig's rubbish is against the music it lands
+        IN -- per frequency of what was played, which is the axis
+        the floor handle moves along.
+
+        WHERE IT LANDS IS THE WHOLE POINT, and getting it wrong cost
+        an evening. The group is orders 8..40, so a drive at f puts
+        its rubbish around eighteen times higher: play 25 Hz and the
+        mess arrives near 450. Comparing that mess with the music at
+        25 Hz -- which is what the first cut of this did -- compares
+        two different bands that neither mask nor explain each other,
+        and worse, below a rig's corner the 25 Hz term collapses so
+        the ratio explodes for every loudspeaker ever made. His clean
+        Adams read +39 dB that way. Against the music where the
+        rubbish actually arrives, they read -63 and his iLoud -39.
+
+        Five systems, four verdicts of his ear, worst reading:
+
+            six earphones          -51 .. -58   (indistinguishable;
+                                                 this is our floor)
+            Adam D3V               -41   clean
+            Adam D3V + iLoud Sub   -39   "hardly bothers me"
+            NUX AXON-3 analogue    -25   "same port nonsense"
+            iLoud Micro Monitor    -14   cannot listen to it
+
+        The worst of the channels, since the floor is one handle for
+        the whole card.
+        """
+        p = self.store.get(self.current_pid) or {}
+        m = (p.get("measurement") or {})
+        takes = m.get("takes") or []
+        g = m.get("grid") or {}
+        rows = [t for t in takes if t.get("hohd_db") and t.get("mag_db_uncal")]
+        if not rows or not g:
+            return (None, None)
+        n = max(len(t["hohd_db"]) for t in rows)
+        lo, ppo = float(g["f_lo"]), float(g["ppo"])
+        freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
+        # the group's own geometric middle: where its rubbish lands
+        k = math.sqrt(mc.HOHD_ORDERS[0] * mc.HOHD_ORDERS[1])
+        by_ch = {}
+        for t in rows:
+            by_ch.setdefault(t.get("channel"), []).append(t)
+        worst = None
+        for group in by_ch.values():
+            def avg(key):
+                a = np.array([[np.nan if v is None else float(v)
+                               for v in t[key]] for t in group], float)
+                c = np.sum(np.isfinite(a), axis=0)
+                return np.where(c > 0,
+                                np.nansum(np.where(np.isfinite(a), a, 0.0),
+                                          axis=0) / np.maximum(c, 1), np.nan)
+            with np.errstate(all="ignore"):
+                v, mag = avg("hohd_db"), avg("mag_db_uncal")
+                heard = np.interp(np.log(freqs * k), np.log(freqs), mag,
+                                  left=np.nan, right=np.nan)
+                said = (v + mag) - heard
+            worst = said if worst is None else np.fmax(worst, said)
+        if worst is None:
+            return (None, None)
+        # The axis stops where the phenomenon does -- see
+        # mc.HOHD_TOP_DRIVE_HZ for why, and for where that bound
+        # comes from.
+        keep = np.asarray(freqs) <= mc.HOHD_TOP_DRIVE_HZ
+        worst = np.where(keep, worst, np.nan)
+        # A DEFECT OCCUPIES A BAND, NOT A BIN: read the worst of a
+        # third of an octave, the width the ear sums over, so a mark
+        # means a region rather than one noisy sample.
+        w = max(1, int(round(ppo / 3.0)))
+        out = np.full(len(worst), np.nan)
+        for i in range(len(worst)):
+            seg = worst[max(0, i - w // 2):i + w // 2 + 1]
+            seg = seg[np.isfinite(seg)]
+            if seg.size >= max(2, w // 3):
+                out[i] = float(np.median(seg))
+        return (list(freqs), [None if not np.isfinite(x) else float(x)
+                              for x in out])
 
     def _overlay_curve(self):
         """(freqs, measured, spread, trust_band) for the slot on

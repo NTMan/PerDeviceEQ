@@ -632,3 +632,38 @@ def test_a_harmonic_above_the_response_still_fits():
     lo, hi = cv.window_db(curves)
     assert hi - lo <= cv.MAX_SPAN_DB + 2 * cv.GRID_STEPS[-1]
     assert lo < -1.0 < hi
+
+
+# --- the floor's own instrument -------------------------------------
+
+def _ink(v, quiet=-51.0, loud=-20.0, max_a=0.55):
+    """The law peq_view paints the return strip with, in the open so
+    a court can read it without GTK."""
+    return max(0.0, min(1.0, (v - quiet) / (loud - quiet))) * max_a
+
+
+def test_the_measuring_floor_is_not_painted():
+    """SIX EARPHONES of different makes all read between -51 and -58
+    on this quantity and cannot be told apart there: that is the rig's
+    own floor rather than anything they do. Nothing below it may be
+    painted, or the strip would invite a floor against the
+    instrument."""
+    for v in (-51.0, -53.0, -58.0, -80.0):
+        assert _ink(v) == 0.0, v
+
+
+def test_what_he_cannot_listen_to_is_painted_and_what_he_likes_is_not():
+    """His verdicts, in his words: the Adams are clean, the subwoofer
+    hardly bothers him, the AXON is the same port nonsense as the
+    iLoud, and the iLoud he cannot listen to."""
+    assert _ink(-53.0) < 0.05          # Adam D3V, clean
+    assert _ink(-41.0) > 0.15          # AXON, audible nonsense
+    assert _ink(-29.0) > 0.35          # iLoud, unlistenable
+    assert _ink(-29.0) > _ink(-41.0)
+
+
+def test_the_scale_saturates_rather_than_running_away():
+    """A rig handing back as much as it plays is not twice as bad as
+    one handing back a tenth; the ink stops."""
+    assert _ink(-20.0) == _ink(0.0)
+    assert _ink(0.0) == 0.55

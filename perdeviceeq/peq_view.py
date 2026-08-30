@@ -98,6 +98,8 @@ class PeqView(Gtk.Box):
         self._cursor = None       # pointer for the crosshair
         self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
+        self._returned = None       # (freqs, dB the return stands
+        #                              above the output there)
         self._traces = {}           # name -> [(x, y, value)] as drawn
         self._under = None          # the line under the pointer
         self._under_v = None
@@ -183,7 +185,8 @@ class PeqView(Gtk.Box):
         engage the floor at all wants to see what it would be
         engaging against, so the band shows with the floor off
         and with the floor never set."""
-        self.protect_strip.set_visible(self._protect is not None)
+        self.protect_strip.set_visible(
+            self._protect is not None or self._returned is not None)
         self.protect_strip.queue_draw()
 
     def set_protection(self, lo, visible, on_change=None):
@@ -217,8 +220,68 @@ class PeqView(Gtk.Box):
                       + t * (math.log10(FMAX) - math.log10(FMIN)))
 
 
+    # WHAT THIS RIG HANDS BACK, against the music it hands it back
+    # INTO. His requirement, repeated until I heard it: this is an
+    # instrument for one tool, the floor, and its job is to show what
+    # is worth cutting.
+    #
+    # The scale has two ends and neither is a taste. NOTHING is
+    # painted at -51, the TOP of where six earphones land: different
+    # makes, different prices, all between -51 and -58 and
+    # indistinguishable from one another there, which makes that
+    # band this instrument's own floor rather than anything they do.
+    # A mark below it would invite a cut against the microphone.
+    # FULL weight at -20, where a rig hands back a tenth of the music
+    # it makes.
+    #
+    # Between them sit his verdicts, in order:
+    #
+    #   Adam D3V              -53   clean
+    #   Adam + iLoud Sub      -34   "hardly bothers me"
+    #   NUX AXON-3 analogue   -41   "same port nonsense"
+    #   iLoud Micro Monitor   -29   cannot listen to it
+    #
+    # The cost of cutting is NOT drawn here on purpose: the response
+    # curve above already shows what a floor would take away, and a
+    # second rendering of the same fact would be one more thing to
+    # read rather than one more thing known.
+    _RETURN_QUIET_DB = -51.0
+    _RETURN_LOUD_DB = -20.0
+    _RETURN_MAX_A = 0.55
+    _RETURN_BAND_PX = 7
+
+    def set_return(self, freqs=None, dirt_db=None):
+        """How loud this rig's rubbish is against the music it lands
+        in, per frequency of what was played."""
+        if freqs is None or dirt_db is None or not len(freqs):
+            self._returned = None
+        else:
+            self._returned = (list(freqs), list(dirt_db))
+        self._sync_strip()
+
+    def _draw_return(self, cr, ml, pw_):
+        if not self._returned:
+            return
+        fs, vs = self._returned
+        span = self._RETURN_LOUD_DB - self._RETURN_QUIET_DB
+        cols = {}
+        for f, v in zip(fs, vs):
+            if v is None or not math.isfinite(v):
+                continue
+            x = int(round(self._px_of(f, ml, pw_)))
+            cols[x] = max(cols.get(x, -1e9), float(v))
+        for x, v in cols.items():
+            t = (v - self._RETURN_QUIET_DB) / span
+            a = max(0.0, min(1.0, t)) * self._RETURN_MAX_A
+            if a <= 0.0:
+                continue
+            cr.set_source_rgba(0.85, 0.45, 0.1, a)
+            cr.rectangle(x, 0, 1, self._RETURN_BAND_PX)
+            cr.fill()
+
     def _draw_protect(self, _a, cr, w, h, *_):
         ml, pw_ = self._strip_geo()
+        self._draw_return(cr, ml, pw_)
         if not self._protect:
             return
         lo = self._protect

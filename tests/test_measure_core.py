@@ -356,3 +356,19 @@ def test_a_rig_full_of_high_orders_clears_that_floor():
     b = np.asarray(got.hohd_floor_db, float)
     ok = np.isfinite(a) & np.isfinite(b)
     assert float(np.median(a[ok] - b[ok])) > 20.0
+
+
+def test_the_high_order_reading_has_a_top_drive():
+    """Read against the music where the rubbish LANDS -- eighteen
+    times the drive -- the quantity dies above the bass: a 600 Hz
+    drive puts that band at 11 kHz, where a loudspeaker in a room has
+    almost nothing, so the divisor collapses and the reading soars on
+    emptiness. His iLoud read +19 dB at 613 Hz while the capture
+    holds -60 there.
+
+    The bound is from his collection rather than from physics, and
+    the point of this court is that it stays written down."""
+    assert mc.HOHD_TOP_DRIVE_HZ == 150.0
+    k = math.sqrt(mc.HOHD_ORDERS[0] * mc.HOHD_ORDERS[1])
+    # at the bound the rubbish still lands inside hearing
+    assert mc.HOHD_TOP_DRIVE_HZ * k < 20000.0
