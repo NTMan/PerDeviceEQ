@@ -5,6 +5,7 @@ import math
 import numpy as np
 import pytest
 
+from perdeviceeq import measure_core as mc
 from perdeviceeq import level_run
 from perdeviceeq import measure_session as ms          # noqa: F401
 
@@ -390,3 +391,32 @@ def test_the_level_is_announced_before_the_sweep(monkeypatch, tmp_path):
     assert seen and seen[0][1] == 1
     assert seen[0][0] == pytest.approx(level_run.AUTO_START_VOLUME,
                                        abs=0.05)
+
+
+def test_the_shortfall_is_also_a_quantity():
+    """A ceiling is a yes/no, but "past it" has degrees: his iLoud
+    falls 1.1 dB short of a 2 dB step at 43% of the knob and 1.9 at
+    50%, which is the difference between a hint and nothing left.
+
+    Both ends of the scale are given rather than chosen -- we picked
+    the step, and the rig either delivered it or did not."""
+    freqs = np.asarray(mc.log_grid())
+    prev = np.zeros(len(freqs))
+    heard = np.full(len(freqs), 30.0)
+    # took the whole 4 dB step everywhere
+    full = level_run.shortfall_db(prev, prev + 4.0, heard, 4.0,
+                                  freqs, mc.GRID_PPO)
+    assert np.nanmax(full) == 0.0
+    # took none of it
+    none = level_run.shortfall_db(prev, prev, heard, 4.0,
+                                  freqs, mc.GRID_PPO)
+    assert abs(float(np.nanmax(none)) - 4.0) < 1e-9
+    # took half
+    half = level_run.shortfall_db(prev, prev + 2.0, heard, 4.0,
+                                  freqs, mc.GRID_PPO)
+    assert abs(float(np.nanmax(half)) - 2.0) < 1e-9
+    # and a frequency the rig does not reproduce is absent, not short
+    quiet = np.full(len(freqs), 0.0)
+    out = level_run.shortfall_db(prev, prev, quiet, 4.0,
+                                 freqs, mc.GRID_PPO)
+    assert not np.isfinite(out).any()

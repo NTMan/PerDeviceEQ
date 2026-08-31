@@ -464,6 +464,39 @@ def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
     return ok & (sm < ANSWER_SHORT * asked_db), ok
 
 
+def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
+    """HOW SHORT a rung came, per frequency, in decibels.
+
+    `shortfall` answers yes or no, and that is enough to find a
+    ceiling but not to say how far past it you are. This is the same
+    reading kept as a quantity: zero where the rig took the whole
+    step, `asked_db` where it took none of it. The scale needs no
+    threshold because both ends are given -- we chose the step, and
+    the rig either delivered it or did not.
+
+    On his iLoud it separates degrees the way he asked for: at 43% of
+    the knob 63 Hz falls 1.1 dB short of a 2 dB step, at 50% it is
+    1.9 -- almost nothing left -- and by 86% the deficit has walked
+    DOWN to 50 Hz and a fresh one appears at a kilohertz, where the
+    amplifier rather than the port gives out.
+
+    NaN where the rung was not heard: a rig that makes no sound at a
+    frequency is not short there, it is absent.
+    """
+    prev = np.asarray(prev_mag, float)
+    cur = np.asarray(cur_mag, float)
+    got = cur - prev
+    w = max(3, int(round(ppo / 3.0)))
+    sm = np.full(len(got), np.nan)
+    for k in range(len(got)):
+        seg = got[max(0, k - w // 2):k + w // 2 + 1]
+        seg = seg[np.isfinite(seg)]
+        if seg.size >= max(2, w // 3):
+            sm[k] = float(np.median(seg))
+    ok = np.isfinite(sm) & (np.asarray(heard, float) > HEARD_OVER_NOISE_DB)
+    return np.where(ok, np.maximum(0.0, asked_db - sm), np.nan)
+
+
 def spans(mask, freqs):
     """Contiguous frequency spans of a boolean mask, as [lo, hi] pairs.
 
