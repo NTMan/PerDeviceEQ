@@ -98,6 +98,8 @@ class PeqView(Gtk.Box):
         self._cursor = None       # pointer for the crosshair
         self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
+        self._headroom = None       # bands the rig stopped answering in
+        self._headroom_level = None
         self._traces = {}           # name -> [(x, y, value)] as drawn
         self._under = None          # the line under the pointer
         self._under_v = None
@@ -183,7 +185,8 @@ class PeqView(Gtk.Box):
         engage the floor at all wants to see what it would be
         engaging against, so the band shows with the floor off
         and with the floor never set."""
-        self.protect_strip.set_visible(self._protect is not None)
+        self.protect_strip.set_visible(
+            self._protect is not None or self._headroom is not None)
         self.protect_strip.queue_draw()
 
     def set_protection(self, lo, visible, on_change=None):
@@ -217,8 +220,48 @@ class PeqView(Gtk.Box):
                       + t * (math.log10(FMAX) - math.log10(FMIN)))
 
 
+    # WHERE THE RIG STOPS ANSWERING, drawn in the top half of the
+    # strip the floor handle already lives on. His arrangement: the
+    # handle divides the track, the upper part belongs to the device
+    # and the lower will belong to the material once there is
+    # something live to show.
+    #
+    # CUBES, NOT A WASH. The map is a handful of measured levels and
+    # nothing is known between them; a smooth fill would be inventing
+    # the gaps. Each cube is a third of an octave -- the width the
+    # reading is taken over, and a constant width on a log axis, so
+    # they come out as actual squares without any arithmetic.
+    #
+    # The shade is HOW SHORT the band came, from nothing at zero to
+    # full at the whole step: neither end is chosen, since we picked
+    # the step and the rig either delivered it or did not.
+    _CUBE_PX = 10
+    _CUBE_GAP = 1
+
+    def set_headroom(self, cubes=None, level=None):
+        """Bands where the rig stopped answering, as
+        (f_lo, f_hi, deficit_db, step_db, level) tuples."""
+        self._headroom = list(cubes) if cubes else None
+        self._headroom_level = level
+        self._sync_strip()
+
+    def _draw_headroom(self, cr, ml, pw_):
+        if not self._headroom:
+            return
+        for lo, hi, deficit, step, _lvl in self._headroom:
+            x0 = self._px_of(lo, ml, pw_)
+            x1 = self._px_of(hi, ml, pw_)
+            if x1 - x0 < 2.0:
+                x1 = x0 + 2.0
+            t = 0.0 if not step else max(0.0, min(1.0, deficit / step))
+            cr.set_source_rgba(0.85, 0.45, 0.1, 0.15 + 0.55 * t)
+            cr.rectangle(x0, 0, max(1.0, x1 - x0 - self._CUBE_GAP),
+                         self._CUBE_PX)
+            cr.fill()
+
     def _draw_protect(self, _a, cr, w, h, *_):
         ml, pw_ = self._strip_geo()
+        self._draw_headroom(cr, ml, pw_)
         if not self._protect:
             return
         lo = self._protect

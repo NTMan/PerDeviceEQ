@@ -632,3 +632,28 @@ def test_a_harmonic_above_the_response_still_fits():
     lo, hi = cv.window_db(curves)
     assert hi - lo <= cv.MAX_SPAN_DB + 2 * cv.GRID_STEPS[-1]
     assert lo < -1.0 < hi
+
+
+# --- the headroom cubes ---------------------------------------------
+
+def _shade(deficit, step, floor=0.15, span=0.55):
+    """The law peq_view paints a cube with, in the open so a court can
+    read it without GTK: nothing at zero, full at the whole step."""
+    t = 0.0 if not step else max(0.0, min(1.0, deficit / step))
+    return floor + span * t
+
+
+def test_a_cube_darkens_with_how_short_the_rung_came():
+    """A band that took half the step is not as bad as one that took
+    none, and his words for the difference were "here are distortions"
+    against "here are already a lot of distortions"."""
+    assert _shade(0.0, 2.0) < _shade(1.0, 2.0) < _shade(2.0, 2.0)
+    assert abs(_shade(2.0, 2.0) - 0.70) < 1e-9
+
+
+def test_a_response_that_falls_does_not_overflow_the_shade():
+    """Near hard limiting a rig can come back QUIETER than the rung
+    below, which makes the shortfall exceed the step it was measured
+    against -- his iLoud reads 3.8 dB short of a 2 dB step at 1 kHz on
+    the loudest rung. The quantity stays honest; the ink stops."""
+    assert _shade(3.8, 2.0) == _shade(2.0, 2.0)

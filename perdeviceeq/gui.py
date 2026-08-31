@@ -37,8 +37,10 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
-from . import (__version__, chantabs, config, debug, eq, pw_backend,
-               integration)
+from . import (__version__, chantabs, config, debug, eq, level_run,
+               pw_backend, integration)
+
+import numpy as np
 from .picker import NodeMenu
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
                      load_ui_state, save_ui_state,
@@ -392,6 +394,7 @@ class EqWindow(Adw.ApplicationWindow):
         button, because this runs when the canvas is REBUILT.
         The button syncs at the top of a profile load, when
         self._canvas still holds the profile being left."""
+        self.view.set_headroom(*self._headroom_cubes())
         ov = self._overlay_curve()
         if ov is None:
             self.view.set_curves(None, None)
@@ -458,6 +461,71 @@ class EqWindow(Adw.ApplicationWindow):
         self._ensure_audible()
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
         self._on_edit()
+
+    def _headroom_cubes(self):
+        """Thirds of an octave where this rig stopped answering, from
+        the map its level search left in the profile.
+
+        ONE CUBE PER BAND, carrying the EARLIEST rung that fell short
+        there: a band that gives out at 48% of the knob is worse than
+        one that holds to 86%, and the earliest is what a listener
+        meets first. The deficit comes from that same rung, so shade
+        and level describe one measurement rather than two.
+        """
+        p = self.store.get(self.current_pid) or {}
+        m = (p.get("measurement") or {})
+        grid = m.get("grid") or {}
+        sess = m.get("sessions") or {}
+        maps = []
+        for blk in sess.values():
+            hr = (blk or {}).get("headroom") or {}
+            for rungs in hr.values():
+                if rungs:
+                    maps.append(rungs)
+        if not maps or not grid:
+            return (None, None)
+        lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
+        n = max(len(r["mag_db"]) for rungs in maps for r in rungs)
+        freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
+        worst = {}
+        for rungs in maps:
+            rungs = sorted(rungs, key=lambda r: r["level"])
+            for i in range(1, len(rungs)):
+                a, b = rungs[i - 1], rungs[i]
+                asked = 60.0 * math.log10(b["level"] / a["level"])
+                if asked < level_run.MIN_READABLE_STEP:
+                    continue
+                off = b.get("heard_offset_db")
+                if off is None:
+                    continue
+                pm = np.array([np.nan if x is None else float(x)
+                               for x in a["mag_db"]], float)
+                cm = np.array([np.nan if x is None else float(x)
+                               for x in b["mag_db"]], float)
+                with np.errstate(all="ignore"):
+                    deficit = level_run.shortfall_db(
+                        pm, cm, cm - off, asked, freqs, ppo)
+                    short, _ = level_run.shortfall(
+                        pm, cm, cm - off, asked, freqs, ppo)
+                if not short.any():
+                    continue
+                # gather into thirds of an octave
+                w = max(1, int(round(ppo / 3.0)))
+                for k in range(0, len(freqs), w):
+                    sel = short[k:k + w]
+                    if not sel.any():
+                        continue
+                    band = (float(freqs[k]),
+                            float(freqs[min(k + w, len(freqs)) - 1]))
+                    d = float(np.nanmax(deficit[k:k + w][sel]))
+                    prev = worst.get(k)
+                    if prev is None or b["level"] < prev[4]:
+                        worst[k] = (band[0], band[1], d, asked,
+                                    b["level"])
+        if not worst:
+            return (None, None)
+        cubes = [worst[k] for k in sorted(worst)]
+        return cubes, min(c[4] for c in cubes)
 
     def _overlay_curve(self):
         """(freqs, measured, spread, trust_band) for the slot on
