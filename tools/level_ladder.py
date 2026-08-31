@@ -85,6 +85,17 @@ STOP_PEAK_DBFS = -6.0
 TRACK_MIN = 0.5
 TRACK_AFTER = 5         # rungs to collect; the fit uses the last four
 
+# HOW SMALL A STEP CAN STILL BE READ. The answer to "did the rig give
+# what we asked" is the difference of two sweeps, and two sweeps of
+# the same rig at the same level do not agree perfectly. Measured on
+# three of his rigs in the region where they answer honestly: asked
+# 2.0 dB, the per-frequency answer ran 1.8 to 2.2 on the subwoofer,
+# 2.0 to 2.0 on the Adams, and asked 3.0 it ran 3.0 to 3.1 on a
+# Tanchjim in the coupler. Two tenths of a decibel of scatter, so a
+# 2 dB step is read with room to spare and a 1 dB step is not. The
+# search stops halving here and reports the ceiling as a bracket.
+MIN_READABLE_STEP = 2.0
+
 
 def find(entries, needle):
     n = needle.lower()
@@ -158,8 +169,19 @@ def main():
     ap.add_argument("--start", type=float, default=0.15,
                     help="cubic volume of the FIRST rung (default 0.15,"
                          " the search's own start)")
-    ap.add_argument("--step-db", type=float, default=1.0)
-    ap.add_argument("--rungs", type=int, default=8)
+    ap.add_argument("--step-db", type=float, default=4.0,
+                    help="how much louder to ask for while the rig "
+                         "still answers (default 4.0). The step HALVES "
+                         "each time a rung comes back short, so the "
+                         "walk closes on the ceiling instead of "
+                         "marching past it")
+    ap.add_argument("--rungs", type=int, default=10,
+                    help="most rungs to play (default 10); the walk "
+                         "usually stops sooner, at the ceiling or a "
+                         "brake")
+    ap.add_argument("--even", action="store_true",
+                    help="keep the step fixed: a plain ladder of equal "
+                         "rungs rather than a search")
     ap.add_argument("--keep", metavar="DIR",
                     help="write every rung's capture here, so the walk "
                          "can be re-read later with a question it was "
@@ -208,9 +230,11 @@ def main():
 
     print("output : %s" % sink["name"])
     print("mic    : %s  column %d of %d" % (src["name"], column, width))
-    print("ladder : %d rungs of %.1f dB from %.0f%%, stopping at a "
-          "peak above %.1f dBFS\n"
-          % (a.rungs, a.step_db, 100 * a.start, a.stop_peak))
+    print("ladder : %s from %.0f%%, stopping at a peak above %.1f dBFS"
+          % ("%d even rungs of %.1f dB" % (a.rungs, a.step_db) if a.even
+             else "a search, up to %d rungs, %.1f dB at a time and "
+                  "halving" % (a.rungs, a.step_db),
+             100 * a.start, a.stop_peak))
     print("SWEEPS WILL PLAY. Bring the card's own output level down "
           "first.\n")
     head = "THD@%s" % (("%gk" % (a.at / 1000.0)) if a.at >= 1000.0
@@ -220,6 +244,7 @@ def main():
              "margin", "verdict"))
 
     rows, resps, curves = [], [], []
+    step = a.step_db
     v = level_run._clamp(a.start)
     try:
         for i in range(1, a.rungs + 1):
@@ -277,7 +302,27 @@ def main():
                 print("\n  past the ladder's own ceiling (%.1f dBFS) "
                       "-- stopping" % a.stop_peak)
                 break
-            v = level_run._clamp(v * 10.0 ** (a.step_db / 60.0))
+            # THE STEP IS A SEARCH, not a march. While the rig
+            # answers, ask boldly; the moment a rung comes back short
+            # somewhere, halve and close in. Below MIN_READABLE_STEP
+            # the answer is scatter rather than the rig, so the walk
+            # stops there with the ceiling bracketed to that width.
+            if not a.even and len(curves) >= 2:
+                asked = 60.0 * math.log10(curves[-1][0] / curves[-2][0])
+                short, _ = _short_of(curves[-2][1], curves[-1][1],
+                                     freqs, asked, mc.GRID_PPO,
+                                     heard=curves[-1][2])
+                if short.any():
+                    step = step / 2.0
+                    if step < MIN_READABLE_STEP:
+                        print("\n  the ceiling is between %.0f%% and "
+                              "%.0f%% -- closer than a sweep can tell"
+                              % (100 * curves[-2][0], 100 * curves[-1][0]))
+                        break
+                    print("  ...short somewhere; halving the step to "
+                          "%.1f dB" % step)
+                    v = curves[-2][0]
+            v = level_run._clamp(v * 10.0 ** (step / 60.0))
     except KeyboardInterrupt:
         print("\nstopped.")
     except (RuntimeError, ValueError) as exc:
@@ -358,11 +403,20 @@ ANSWER_SHORT = 0.5          # of the asked step; below this it is scatter
 HEARD_OVER_NOISE_DB = 10.0
 
 
-def _short_of(prev, cur, freqs, step_db, ppo, heard=None,
-              top_hz=500.0):
+def _short_of(prev, cur, freqs, step_db, ppo, heard=None):
     """Frequencies where a rung bought less than half of what was
     asked, read over a third of an octave -- and only where the rung
-    was heard over the take's own noise."""
+    was heard over the take's own noise.
+
+    THE WHOLE BAND IS ASKED, which took his correction. The first cut
+    of this looked below 500 Hz only, on my assumption that running
+    out of headroom is a bass affair. It is not: his iLoud Micro
+    Monitor, at 86% of the knob, stops answering from 854 to 1271 Hz
+    and again from 1624 to 2248 -- the voice, not the port -- and the
+    limit I had put in would have hidden every bit of it. He knew it
+    was there because the speaker's own lamp turns red on overload,
+    and it does so on the high part of the sweep before the low.
+    """
     got = cur - prev
     w = max(3, int(round(ppo / 3.0)))
     sm = np.full(len(got), np.nan)
@@ -371,8 +425,7 @@ def _short_of(prev, cur, freqs, step_db, ppo, heard=None,
         seg = seg[np.isfinite(seg)]
         if seg.size >= max(2, w // 3):
             sm[k] = float(np.median(seg))
-    f = np.asarray(freqs, float)
-    ok = np.isfinite(sm) & (f <= top_hz)
+    ok = np.isfinite(sm)
     if heard is not None:
         ok = ok & (np.asarray(heard, float) > HEARD_OVER_NOISE_DB)
     return ok & (sm < ANSWER_SHORT * step_db), ok
