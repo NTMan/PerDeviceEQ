@@ -4319,6 +4319,31 @@ class MeasureWindow(Adw.Window):
             play_map=self.session._channel_map(ch),
             on_probe=said, on_level=about_to,
             should_stop=lambda: self._stop_asked)
+
+        # THE EPILOGUE. The search stops as soon as it can name a safe
+        # level; the map has to go UP until something gives, and the
+        # two want opposite things. But the tedious half -- the quiet
+        # rungs, the approach -- is already behind us, so this costs
+        # three or four sweeps rather than a walk of its own.
+        if not self._stop_asked:
+            try:
+                rungs = level_run.headroom_map(
+                    self.session.sink, self.session.source,
+                    self.session.cfg.channels,
+                    vol, sink_name=self.session.sink_ident["name"],
+                    analyze=self.mic_of[ch],
+                    sweep=self.session.sweep, freqs=self.session.freqs,
+                    pre_silence=self.session.cfg.pre_silence,
+                    post_silence=self.session.cfg.post_silence,
+                    play_map=self.session._channel_map(ch),
+                    on_level=lambda v, i: about_to(v, i),
+                    should_stop=lambda: self._stop_asked)
+            except (RuntimeError, ValueError, OSError):
+                # a profile without a map is a profile that cannot say
+                # where the rig runs out; nothing else about it changes
+                rungs = None
+            if rungs:
+                self.session.set_headroom(self.ch_keys[ch], rungs)
         return vol, level_run.summary(vol, probes)
 
     def _measure_worker(self, ch):

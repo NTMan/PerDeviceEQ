@@ -688,3 +688,31 @@ def test_a_session_with_no_search_says_nothing_about_one():
         eq_state = None
         path_clean = None
     assert measure_build._session_block(S())["auto_level"] is None
+
+
+def test_the_session_carries_the_headroom_map():
+    """The search's epilogue reaches the profile, as auto_level does,
+    and says nothing when it was not run. The rungs keep their
+    response whole rather than a verdict: three different reading
+    rules were tried on one evening's data, and a stored verdict
+    would have thrown the measurements away with each."""
+    class S:
+        sink_ident = {"name": "n", "description": "d", "device_api": "a"}
+        sweep = type("W", (), {"n_samples": 131072, "fs": 48000,
+                               "f_start": 20.0, "f_end": 20000.0,
+                               "level_dbfs": -6.0, "duration_s": 2.73})()
+        started_utc = None
+        eq_state = None
+        path_clean = None
+        _level_found = None
+        _headroom = {"FL": [{"level": 0.41, "peak_dbfs": -18.0,
+                             "spl_db": None, "heard_offset_db": -40.0,
+                             "mag_db": [-10.0, -11.0]}]}
+    blk = measure_build._session_block(S())
+    assert blk["headroom"]["FL"][0]["level"] == 0.41
+    assert blk["headroom"]["FL"][0]["spl_db"] is None
+    assert len(blk["headroom"]["FL"][0]["mag_db"]) == 2
+
+    class Bare(S):
+        _headroom = {}
+    assert measure_build._session_block(Bare())["headroom"] is None

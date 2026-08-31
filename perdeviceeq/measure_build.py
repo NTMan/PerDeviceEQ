@@ -397,6 +397,15 @@ def _session_block(session):
         # written is silent about how its level was chosen.
         "auto_level": (dict(getattr(session, "_level_found", None)
                             or {}) or None),
+        # WHERE THIS RIG STOPS ANSWERING, per channel: the search's
+        # epilogue, or None when it was not run. Rungs keep their
+        # response whole rather than a verdict, so a later reading
+        # rule can be applied to an old profile without playing a
+        # note -- three different rules were tried on this data in
+        # one evening, and each discard would otherwise have thrown
+        # the measurements away with it.
+        "headroom": (dict(getattr(session, "_headroom", None)
+                          or {}) or None),
     }
 
 

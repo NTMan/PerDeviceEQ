@@ -442,6 +442,7 @@ class MeasureSession:
         # birth; after that set_level() is the only writer.
         self._v_cur = cfg.start_volume
         self._level_found = None            # a search's own words, if any
+        self._headroom = {}                 # ch key -> the map's rungs
         self._take_seq = 0                  # take%02d numbers, never reused
         self._takes = {}                    # channel -> [(record, samples)]
 
@@ -557,6 +558,16 @@ class MeasureSession:
         self._v_cur = max(0.0, min(1.0, float(cubic)))
         if found is not None:
             self._level_found = dict(found)
+
+    def set_headroom(self, ch_key, rungs):
+        """The search's epilogue for one channel, carried verbatim.
+
+        As with the search's own words above, the session does not
+        read this: interpreting a map here would put the walk back
+        inside the session through the schema.
+        """
+        if rungs:
+            self._headroom[str(ch_key)] = list(rungs)
 
     def _meas_volume_arg(self):
         """The measurement volume for this sweep, or None when the

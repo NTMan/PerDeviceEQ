@@ -273,6 +273,137 @@ class AutoLevel:
         return v * 10.0 ** (db / 60.0) if db > 0.0 else v
 
 
+MAP_STEP_DB = 4.0           # bold while the rig answers, halved on a
+#                             shortfall; the ceiling is then bracketed
+MAP_MAX_RUNGS = 6
+
+
+def headroom_map(sink, source, channels, start_volume, sink_name=None,
+                 analyze=0, sweep=None, freqs=None,
+                 pre_silence=None, post_silence=None, play_map=None,
+                 on_level=None, should_stop=None,
+                 stop_peak_dbfs=AUTO_PEAK_CEIL, step_db=MAP_STEP_DB,
+                 max_rungs=MAP_MAX_RUNGS):
+    """Climb from the level the search settled at, keeping what each
+    rung bought -- the map of where this rig stops answering.
+
+    WHY IT IS AN EPILOGUE AND NOT THE SEARCH. The two want opposite
+    things: the search must stop as soon as it can name a safe level,
+    while the map has to go UP until something gives or the capture
+    runs out. But the tedious half is already done by the time the
+    search settles -- the quiet rungs, the approach -- so the map
+    costs three or four sweeps rather than ten.
+
+    IT IS ALSO OPTIONAL. A profile without one is a profile that
+    cannot say where the rig runs out; nothing else about it changes.
+
+    Returns a list of rungs, quietest first, each carrying the level,
+    the capture peak, the response, and the offset that turns the
+    response into a margin over that take's own noise. The reading
+    rule is deliberately NOT baked in: the curves are kept whole so a
+    later rule can be applied to old profiles without playing a note.
+    Three different rules were tried on this data in one evening.
+
+    `spl_db` is reserved and always None. It needs one calibration
+    against a sound level meter held AT THE MICROPHONE, and until
+    that exists a ceiling can only be named in the units of the knob
+    that produced it.
+    """
+    sweep = sweep or mc.default_sweep()
+    freqs = mc.log_grid() if freqs is None else freqs
+    pre = mc.DEFAULT_PRE_SILENCE if pre_silence is None else pre_silence
+    post = (mc.DEFAULT_POST_SILENCE if post_silence is None
+            else post_silence)
+    name = sink_name or (sink.get("name") if isinstance(sink, dict)
+                         else sink)
+    if not name:
+        raise ValueError("the moratorium needs the sink's node name")
+    outdir = tempfile.mkdtemp(prefix="pdeq-map-")
+    wav = write_sweep_files(outdir, sweep, pre, post)
+    duration = pre + sweep.duration_s + post
+    back = pw_backend.backend()
+    ppo = getattr(mc, "GRID_PPO", 96)
+
+    rungs = []
+    v = _clamp(start_volume)
+    step = float(step_db)
+    lo = hi = None
+    try:
+        for i in range(int(max_rungs)):
+            if should_stop is not None and should_stop():
+                break
+            if on_level is not None:
+                on_level(v, i + 1)
+            chan, peak_db, clipped, got = _play_rung(
+                back, name, sink, source, wav, duration, channels,
+                sweep, freqs, analyze, v, play_map)
+            mag = np.asarray(got.mag_db, float)
+            # the response is relative and the noise absolute, so one
+            # offset turns the whole curve into a margin over this
+            # take's own floor -- a number rather than a second curve
+            off = (float(got.noise_dbfs) - float(got.signal_dbfs)
+                   if got.noise_dbfs is not None
+                   and got.signal_dbfs is not None else None)
+            rungs.append({"level": round(float(v), 4),
+                          "peak_dbfs": round(peak_db, 2),
+                          "spl_db": None,
+                          "heard_offset_db": (None if off is None
+                                              else round(off, 2)),
+                          "mag_db": [None if not math.isfinite(x)
+                                     else round(float(x), 2)
+                                     for x in mag]})
+            if clipped:
+                break
+            # read against the loudest rung QUIETER than this one:
+            # halving steps BACK, so the rung played last is not
+            # always the loudest played
+            below = None
+            for r in rungs[:-1]:
+                if r["level"] < v and (below is None
+                                       or r["level"] > below["level"]):
+                    below = r
+            if below is not None:
+                asked = 60.0 * math.log10(v / below["level"])
+                if asked >= MIN_READABLE_STEP and off is not None:
+                    prev = np.array([np.nan if x is None else x
+                                     for x in below["mag_db"]], float)
+                    short, _ = shortfall(prev, mag, mag - off, asked,
+                                         freqs, ppo)
+                    if short.any():
+                        hi = v if hi is None else min(hi, v)
+                    else:
+                        lo = v if lo is None else max(lo, v)
+            if lo and hi:
+                span = 60.0 * math.log10(hi / lo)
+                # splitting must leave a readable step in each half
+                if span < 2.0 * MIN_READABLE_STEP:
+                    break
+                step = span / 2.0
+                v = lo
+            # the peak follows the level one for one, so the walk
+            # knows before it plays where a step would land
+            from_peak = peak_db
+            for r in rungs:
+                if abs(r["level"] - v) < 1e-9:
+                    from_peak = r["peak_dbfs"]
+            take = min(step, stop_peak_dbfs - from_peak)
+            if take < MIN_READABLE_STEP:
+                break
+            v = _clamp(v * 10.0 ** (take / 60.0))
+    finally:
+        for fn in os.listdir(outdir):
+            try:
+                os.unlink(os.path.join(outdir, fn))
+            except OSError:
+                pass
+        try:
+            os.rmdir(outdir)
+        except OSError:
+            pass
+    rungs.sort(key=lambda r: r["level"])
+    return rungs
+
+
 def summary(volume, probes):
     """What the search did, for the passport.
 
@@ -290,6 +421,71 @@ def summary(volume, probes):
                 for p in ok)}
 
 
+# WHAT A RUNG BOUGHT, and the rule for reading it. It lives here
+# rather than in the tool that first used it, because the map it
+# builds now lands in a profile: one implementation, so a walk and a
+# take cannot come to different conclusions about the same rig.
+#
+# Ask for four decibels more and a rig with headroom gives four; one
+# that has run out gives nothing, and every further turn of the knob
+# buys distortion alone. Nothing here is a threshold anyone chose:
+# the step is what WE asked for, the answer is what the deconvolution
+# recovered, and short of half the step is short by any reading.
+ANSWER_SHORT = 0.5          # of the asked step; below this it is scatter
+HEARD_OVER_NOISE_DB = 10.0  # a rung speaks only where it was heard
+MIN_READABLE_STEP = 2.0     # measured: the scatter between sweeps is
+#                             two tenths of a decibel, so a 2 dB step
+#                             is read with room and a 1 dB step is not
+
+
+def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
+    """Where a rung bought less than half of what was asked.
+
+    A rig runs out over a REGION, not at one frequency, so the answer
+    is the median of a third of an octave -- one bin below the line is
+    the spread between sweeps. And the question is only worth asking
+    where the rung was HEARD: a response has to stand clear of that
+    take's own noise, or the difference of two rungs is the difference
+    of two noises. His Adam D3V makes no sound at 25 Hz, and without
+    that gate the reading there claimed headroom where there is no
+    sound at all.
+    """
+    prev = np.asarray(prev_mag, float)
+    cur = np.asarray(cur_mag, float)
+    got = cur - prev
+    w = max(3, int(round(ppo / 3.0)))
+    sm = np.full(len(got), np.nan)
+    for k in range(len(got)):
+        seg = got[max(0, k - w // 2):k + w // 2 + 1]
+        seg = seg[np.isfinite(seg)]
+        if seg.size >= max(2, w // 3):
+            sm[k] = float(np.median(seg))
+    ok = np.isfinite(sm) & (np.asarray(heard, float) > HEARD_OVER_NOISE_DB)
+    return ok & (sm < ANSWER_SHORT * asked_db), ok
+
+
+def spans(mask, freqs):
+    """Contiguous frequency spans of a boolean mask, as [lo, hi] pairs.
+
+    LISTED rather than summarised as "below N Hz": a rig can run out
+    in the bass and again in the middle -- his iLoud does both, the
+    port near 60 Hz and the amplifier above 850 at full level -- and
+    one bound would swallow everything between.
+    """
+    f = np.asarray(freqs, float)
+    out, start = [], None
+    for k, on in enumerate(mask):
+        if on and start is None:
+            start = k
+        elif not on and start is not None:
+            out.append([round(float(f[start]), 1),
+                        round(float(f[k - 1]), 1)])
+            start = None
+    if start is not None:
+        out.append([round(float(f[start]), 1), round(float(f[-1]), 1)])
+    return out
+
+
 class Probe:
     """One rung: what a sweep at one level said."""
 
@@ -299,6 +495,27 @@ class Probe:
     def __init__(self, **kw):
         for k in self.__slots__:
             setattr(self, k, kw.get(k))
+
+
+def _play_rung(back, name, sink, source, wav, duration, channels,
+               sweep, freqs, analyze, v, play_map):
+    """One sweep at volume `v`: claim, play, release, analyse.
+
+    Shared by the search and the headroom map so a rung means the
+    same thing in both.
+    """
+    back.moratorium_begin(name, v, mute_others=True)
+    try:
+        data, _info = run_take(sink, source, wav, duration, channels,
+                               sweep.fs, verify=False,
+                               channel_map=play_map)
+    finally:
+        back.moratorium_end()
+    chan = np.asarray(data)[:, min(analyze, data.shape[1] - 1)]
+    peak = float(np.max(np.abs(chan))) if chan.size else 0.0
+    peak_db = 20.0 * math.log10(peak) if peak > 0 else -120.0
+    return chan, peak_db, peak >= 0.999, mc.analyze_take(chan, sweep,
+                                                         freqs)
 
 
 def hunt(sink, source, channels, sink_name=None, analyze=0,
@@ -353,19 +570,9 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
             # THE NAME, NOT THE OBJECT: run_take wants the resolved
             # node and the moratorium wants the node's name, and the
             # two are not the same thing in this codebase
-            back.moratorium_begin(name, v, mute_others=True)
-            try:
-                data, _info = run_take(sink, source, wav, duration,
-                                       channels, sweep.fs, verify=False,
-                                       channel_map=play_map)
-            finally:
-                back.moratorium_end()
-
-            chan = np.asarray(data)[:, min(analyze, data.shape[1] - 1)]
-            peak = float(np.max(np.abs(chan))) if chan.size else 0.0
-            peak_db = (20.0 * math.log10(peak) if peak > 0 else -120.0)
-            clipped = peak >= 0.999
-            got = mc.analyze_take(chan, sweep, freqs)
+            chan, peak_db, clipped, got = _play_rung(
+                back, name, sink, source, wav, duration, channels,
+                sweep, freqs, analyze, v, play_map)
             pct = bound = margin = None
             if not clipped:
                 at = mb.thd_at(freqs, got.thd_db, got.thd_noise_db)
