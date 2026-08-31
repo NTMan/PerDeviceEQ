@@ -492,7 +492,9 @@ class EqWindow(Adw.ApplicationWindow):
             rungs = sorted(rungs, key=lambda r: r["level"])
             for i in range(1, len(rungs)):
                 a, b = rungs[i - 1], rungs[i]
-                asked = 60.0 * math.log10(b["level"] / a["level"])
+                asked = level_run.asked_db(
+                    (a["level"], a.get("peak_dbfs")),
+                    (b["level"], b.get("peak_dbfs")))
                 if asked < level_run.MIN_READABLE_STEP:
                     continue
                 off = b.get("heard_offset_db")

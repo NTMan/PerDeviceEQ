@@ -363,7 +363,8 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                                        or r["level"] > below["level"]):
                     below = r
             if below is not None:
-                asked = 60.0 * math.log10(v / below["level"])
+                asked = asked_db((below["level"], below["peak_dbfs"]),
+                                 (v, peak_db))
                 if asked >= MIN_READABLE_STEP and off is not None:
                     prev = np.array([np.nan if x is None else x
                                      for x in below["mag_db"]], float)
@@ -436,6 +437,32 @@ HEARD_OVER_NOISE_DB = 10.0  # a rung speaks only where it was heard
 MIN_READABLE_STEP = 2.0     # measured: the scatter between sweeps is
 #                             two tenths of a decibel, so a 2 dB step
 #                             is read with room and a 1 dB step is not
+
+
+def asked_db(prev, cur):
+    """How much louder a rung ACTUALLY got, in decibels.
+
+    The knob's own ratio is only an intention. Over Bluetooth it is
+    not even that: his JBL Tour Pro 3 answers AVRCP's 128-step scale,
+    and a rung the walk asked 4.0 dB of arrived 8.0 and 11.0 dB
+    louder. Everything downstream compares what came back against
+    what was asked, so a fictitious ask makes a fictitious verdict --
+    where twice the step arrived and one step was taken, the band is
+    a step short and the walk called it "answered in full".
+
+    The capture peak follows the level one for one on every wired rig
+    in this project, which is what makes it the honest witness: it
+    reports what the rig was actually given, whoever set the volume
+    and by whatever scale. Fall back to the knob only when a peak is
+    missing.
+
+    `prev` and `cur` are (level, peak_dbfs) pairs.
+    """
+    lv0, pk0 = prev
+    lv1, pk1 = cur
+    if pk0 is not None and pk1 is not None:
+        return float(pk1) - float(pk0)
+    return 60.0 * math.log10(float(lv1) / float(lv0))
 
 
 def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo):

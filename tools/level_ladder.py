@@ -325,7 +325,8 @@ def main():
             if not a.even and len(curves) >= 2:
                 below = _below(curves, len(curves) - 1)
                 asked = (None if below is None else
-                         60.0 * math.log10(curves[-1][0] / below[0]))
+                         level_run.asked_db((below[0], below[3]),
+                                            (curves[-1][0], peak)))
                 short = None
                 if asked is not None and asked >= MIN_READABLE_STEP:
                     short, _ = _short_of(below[1], curves[-1][1],
@@ -556,15 +557,16 @@ def report_headroom(curves, freqs, step_db, ppo=None):
     for i in range(1, len(curves)):
         b = _below(curves, i)
         step = (None if b is None else
-                60.0 * math.log10(curves[i][0] / b[0]))
+                level_run.asked_db((b[0], b[3]),
+                                   (curves[i][0], curves[i][3])))
         pairs.append(None if step is None or step < MIN_READABLE_STEP
                      else _short_of(b[1], curves[i][1], freqs, step,
                                     ppo, heard=curves[i][2]))
     short = [None] + [None if p is None else p[0] for p in pairs[1:]]
     asked = [None] + [None if p is None else p[1] for p in pairs[1:]]
-    print("\n  WHAT EACH RUNG BOUGHT, per frequency: asked %.1f dB"
-          % step_db)
-    print("  %-8s %-10s %s" % ("rung", "level", "did not answer"))
+    print("\n  WHAT EACH RUNG BOUGHT, per frequency")
+    print("  %-8s %-8s %-8s %s"
+          % ("rung", "level", "arrived", "did not answer"))
     for i in range(1, len(curves)):
         if short[i] is None:
             print("  %-8d %-10s %s"
@@ -591,8 +593,13 @@ def report_headroom(curves, freqs, step_db, ppo=None):
             said = ", ".join("%.0f-%.0f Hz" % t for t in spans)
         else:
             said = "-- answered in full, down to %.0f Hz" % lo
-        print("  %-8d %-10s %s"
-              % (i + 1, "%.0f%%" % (100 * curves[i][0]), said))
+        b = _below(curves, i)
+        step = (0.0 if b is None else
+                level_run.asked_db((b[0], b[3]),
+                                   (curves[i][0], curves[i][3])))
+        print("  %-8d %-8s %-8s %s"
+              % (i + 1, "%.0f%%" % (100 * curves[i][0]),
+                 "%+.1f dB" % step, said))
     print("\n  a rig with headroom answers the whole step; one that has"
           "\n  run out answers nothing, and the knob then buys only "
           "distortion.")

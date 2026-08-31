@@ -420,3 +420,26 @@ def test_the_shortfall_is_also_a_quantity():
     out = level_run.shortfall_db(prev, prev, quiet, 4.0,
                                  freqs, mc.GRID_PPO)
     assert not np.isfinite(out).any()
+
+
+def test_the_step_is_what_arrived_not_what_the_knob_promised():
+    """The knob's ratio is an intention. Over Bluetooth it is not even
+    that: his JBL Tour Pro 3 answers AVRCP's own 128-step scale, and
+    rungs the walk asked 4.0 dB of arrived 8.0 and 14.1 dB louder.
+
+    Everything downstream compares what came back against what was
+    asked, so a fictitious ask makes a fictitious verdict: where twice
+    the step arrived and one step was taken, the band is a step short
+    and the walk called it answered in full. The capture peak follows
+    the level one for one on every wired rig here, which is what makes
+    it the honest witness -- it reports what the rig was given,
+    whoever set the volume and by whatever scale."""
+    # the knob says 4 dB and the peak agrees: a wired rig
+    assert abs(level_run.asked_db((0.40, -20.0), (0.50, -16.1))
+               - 3.9) < 1e-9
+    # the knob says 4 dB and twice that arrived: his Bluetooth JBL
+    assert abs(level_run.asked_db((0.59, -22.4), (0.69, -14.4))
+               - 8.0) < 1e-9
+    # no peak to ask, so the knob is all there is
+    got = level_run.asked_db((0.40, None), (0.50, None))
+    assert abs(got - 60.0 * math.log10(0.5 / 0.4)) < 1e-9
