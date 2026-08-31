@@ -139,7 +139,13 @@ def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
                               f0=at_hz)
     snr = (float(got.snr_db) if got.snr_db is not None
            and math.isfinite(float(got.snr_db)) else None)
-    return peak_db, resp, snr, clipped, at, margin
+    # the response against the take's OWN noise, per frequency: a
+    # question about a rung is only worth asking where the rung was
+    # heard at all
+    over = (np.asarray(got.mag_db, float)
+            - (float(got.noise_dbfs) - float(got.signal_dbfs)))
+    return (peak_db, resp, snr, clipped, at, margin,
+            np.asarray(got.mag_db, float), over)
 
 
 def main():
@@ -213,7 +219,7 @@ def main():
           % ("rung", "level", "peak", "response", "SNR", head,
              "margin", "verdict"))
 
-    rows, resps = [], []
+    rows, resps, curves = [], [], []
     v = level_run._clamp(a.start)
     try:
         for i in range(1, a.rungs + 1):
@@ -221,7 +227,7 @@ def main():
             # still be refused, not once it has been in someone's ears.
             print("  %-7d %-8.0f%% about to sweep..." % (i, 100 * v),
                   end="\r", flush=True)
-            peak, resp, snr, clipped, at, margin = rung(
+            peak, resp, snr, clipped, at, margin, curve, over = rung(
                 sink, source, sink["name"], wav, duration, width,
                 sweep.fs, sweep, freqs, column, v, a.at,
                 keep=a.keep, index=i)
@@ -238,6 +244,7 @@ def main():
                      said))
             if resp is not None:
                 resps.append(resp)
+            curves.append((v, curve, over))
             if at is not None and margin is not None and not at[1]:
                 rows.append((peak, 20.0 * math.log10(at[0] / 100.0)))
 
@@ -287,8 +294,147 @@ def main():
               "per dB of level" % (len(rows), k))
     else:
         print("\n  too few measured rungs to fit a slope")
+
+    report_headroom(curves, freqs, a.step_db)
     print("  the level is where the ladder stopped")
     return 0
+
+
+# WHAT A RUNG BOUGHT, which is his question and the plainest one this
+# tool can answer. Ask for two decibels more and a rig with headroom
+# gives two decibels more; one that has run out gives nothing, and
+# every further turn of the knob buys distortion alone.
+#
+# It needs no threshold from anybody. The step is what WE asked for,
+# the answer is what the deconvolution recovered, and short of half
+# the step is short by any reading.
+#
+# TWO THINGS KEEP SCATTER OUT, and both are physics rather than a
+# number. A rig runs out over a REGION, so the answer is read as the
+# median of a third of an octave -- one bin below the line is the
+# spread between sweeps. And headroom never comes BACK: if a rig
+# stopped answering at 30 Hz on one rung it cannot answer there on a
+# louder one, so a shortfall counts only when the next rung is short
+# in the same place. His subwoofer's second rung otherwise reported
+# 473-497 Hz from a single quiet sweep, and the third answered 1.7 dB
+# there.
+#
+# THE REGIONS ARE LISTED, not summarised as "below N Hz". A rig can
+# run out in the bass and again somewhere in the middle, and one
+# bound would silently swallow everything between them.
+#
+# HIS SUBWOOFER, ten rungs of 2 dB from 25%, is why this exists:
+#
+#     40%   did not answer 20-30 Hz
+#     43%   20-34 Hz
+#     46%   20-39 Hz
+#     50%   20-41 Hz
+#
+# Above 50 Hz it answered the full step on every rung to the end.
+# That is exactly what he had heard -- "past half the knob it does
+# not get louder" -- and it says WHERE, which no single tone could.
+#
+# HIS ADAM D3V IS THE OPPOSITE and is why the noise gate above had to
+# be added: it answers in full on all ten rungs, while the frequency
+# it can be heard down to walks DOWNWARD with the level -- 60, 55,
+# 50, 46, 43, 41 Hz. Nothing is running out there; the bottom is
+# climbing out of the noise. Without the gate the report called the
+# silence below 30 Hz "answered in full", which claims headroom
+# exactly where the rig makes no sound.
+ANSWER_SHORT = 0.5          # of the asked step; below this it is scatter
+
+# AND THE QUESTION IS ONLY WORTH ASKING WHERE THE RUNG WAS HEARD.
+# His Adam D3V does not reproduce 25 Hz at all -- the microphone hears
+# it 47 to 74 dB under that rung's own loudest point, and the readings
+# jump about with no pattern because they are two noises subtracted.
+# The report called that "answered in full", which is worse than
+# saying nothing: it claims headroom exactly where there is no sound.
+#
+# A rung speaks at a frequency when its response stands clear of that
+# take's own noise floor -- the same test the whole project uses for
+# whether a figure is a measurement or a bound. Ten decibels is the
+# margin at which the difference of two rungs is the rig rather than
+# the floor.
+HEARD_OVER_NOISE_DB = 10.0
+
+
+def _short_of(prev, cur, freqs, step_db, ppo, heard=None,
+              top_hz=500.0):
+    """Frequencies where a rung bought less than half of what was
+    asked, read over a third of an octave -- and only where the rung
+    was heard over the take's own noise."""
+    got = cur - prev
+    w = max(3, int(round(ppo / 3.0)))
+    sm = np.full(len(got), np.nan)
+    for k in range(len(got)):
+        seg = got[max(0, k - w // 2):k + w // 2 + 1]
+        seg = seg[np.isfinite(seg)]
+        if seg.size >= max(2, w // 3):
+            sm[k] = float(np.median(seg))
+    f = np.asarray(freqs, float)
+    ok = np.isfinite(sm) & (f <= top_hz)
+    if heard is not None:
+        ok = ok & (np.asarray(heard, float) > HEARD_OVER_NOISE_DB)
+    return ok & (sm < ANSWER_SHORT * step_db), ok
+
+
+def _runs(mask, freqs):
+    """Contiguous frequency spans of a boolean mask."""
+    f = np.asarray(freqs, float)
+    out, start = [], None
+    for k, on in enumerate(mask):
+        if on and start is None:
+            start = k
+        elif not on and start is not None:
+            out.append((f[start], f[k - 1])); start = None
+    if start is not None:
+        out.append((f[start], f[-1]))
+    return out
+
+
+def report_headroom(curves, freqs, step_db, ppo=None):
+    """Per rung, the regions where it bought less than it asked."""
+    if len(curves) < 2:
+        return
+    if ppo is None:
+        ppo = mc.GRID_PPO
+    pairs = [None] + [_short_of(curves[i - 1][1], curves[i][1], freqs,
+                                step_db, ppo, heard=curves[i][2])
+                      for i in range(1, len(curves))]
+    short = [None] + [p[0] for p in pairs[1:]]
+    asked = [None] + [p[1] for p in pairs[1:]]
+    print("\n  WHAT EACH RUNG BOUGHT, per frequency: asked %.1f dB"
+          % step_db)
+    print("  %-8s %-10s %s" % ("rung", "level", "did not answer"))
+    for i in range(1, len(curves)):
+        m = short[i]
+        # headroom never comes back, so a shortfall counts only where
+        # the LOUDER rung is short too; the last rung has no witness
+        if i + 1 < len(curves):
+            m = m & short[i + 1]
+        spans = _runs(m, freqs)
+        # WHERE THE RUNG COULD BE ASKED AT ALL, as one bound rather
+        # than a list. The room's own comb chops the heard region
+        # into dozens of slivers -- one rung listed twelve -- and
+        # what matters is only how far down the rig still made a
+        # sound, so the lowest heard frequency is reported and the
+        # holes above it are the room's business.
+        f = np.asarray(freqs, float)
+        lo = float(f[asked[i]].min()) if asked[i].any() else None
+        if lo is None:
+            said = "-- nothing rose over the noise"
+        elif spans:
+            said = ", ".join("%.0f-%.0f Hz" % t for t in spans)
+        else:
+            said = "-- answered in full, down to %.0f Hz" % lo
+        print("  %-8d %-10s %s"
+              % (i + 1, "%.0f%%" % (100 * curves[i][0]), said))
+    print("\n  a rig with headroom answers the whole step; one that has"
+          "\n  run out answers nothing, and the knob then buys only "
+          "distortion.")
+    print("  \"down to\" is how far the rig still made a sound over the"
+          "\n  take's own noise -- below that there is nothing to ask"
+          " about.")
 
 
 if __name__ == "__main__":
