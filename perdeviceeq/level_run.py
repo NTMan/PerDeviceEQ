@@ -303,7 +303,8 @@ class Probe:
 
 def hunt(sink, source, channels, sink_name=None, analyze=0,
          sweep=None, freqs=None,
-         pre_silence=1.0, post_silence=0.5, play_map=None,
+         pre_silence=mc.DEFAULT_PRE_SILENCE,
+         post_silence=mc.DEFAULT_POST_SILENCE, play_map=None,
          on_probe=None, on_level=None, should_stop=None,
          start=AUTO_START_VOLUME, max_adjust=AUTO_MAX_ADJUST):
     """Sweep at rising levels until the rig can see under the device.
@@ -325,7 +326,7 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
     did not play is that he read the line and hit stop in time. A
     level is worth knowing while it can still be refused.
     """
-    sweep = sweep or mc.generate_sweep(262144, 48000, 20.0, 20000.0)
+    sweep = sweep or mc.default_sweep()
     freqs = mc.log_grid() if freqs is None else freqs
     outdir = tempfile.mkdtemp(prefix="pdeq-level-")
     wav = write_sweep_files(outdir, sweep, pre_silence, post_silence)

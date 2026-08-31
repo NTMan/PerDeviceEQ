@@ -372,3 +372,21 @@ def test_the_high_order_reading_has_a_top_drive():
     k = math.sqrt(mc.HOHD_ORDERS[0] * mc.HOHD_ORDERS[1])
     # at the bound the rubbish still lands inside hearing
     assert mc.HOHD_TOP_DRIVE_HZ * k < 20000.0
+
+
+def test_the_sweep_and_its_lead_come_from_one_place():
+    """Three places played sweeps: the session, the hunt and the
+    ladder. The session read its length from config while the other
+    two carried a literal 262144, written when the sweep WAS that
+    long and never revisited when it was halved.
+
+    The cost was not the wasted seconds. A ladder's captures could not
+    be read for the high-order group at all: its one second of lead
+    falls short of the 2.92 s its own long sweep demanded, so the
+    field found the drift only when the two measurements were asked to
+    agree."""
+    sw = mc.default_sweep()
+    assert sw.n_samples == mc.DEFAULT_N
+    # the lead covers the highest order the group tracks
+    need = sw.sweep_rate_l * math.log(mc.HOHD_ORDERS[1])
+    assert mc.DEFAULT_PRE_SILENCE >= need

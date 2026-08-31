@@ -59,6 +59,31 @@ from scipy import signal as sg
 # And the take is 2.6 s shorter, which nobody will mourn.
 DEFAULT_N = 131072
 DEFAULT_FS = 48000
+
+# THE LEAD BELONGS TO THE SWEEP, and it lives here so nobody can hold
+# one without the other. The image of order k sits L*ln(k) before the
+# linear IR, so the length and the silence in front of it are two
+# halves of one decision: at 2.73 s the ladder to order forty needs
+# 1.46 s of lead, while the old 5.46 s sweep would have needed 2.92.
+#
+# It had been declared in the session's config alone, and the tools
+# that play their own sweeps each carried a literal 262144 instead --
+# written when the sweep WAS that long and never revisited when it was
+# halved. The cost was not the wasted seconds: a ladder's captures
+# could not be read for the high-order group at all, because its one
+# second of lead falls short of the 2.92 its own sweep demanded, and
+# the field only found this out when the two measurements were finally
+# asked to agree.
+DEFAULT_PRE_SILENCE = 1.50
+DEFAULT_POST_SILENCE = 0.5
+
+
+def default_sweep(fs=None):
+    """The sweep this project measures with. One place, so a tool and
+    a take cannot drift apart."""
+    return generate_sweep(DEFAULT_N, fs or DEFAULT_FS,
+                          DEFAULT_F_START, DEFAULT_F_END)
+
 SWEEP_LEVEL_DBFS = -6.0       # fixed digital sweep level, by protocol
 DEFAULT_F_START = 20.0
 DEFAULT_F_END = 20000.0

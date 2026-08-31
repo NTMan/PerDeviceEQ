@@ -160,24 +160,12 @@ class SessionConfig:
     fs: int = mc.DEFAULT_FS
     f_start: float = mc.DEFAULT_F_START
     f_end: float = mc.DEFAULT_F_END
-    # 1.50 s, and the number is Farina's rather than a habit: the
-    # image of order k sits L*ln(k) before the linear IR, so at the
-    # 2.73 s sweep the ladder to FORTY needs 1.46 s of silence in
-    # front of it. One second reached only to order nine, 1.10 to
-    # sixteen, and at the old 5.46 s sweep only to three.
-    #
-    # WHY FORTY AND NOT SIXTEEN, which would have been free: orders
-    # 8 to 16 are still the region of a driver's honest suspension
-    # nonlinearity. His Adams -- which purr cleanly -- stand +16 dB
-    # over their own floor there, so zero stops being a line. Taken
-    # to forty the same pair reads -1.3 and -2.0 while the pair that
-    # chuffs reads +21, because a defect's energy lives above where
-    # ordinary nonlinearity has died away.
-    #
-    # It costs 0.36 s a take, against the 2.6 s the halved sweep
-    # gave back.
-    pre_silence: float = 1.50
-    post_silence: float = 0.5
+    # The lead lives with the sweep in measure_core: the two are
+    # halves of one decision, since the image of order k sits
+    # L*ln(k) before the linear IR. See DEFAULT_PRE_SILENCE there for
+    # why it is 1.50 and why the group runs to order forty.
+    pre_silence: float = mc.DEFAULT_PRE_SILENCE
+    post_silence: float = mc.DEFAULT_POST_SILENCE
     cal: str = None
     smoothing: int = 6
     device: str = None

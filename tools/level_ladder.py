@@ -220,11 +220,13 @@ def main():
         print("that source has %d capture channels" % width)
         return 1
 
-    sweep = mc.generate_sweep(262144, 48000, 20.0, 20000.0)
+    sweep = mc.default_sweep()
     freqs = mc.log_grid()
     outdir = tempfile.mkdtemp(prefix="pdeq-ladder-")
-    wav = write_sweep_files(outdir, sweep, 1.0, 0.5)
-    duration = 1.0 + sweep.duration_s + 0.5
+    wav = write_sweep_files(outdir, sweep, mc.DEFAULT_PRE_SILENCE,
+                            mc.DEFAULT_POST_SILENCE)
+    duration = (mc.DEFAULT_PRE_SILENCE + sweep.duration_s
+                + mc.DEFAULT_POST_SILENCE)
     source = {"name": pw_backend.entry_node(src["name"]),
               "id": src["id"]}
 
