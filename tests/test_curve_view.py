@@ -6,6 +6,7 @@ and that the legend has hands only when it was drawn. The GTK-blind
 suite let two field breakages through in one night -- this is the
 answer to that, and it needs no xvfb."""
 
+import math
 import numpy as np
 
 from perdeviceeq import curve_view as cv
@@ -657,3 +658,27 @@ def test_a_response_that_falls_does_not_overflow_the_shade():
     against -- his iLoud reads 3.8 dB short of a 2 dB step at 1 kHz on
     the loudest rung. The quantity stays honest; the ink stops."""
     assert _shade(3.8, 2.0) == _shade(2.0, 2.0)
+
+
+# --- the curve that stops predicting --------------------------------
+
+def _lossy(loss):
+    """The law peq_view renames and recolours by, in the open."""
+    return any(d is not None and math.isfinite(d) and d > 0.0
+               for d in (loss or []))
+
+
+def test_the_curve_keeps_its_name_while_it_keeps_its_promise():
+    """`predicted` is the solver's forecast: measured plus filters, on
+    the assumption the rig answers whatever it is given. While that
+    holds there is nothing to rename."""
+    assert not _lossy(None)
+    assert not _lossy([0.0, 0.0, 0.0])
+    assert not _lossy([None, float("nan"), 0.0])
+
+
+def test_it_is_no_longer_a_forecast_once_it_carries_a_measurement():
+    """Once part of the line is measured loss rather than arithmetic
+    it is not predicting anything -- it is what comes out. His JBL
+    gives 3.9 dB less at 20 Hz past about 80% of the knob."""
+    assert _lossy([0.0, 0.0, 3.9])

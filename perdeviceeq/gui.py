@@ -128,6 +128,8 @@ class EqWindow(Adw.ApplicationWindow):
         debug.timing("ProfileStore", _born)
         self.favorites = set(_load_favorites())
         self.node = None
+        self._loss_beat = None
+        self._loss_vol = None
         self.live = False
         self.current_pid = CLEAN_ID
         self.floor_off = False
@@ -395,6 +397,9 @@ class EqWindow(Adw.ApplicationWindow):
         The button syncs at the top of a profile load, when
         self._canvas still holds the profile being left."""
         self.view.set_headroom(*self._headroom_cubes())
+        self._start_loss_beat()
+        self._loss_vol = None       # the profile changed under it
+        self._sync_loss()
         ov = self._overlay_curve()
         if ov is None:
             self.view.set_curves(None, None)
@@ -528,6 +533,161 @@ class EqWindow(Adw.ApplicationWindow):
             return (None, None)
         cubes = [worst[k] for k in sorted(worst)]
         return cubes, min(c[4] for c in cubes)
+
+    # WHAT THE KNOB IS DOING RIGHT NOW. The loss depends on the level
+    # and on nothing else the app controls, so the only way to draw it
+    # truthfully is to know where the volume stands. A heartbeat is
+    # the honest way to ask: the volume can be moved by anyone -- the
+    # desktop, a hotkey, another program -- and a subscription would
+    # only hear our own writes.
+    def _start_loss_beat(self):
+        """Ride the backend's own tick rather than starting another.
+
+        The first cut added a GLib timeout of its own that called
+        _read_volume once a second -- and _read_volume spawns a
+        pw-dump, so it paid a subprocess on the main loop every
+        second, which is exactly what the sink listing carries its
+        extra fields to avoid. The backend already polls; it now says
+        a quiet word when a volume moves, and this listens.
+        """
+        if getattr(self, "_loss_beat", None) is not None:
+            return
+        try:
+            self._loss_beat = pw_backend.backend().subscribe_volume(
+                lambda _s: GLib.idle_add(self._sync_loss))
+        except Exception:
+            self._loss_beat = None
+
+    def _sync_loss(self):
+        """Read where the volume stands and hand the view the loss."""
+        name = getattr(self, "node", None)
+        vol = None
+        if name:
+            for snk in (pw_backend.backend().sinks or []):
+                if snk.get("name") == name:
+                    # gain_of_node reports (value, "hardware"/
+                    # "software"/None): WHERE the multiplier lives
+                    # matters to a caller that means to MOVE it, and
+                    # not at all to one that only wants to know where
+                    # it stands.
+                    g = snk.get("gain")
+                    vol = g[0] if isinstance(g, (tuple, list)) else g
+                    break
+        if vol is None:
+            self.view.set_loss(None)
+            return
+        try:
+            vol = float(vol)
+        except (TypeError, ValueError):
+            self.view.set_loss(None)
+            return
+        if abs(vol - (getattr(self, "_loss_vol", None) or -1)) < 1e-4:
+            return
+        self._loss_vol = vol
+        self.view.set_loss(self._loss_at(vol))
+
+    def _loss_at(self, volume):
+        """Output the rig is not giving at `volume`, per grid point.
+
+        THE MAP IS A FEW MEASURED LEVELS AND NOTHING BETWEEN THEM, so
+        this holds the last rung at or below the knob rather than
+        drawing a line to the next one. His JBL answers in full at
+        77% and loses 3.9 dB at 20 Hz by 90%: the transition is a
+        step, not a slope, and interpolating would put 2 dB at 83%
+        where nothing was measured. Above the loudest rung there is
+        nothing to say at all, so it says nothing.
+
+        A LOSS COUNTS ONLY WHERE IT CLEARS THE SPREAD BETWEEN SWEEPS
+        in that band. Six runs of one earphone put that spread at two
+        tenths of a decibel in the midrange and close to a whole one
+        at 20 Hz over Bluetooth, which is why the threshold is a
+        curve taken from the rungs themselves and not one number.
+        """
+        p = self.store.get(self.current_pid) or {}
+        m = (p.get("measurement") or {})
+        grid = m.get("grid") or {}
+        maps = []
+        for blk in (m.get("sessions") or {}).values():
+            for rungs in ((blk or {}).get("headroom") or {}).values():
+                if len(rungs or []) >= 2:
+                    maps.append(sorted(rungs, key=lambda r: r["level"]))
+        if not maps or not grid or volume is None:
+            return None
+        lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
+        worst = None
+        for rungs in maps:
+            base = rungs[0]
+            here = None
+            for r in rungs:
+                if r["level"] <= float(volume) + 1e-9:
+                    here = r
+            if here is None or here is base:
+                continue
+            rise = level_run.asked_db(
+                (base["level"], base.get("peak_dbfs")),
+                (here["level"], here.get("peak_dbfs")))
+            off = here.get("heard_offset_db")
+            if off is None:
+                continue
+            n = len(here["mag_db"])
+            freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
+            bm = np.array([np.nan if x is None else float(x)
+                           for x in base["mag_db"]], float)
+            cm = np.array([np.nan if x is None else float(x)
+                           for x in here["mag_db"]], float)
+            with np.errstate(all="ignore"):
+                d = level_run.shortfall_db(bm, cm, cm - off, rise,
+                                           freqs, ppo)
+                # TWICE the scatter, because a loss is a DIFFERENCE
+                # of two sweeps and each brings its own. Against a
+                # single take's spread his Denon lit 355 points of
+                # the curve by a fifth of a decibel -- red almost
+                # everywhere, and meaning nothing.
+                d = np.where(d > 2.0 * self._spread(ppo, n), d, 0.0)
+            worst = d if worst is None else np.fmax(worst, d)
+        if worst is None:
+            return None
+        return [None if not np.isfinite(v) else float(v) for v in worst]
+
+    def _spread(self, ppo, n):
+        """How much two sweeps of one rig disagree, per frequency --
+        the floor a loss has to clear to be worth drawing.
+
+        THE TAKES ALREADY MEASURE THIS. A channel is swept several
+        times at ONE level, and the difference between those takes is
+        exactly the scatter, with no level change mixed in. The first
+        cut of this read the spread between RUNGS instead, which is
+        circular: rungs differ by level and by the very loss being
+        tested, so the loss would have been measured against itself.
+        """
+        p = self.store.get(self.current_pid) or {}
+        takes = ((p.get("measurement") or {}).get("takes") or [])
+        by_ch = {}
+        for t in takes:
+            if t.get("mag_db_uncal"):
+                by_ch.setdefault(t.get("channel"), []).append(
+                    np.array([np.nan if x is None else float(x)
+                              for x in t["mag_db_uncal"]], float))
+        w = max(3, int(round(ppo / 3.0)))
+        best = None
+        for rows in by_ch.values():
+            if len(rows) < 2:
+                continue
+            a = np.vstack([r[:n] for r in rows if len(r) >= n])
+            if a.shape[0] < 2:
+                continue
+            with np.errstate(all="ignore"):
+                sp = np.nanmax(a, 0) - np.nanmin(a, 0)
+            best = sp if best is None else np.fmax(best, sp)
+        if best is None:
+            return 1.0
+        out = np.full(n, 1.0)
+        for i in range(n):
+            seg = best[max(0, i - w // 2):i + w // 2 + 1]
+            seg = seg[np.isfinite(seg)]
+            if seg.size:
+                out[i] = float(np.median(seg))
+        return out
 
     def _overlay_curve(self):
         """(freqs, measured, spread, trust_band) for the slot on

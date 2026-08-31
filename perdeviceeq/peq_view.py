@@ -99,6 +99,7 @@ class PeqView(Gtk.Box):
         self._legend_hits = []    # (x0,y0,x1,y1,name)
         self._curves = None         # (freqs, measured, spread, band)
         self._headroom = None       # bands the rig stopped answering in
+        self._loss = None           # dB of output missing, per grid point
         self._headroom_level = None
         self._traces = {}           # name -> [(x, y, value)] as drawn
         self._under = None          # the line under the pointer
@@ -237,6 +238,13 @@ class PeqView(Gtk.Box):
     # the step and the rig either delivered it or did not.
     _CUBE_PX = 10
     _CUBE_GAP = 1
+
+    def set_loss(self, loss=None):
+        """Output the rig is not giving at the current level, per grid
+        point, in dB. None or NaN where nothing is missing or nothing
+        was measured."""
+        self._loss = list(loss) if loss else None
+        self.graph.queue_draw()
 
     def set_headroom(self, cubes=None, level=None):
         """Bands where the rig stopped answering, as
@@ -775,17 +783,51 @@ class PeqView(Gtk.Box):
                 cr.stroke()
                 cr.set_dash([], 0)
                 traces["target"] = tr_t
+            # WHERE THE PREDICTION STOPS BEING ONE. `predicted` is the
+            # solver's promise: measured plus the filters, on the
+            # assumption that a rig answers whatever it is given. At
+            # some level it does not, and then the promise is simply
+            # wrong -- his JBL gives 3.9 dB less at 20 Hz once the
+            # knob passes about 80%, and his iLoud loses the whole
+            # 60-90 Hz region past 48%.
+            #
+            # So the curve carries the loss where there is one, and
+            # says so by turning red THERE and nowhere else: the eye
+            # gets the place and the size in one line, and the rest of
+            # the curve keeps its promise and its colour. A shortfall
+            # counts only where it clears the spread between sweeps in
+            # that band -- measured, not chosen: two tenths of a
+            # decibel in the midrange, near a whole one at 20 Hz over
+            # Bluetooth.
             pr, pg, pb, pa, pw2 = self._dress(
                 "predicted", 0.45, 0.95, 0.55, 0.90, 1.5)
-            cr.set_source_rgba(pr, pg, pb, pa)
-            cr.set_line_width(pw2)
+            loss = self._loss or []
             tr_p = []
+            pts = []
             for i, f in enumerate(fo):
-                v = meas[i] + resp[i]
+                d = loss[i] if i < len(loss) else None
+                lost = d if d is not None and math.isfinite(d) else 0.0
+                v = meas[i] + resp[i] - lost
                 x, y = x_of(f), y_of(v)
                 tr_p.append((x, y, v))
-                cr.move_to(x, y) if i == 0 else cr.line_to(x, y)
-            cr.stroke()
+                pts.append((x, y, lost > 0.0))
+            cr.set_line_width(pw2)
+            run = []
+            for x, y, red in pts + [(None, None, None)]:
+                if run and (red is not run[0][2] or x is None):
+                    if run[0][2]:
+                        cr.set_source_rgba(0.90, 0.30, 0.25, 0.95)
+                    else:
+                        cr.set_source_rgba(pr, pg, pb, pa)
+                    cr.move_to(run[0][0], run[0][1])
+                    for xx, yy, _ in run[1:]:
+                        cr.line_to(xx, yy)
+                    if x is not None:
+                        cr.line_to(x, y)
+                    cr.stroke()
+                    run = []
+                if x is not None:
+                    run.append((x, y, red))
             traces["predicted"] = tr_p
             cr.set_source_rgba(0, 0, 0, 0.30)
             if band is not None:
@@ -803,17 +845,28 @@ class PeqView(Gtk.Box):
             cr.select_font_face("Sans", 0, 0)
             cr.set_font_size(9)
             lx, ly = ml + 10, mt + 14
+            # THE NAME CHANGES WITH THE CLAIM. While the rig answers
+            # what it is given, the green line is a prediction and
+            # says so. Once part of it is measured loss rather than
+            # arithmetic, it is no longer a forecast of anything --
+            # it is what comes out -- and calling it "predicted" then
+            # would be the one lie this whole day was spent removing.
+            lossy = any(d is not None and math.isfinite(d) and d > 0.0
+                        for d in (self._loss or []))
             labels = [
-                ("measured", (0.85, 0.85, 0.90, 0.9)),
-                ("predicted", (0.45, 0.95, 0.55, 0.9)),
-                ("EQ", (0.30, 0.78, 1.0, 0.9))]
+                ("measured", "measured", (0.85, 0.85, 0.90, 0.9)),
+                ("predicted", "what you hear" if lossy else "predicted",
+                 (0.90, 0.30, 0.25, 0.95) if lossy
+                 else (0.45, 0.95, 0.55, 0.9)),
+                ("EQ", "EQ", (0.30, 0.78, 1.0, 0.9))]
             if self._tgt is not None:
-                labels.append(("target", (0.95, 0.85, 0.40, 0.9)))
+                labels.append(("target", "target",
+                               (0.95, 0.85, 0.40, 0.9)))
             self._legend_hits = []
             lit = self._lit()
-            for lab, rgba in labels:
+            for key, lab, rgba in labels:
                 r0, g0, b0, a0 = rgba
-                if lit and lab not in lit and lab != self._hover:
+                if lit and key not in lit and key != self._hover:
                     a0 *= 0.35
                 cr.set_source_rgba(r0, g0, b0, a0)
                 cr.set_line_width(2.0)
@@ -822,13 +875,13 @@ class PeqView(Gtk.Box):
                 cr.stroke()
                 # a pinned name wears a dot: brightness alone
                 # cannot tell "nothing pinned" from "all pinned"
-                shown = "\u2022 " + lab if lab in lit else lab
+                shown = "\u2022 " + lab if key in lit else lab
                 cr.move_to(lx + 18, ly)
                 cr.show_text(shown)
                 tw2 = cr.text_extents(shown).width
                 self._legend_hits.append(
                     (lx - 4, ly - 14, lx + 18 + tw2 + 4,
-                     ly + 8, lab))
+                     ly + 8, key))
                 lx += 18 + tw2 + 14
             cr.restore()
 

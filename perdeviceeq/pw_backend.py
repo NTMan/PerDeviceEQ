@@ -104,6 +104,12 @@ def list_sinks(dump=None, default=None):
                           # asks for it separately pays a pw-dump
                           # SUBPROCESS on the main loop every time
                           "channels": _node_channels(name, dump),
+                          # and the node's own volume, for the same
+                          # reason: a window that wants to know where
+                          # the knob stands would otherwise pay a
+                          # pw-dump per ask, and the loss a rig shows
+                          # on the graph has to follow that knob
+                          "gain": gain_of_node(o),
                           "default": name == default})
     sinks.sort(key=lambda s: -(s["prio"] or 0))
     return sinks

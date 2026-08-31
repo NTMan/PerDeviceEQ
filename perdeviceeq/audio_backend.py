@@ -283,7 +283,33 @@ class AudioBackend(ABC):
         self._sig = sig
         if changed:
             self._notify()
+        # THE VOLUME GETS ITS OWN WORD, quietly. It is deliberately not
+        # in the signature above -- the desktop moves it constantly and
+        # rebuilding the listing on every notch would be absurd -- but
+        # a graph that draws what a rig can no longer deliver has to
+        # follow the knob, and the tick above has just refreshed the
+        # number anyway. Listeners here get told and nobody else pays.
+        vols = tuple((s.get("name"), s.get("gain")) for s in self.sinks)
+        if vols != getattr(self, "_vol_sig", None):
+            self._vol_sig = vols
+            for cb in list(getattr(self, "_vol_subs", ())):
+                try:
+                    cb(self)
+                except Exception:
+                    pass
         return changed
+
+    def subscribe_volume(self, cb):
+        """Register cb(state), called when a sink's volume changed.
+
+        Separate from subscribe() on purpose: that one means the graph
+        itself changed and everything must be rebuilt, which a volume
+        never warrants.
+        """
+        if not hasattr(self, "_vol_subs"):
+            self._vol_subs = []
+        self._vol_subs.append(cb)
+        return lambda: self._vol_subs.remove(cb)
 
     def _notify(self):
         for cb in list(self._subs):
