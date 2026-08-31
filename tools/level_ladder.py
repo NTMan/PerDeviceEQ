@@ -105,7 +105,7 @@ def find(entries, needle):
 
 
 def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
-         column, v, at_hz=1000.0, keep=None, index=0):
+         column, v, at_hz=1000.0, keep=None, index=0, play=None):
     """One sweep at volume `v`, read the way the session reads it.
 
     `keep` is a directory to write the capture into, so the walk can
@@ -119,7 +119,7 @@ def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
     back.moratorium_begin(name, v, mute_others=True)
     try:
         data, _ = run_take(sink, src, wav, duration, width, fs,
-                           verify=False)
+                           verify=False, channel_map=play)
     finally:
         back.moratorium_end()
     chan = np.asarray(data)[:, min(column, data.shape[1] - 1)]
@@ -182,6 +182,16 @@ def main():
     ap.add_argument("--even", action="store_true",
                     help="keep the step fixed: a plain ladder of equal "
                          "rungs rather than a search")
+    ap.add_argument("--play", metavar="POS",
+                    help="channel position to play into, e.g. FL or FR. "
+                         "PipeWire routes a mono sweep by NAME, so this "
+                         "sounds ONE speaker: without it the sink "
+                         "decides, and a pair playing together would "
+                         "comb at the microphone. A rig's two channels "
+                         "need not have the same headroom -- his iLoud's "
+                         "left is twice as dirty as its right -- so a "
+                         "walk that never names the channel is a walk "
+                         "about whichever one the sink chose")
     ap.add_argument("--keep", metavar="DIR",
                     help="write every rung's capture here, so the walk "
                          "can be re-read later with a question it was "
@@ -232,6 +242,8 @@ def main():
 
     print("output : %s" % sink["name"])
     print("mic    : %s  column %d of %d" % (src["name"], column, width))
+    if a.play:
+        print("playing: %s only" % a.play)
     print("ladder : %s from %.0f%%, stopping at a peak above %.1f dBFS"
           % ("%d even rungs of %.1f dB" % (a.rungs, a.step_db) if a.even
              else "a search, up to %d rungs, %.1f dB at a time and "
@@ -258,7 +270,7 @@ def main():
             peak, resp, snr, clipped, at, margin, curve, over = rung(
                 sink, source, sink["name"], wav, duration, width,
                 sweep.fs, sweep, freqs, column, v, a.at,
-                keep=a.keep, index=i)
+                keep=a.keep, index=i, play=a.play)
             said = level_run.AutoLevel.verdict(
                 peak, snr, clipped, at[1] if at else None)
             thd = ("n/a" if at is None else
