@@ -49,6 +49,7 @@ as with every walk in this project.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -93,8 +94,16 @@ def find(entries, needle):
 
 
 def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
-         column, v, at_hz=1000.0):
-    """One sweep at volume `v`, read the way the session reads it."""
+         column, v, at_hz=1000.0, keep=None, index=0):
+    """One sweep at volume `v`, read the way the session reads it.
+
+    `keep` is a directory to write the capture into, so the walk can
+    be re-read afterwards with a question it was not asked at the
+    time. It exists because a level walk is EXPENSIVE to redo: the
+    volume has to be moved in exact steps, and a hand on a slider is
+    not a step -- ask a person to raise it "one notch" five times and
+    the analysis afterwards will be about the person, not the rig.
+    """
     back = pw_backend.backend()
     back.moratorium_begin(name, v, mute_others=True)
     try:
@@ -103,6 +112,16 @@ def rung(sink, src, name, wav, duration, width, fs, sweep, freqs,
     finally:
         back.moratorium_end()
     chan = np.asarray(data)[:, min(column, data.shape[1] - 1)]
+    if keep:
+        import soundfile as sf
+        os.makedirs(keep, exist_ok=True)
+        sf.write(os.path.join(keep, "rung%02d.wav" % index),
+                 np.asarray(data), fs)
+        with open(os.path.join(keep, "rung%02d.json" % index), "w") as fh:
+            json.dump({"index": index, "volume_cubic": float(v),
+                       "n_samples": sweep.n_samples, "fs": sweep.fs,
+                       "f_start": sweep.f_start, "f_end": sweep.f_end,
+                       "column": column}, fh, indent=1)
     peak = float(np.max(np.abs(chan))) if chan.size else 0.0
     peak_db = 20.0 * math.log10(peak) if peak > 0 else -120.0
     clipped = peak >= 0.999
@@ -135,6 +154,10 @@ def main():
                          " the search's own start)")
     ap.add_argument("--step-db", type=float, default=1.0)
     ap.add_argument("--rungs", type=int, default=8)
+    ap.add_argument("--keep", metavar="DIR",
+                    help="write every rung's capture here, so the walk "
+                         "can be re-read later with a question it was "
+                         "not asked at the time")
     ap.add_argument("--at", type=float, default=1000.0,
                     help="frequency the distortion figure is read at, "
                          "in Hz (default 1000, the datasheet's). A "
@@ -200,7 +223,8 @@ def main():
                   end="\r", flush=True)
             peak, resp, snr, clipped, at, margin = rung(
                 sink, source, sink["name"], wav, duration, width,
-                sweep.fs, sweep, freqs, column, v, a.at)
+                sweep.fs, sweep, freqs, column, v, a.at,
+                keep=a.keep, index=i)
             said = level_run.AutoLevel.verdict(
                 peak, snr, clipped, at[1] if at else None)
             thd = ("n/a" if at is None else
