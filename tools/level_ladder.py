@@ -245,6 +245,7 @@ def main():
 
     rows, resps, curves = [], [], []
     step = a.step_db
+    lo = hi = None          # the bracket the ceiling is known to be in
     v = level_run._clamp(a.start)
     try:
         for i in range(1, a.rungs + 1):
@@ -269,7 +270,7 @@ def main():
                      said))
             if resp is not None:
                 resps.append(resp)
-            curves.append((v, curve, over))
+            curves.append((v, curve, over, peak))
             if at is not None and margin is not None and not at[1]:
                 rows.append((peak, 20.0 * math.log10(at[0] / 100.0)))
 
@@ -308,21 +309,91 @@ def main():
             # the answer is scatter rather than the rig, so the walk
             # stops there with the ceiling bracketed to that width.
             if not a.even and len(curves) >= 2:
-                asked = 60.0 * math.log10(curves[-1][0] / curves[-2][0])
-                short, _ = _short_of(curves[-2][1], curves[-1][1],
-                                     freqs, asked, mc.GRID_PPO,
-                                     heard=curves[-1][2])
-                if short.any():
-                    step = step / 2.0
-                    if step < MIN_READABLE_STEP:
+                below = _below(curves, len(curves) - 1)
+                asked = (None if below is None else
+                         60.0 * math.log10(curves[-1][0] / below[0]))
+                short = None
+                if asked is not None and asked >= MIN_READABLE_STEP:
+                    short, _ = _short_of(below[1], curves[-1][1],
+                                         freqs, asked, mc.GRID_PPO,
+                                         heard=curves[-1][2])
+                if short is not None and short.any():
+                    hi = min(hi, curves[-1][0]) if hi else curves[-1][0]
+                elif short is not None:
+                    lo = max(lo, curves[-1][0]) if lo else curves[-1][0]
+                # THE SEARCH CLOSES A BRACKET, and what runs out is the
+                # bracket rather than the step. His subwoofer answered
+                # at 39% and fell short at 46 and again at 42: the
+                # ceiling is between 39 and 42, which is three
+                # decibels and still readable, but a walk that watches
+                # only its own step size had already halved twice and
+                # stopped. Ask instead how wide the bracket is, and
+                # aim at the middle of what is left.
+                if lo and hi:
+                    span = 60.0 * math.log10(hi / lo)
+                    # SPLITTING IT MUST LEAVE A READABLE STEP. A
+                    # bracket of 3.7 dB is wider than the limit and
+                    # still cannot be halved: each half is 1.85 dB,
+                    # and the rung that came back would be compared
+                    # over less than a sweep can tell. His subwoofer
+                    # bracketed 39-45% and this is exactly the case.
+                    if span < 2.0 * MIN_READABLE_STEP:
                         print("\n  the ceiling is between %.0f%% and "
                               "%.0f%% -- closer than a sweep can tell"
-                              % (100 * curves[-2][0], 100 * curves[-1][0]))
+                              % (100 * lo, 100 * hi))
                         break
-                    print("  ...short somewhere; halving the step to "
-                          "%.1f dB" % step)
-                    v = curves[-2][0]
-            v = level_run._clamp(v * 10.0 ** (step / 60.0))
+                    step = span / 2.0
+                    print("  ...the ceiling is between %.0f%% and "
+                          "%.0f%%; splitting it" % (100 * lo, 100 * hi))
+                    v = lo
+            # AND THE WALL ASKS THE RUNG WE ARE STEPPING FROM, which
+            # after a split is not the rung played last. His subwoofer
+            # bracketed 39-45%, set out to halve from 39 -- and the
+            # wall measured its room from the peak at 45, saw none,
+            # and stopped the search one sweep short of its answer.
+            # From 39% the next rung would have landed near -15 dBFS,
+            # nine decibels under the ceiling.
+            from_peak = peak
+            for c in curves:
+                if abs(c[0] - v) < 1e-9:
+                    from_peak = c[3]
+                    break
+            peak = from_peak
+            # THE CEILING IS A WALL, not a line the walk notices
+            # afterwards. The peak follows the level one for one --
+            # measured on every ladder in this file -- so the walk
+            # knows before it plays where a step would land. His
+            # Tanchjim run printed "stopping at a peak above -6.0"
+            # and then played a rung that read -2.1, because the
+            # bold step jumped clean over the ceiling and the brake
+            # only looked afterwards. An instrument must not play
+            # louder than it said it would.
+            room = a.stop_peak - peak
+            take = min(step, room)
+            # AND THE APPROACH IS ONE STRIDE, not a march. A walk that
+            # starts far below where the rig is heard spends its rungs
+            # climbing through silence: from 10% a speaker needs eight
+            # sweeps of 4 dB before anything happens. The peak says how
+            # far there is to go, so the FIRST step covers most of it
+            # at once -- and only most, because the ceiling this closes
+            # on is the CAPTURE's, not the rig's, and a stride that
+            # lands exactly on it would leave nothing to search.
+            #
+            # It is a stride and not a leap on purpose. The search this
+            # tool measures once doubled its cubic volume -- eighteen
+            # decibels a step -- and sent a sweep into an earphone at
+            # 0.0 dBFS. Predicting the landing is what makes a bold
+            # step honest; boldness without the prediction is that
+            # accident again.
+            if len(curves) == 1 and room > 2.0 * step:
+                take = max(step, room - 2.0 * step)
+            if take < MIN_READABLE_STEP:
+                print("\n  %s -- stopping"
+                      % ("the next step would pass the peak ceiling "
+                         "(%.1f dBFS)" % a.stop_peak if room < step
+                         else "there is no readable step left to take"))
+                break
+            v = level_run._clamp(v * 10.0 ** (take / 60.0))
     except KeyboardInterrupt:
         print("\nstopped.")
     except (RuntimeError, ValueError) as exc:
@@ -431,6 +502,22 @@ def _short_of(prev, cur, freqs, step_db, ppo, heard=None):
     return ok & (sm < ANSWER_SHORT * step_db), ok
 
 
+def _below(curves, i):
+    """The loudest rung QUIETER than curves[i].
+
+    The search halves by stepping BACK, so the rung played last is not
+    always the loudest one played: his subwoofer went 39, 45, then 42.
+    Subtracting the previous rung in playing order then asks what a
+    quieter sweep bought over a louder one, and the answer is negative
+    across the whole band -- the run listed thirty-four regions from
+    20 Hz to 20 kHz, which is the arithmetic complaining rather than
+    the rig. Order by LEVEL, not by time.
+    """
+    ref = curves[i][0]
+    lower = [c for j, c in enumerate(curves) if j != i and c[0] < ref]
+    return max(lower, key=lambda c: c[0]) if lower else None
+
+
 def _runs(mask, freqs):
     """Contiguous frequency spans of a boolean mask."""
     f = np.asarray(freqs, float)
@@ -451,19 +538,29 @@ def report_headroom(curves, freqs, step_db, ppo=None):
         return
     if ppo is None:
         ppo = mc.GRID_PPO
-    pairs = [None] + [_short_of(curves[i - 1][1], curves[i][1], freqs,
-                                step_db, ppo, heard=curves[i][2])
-                      for i in range(1, len(curves))]
-    short = [None] + [p[0] for p in pairs[1:]]
-    asked = [None] + [p[1] for p in pairs[1:]]
+    pairs = [None]
+    for i in range(1, len(curves)):
+        b = _below(curves, i)
+        step = (None if b is None else
+                60.0 * math.log10(curves[i][0] / b[0]))
+        pairs.append(None if step is None or step < MIN_READABLE_STEP
+                     else _short_of(b[1], curves[i][1], freqs, step,
+                                    ppo, heard=curves[i][2]))
+    short = [None] + [None if p is None else p[0] for p in pairs[1:]]
+    asked = [None] + [None if p is None else p[1] for p in pairs[1:]]
     print("\n  WHAT EACH RUNG BOUGHT, per frequency: asked %.1f dB"
           % step_db)
     print("  %-8s %-10s %s" % ("rung", "level", "did not answer"))
     for i in range(1, len(curves)):
+        if short[i] is None:
+            print("  %-8d %-10s %s"
+                  % (i + 1, "%.0f%%" % (100 * curves[i][0]),
+                     "-- too close to the rung below to tell"))
+            continue
         m = short[i]
         # headroom never comes back, so a shortfall counts only where
         # the LOUDER rung is short too; the last rung has no witness
-        if i + 1 < len(curves):
+        if i + 1 < len(curves) and short[i + 1] is not None:
             m = m & short[i + 1]
         spans = _runs(m, freqs)
         # WHERE THE RUNG COULD BE ASKED AT ALL, as one bound rather
