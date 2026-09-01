@@ -380,9 +380,13 @@ def test_the_level_is_announced_before_the_sweep(monkeypatch, tmp_path):
                         lambda: FakeBack())
     monkeypatch.setattr(level_run, "write_sweep_files",
                         lambda *a, **k: str(tmp_path / "s.wav"))
+    # NOT SILENCE: a capture at the digital floor now ends the walk,
+    # because a microphone that hears nothing is not in the path and
+    # no volume fixes that. This court is about the ORDER of the
+    # announcement, so it hands back something audible.
     monkeypatch.setattr(
         level_run, "run_take",
-        lambda *a, **k: (np.zeros((48000, 1)), {}))
+        lambda *a, **k: (np.full((48000, 1), 0.01), {}))
 
     level_run.hunt({"name": "s"}, {"name": "m"}, 1, sink_name="s",
                    on_level=lambda v, step: seen.append((round(v, 4),
@@ -595,6 +599,61 @@ def test_the_map_strides_while_the_rig_answers():
         assert rungs[-1]["stopped_by"] == "border"
         # nothing was played above the level already known to be short
         assert max(played) <= 0.69
+    finally:
+        level_run._play_rung = real_rung
+        level_run.pw_backend.backend = real_backend
+
+
+def test_a_silent_capture_does_not_send_the_ramp_climbing():
+    """SILENCE IS NOT QUIETNESS. analyze_take reports -120 dBFS for a
+    channel that is digitally silent, and the ramp's arithmetic then
+    sees a hundred decibels of room and asks for the whole step: his
+    Tanchjim walk went 15%, 30%, 60% and would have gone on, because
+    the coupler was not hearing the earphone at all.
+
+    Doubling into an earphone is the accident this ramp was rewritten
+    to prevent. A silent capture creeps instead, and two silent probes
+    end the walk -- no volume fixes a microphone that is not in the
+    path."""
+    ctl = level_run.AutoLevel()
+    ctl.observe(0.15, -120.0, None, False)
+    assert ctl.next_volume(0.15) < 0.18          # creeping, not doubling
+
+    heard = level_run.AutoLevel()
+    heard.observe(0.15, -45.0, 30.0, False)
+    assert heard.next_volume(0.15) > 0.25        # a real quiet probe climbs
+
+    freqs = np.asarray(mc.log_grid())
+    played = []
+
+    class Got:
+        def __init__(self):
+            self.mag_db = np.zeros(len(freqs))
+            self.snr_db = 2.0
+            self.thd_db = np.full(len(freqs), -20.0)
+            self.thd_noise_db = np.full(len(freqs), -20.0)
+
+    def silent(back, name, sink, source, wav, duration, channels,
+               sweep, fr, analyze, v, play_map):
+        played.append(v)
+        return None, -120.0, False, Got()
+
+    class Back:
+        def moratorium_begin(self, *a, **k):
+            pass
+
+        def moratorium_end(self, *a, **k):
+            pass
+
+    real_backend = level_run.pw_backend.backend
+    real_rung = level_run._play_rung
+    level_run.pw_backend.backend = lambda: Back()
+    level_run._play_rung = silent
+    try:
+        with pytest.raises(RuntimeError):
+            level_run.hunt({"name": "x"}, {"name": "y"}, 2,
+                           sink_name="x", freqs=freqs)
+        assert len(played) == 2
     finally:
         level_run._play_rung = real_rung
         level_run.pw_backend.backend = real_backend

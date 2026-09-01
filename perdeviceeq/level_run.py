@@ -66,6 +66,14 @@ AUTO_PEAK_FLOOR = -12.0         # quieter wastes capture robustness
 # because there it is still tracking its own floor.
 AUTO_PEAK_BAND = 1.0
 AUTO_PEAK_CEIL = -2.0           # louder risks the converter
+
+# BELOW THIS A CAPTURE IS SILENT, not quiet. analyze_take reports
+# -120 dBFS for a channel that is digitally silent, and a real room
+# with a real microphone does not come back at -90 either: a sweep
+# played into a rig the microphone can hear lands tens of decibels
+# above that even at the bottom of a walk. So a reading down here
+# means the capture is not in the path at all.
+SILENT_CAPTURE_DBFS = -90.0
 AUTO_EXPLORE_CEIL = 0.80        # the ramp stops here until a probe AT
                                 # it is still quiet
 AUTO_START_VOLUME = 0.15        # cubic; "start quiet"
@@ -250,6 +258,23 @@ class AutoLevel:
         pk = self.lo[1] if self.lo else None
         if pk is None or not math.isfinite(pk):
             return v * 10.0 ** (step_db / 60.0)
+
+        # AND SILENCE IS NOT QUIETNESS. A capture that hears NOTHING
+        # reports the floor, and the arithmetic above then sees a
+        # hundred decibels of room and asks for the whole ramp: his
+        # Tanchjim walk went 15%, 30%, 60% and would have gone on,
+        # because the coupler was not hearing the earphone at all.
+        # Doubling into an earphone is the accident this ramp was
+        # rewritten to prevent, and a silent capture is exactly when
+        # it comes back.
+        #
+        # Nothing above is worth asking for until someone looks at
+        # the coupler, the column or the sink, so the walk creeps
+        # instead. Creeping is safe and gets nowhere, which is the
+        # honest answer to "the microphone is not in this path".
+        if pk <= SILENT_CAPTURE_DBFS:
+            return v * 10.0 ** (min(creep_db,
+                                    AUTO_PEAK_CEIL - pk) / 60.0)
 
         # THE CEILING CAPS EVERY STEP, whatever the reason for asking.
         # The first cut capped it only where the peak was BELOW the
@@ -756,6 +781,22 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
             probes.append(p)
             if on_probe is not None:
                 on_probe(p)
+
+            # A CAPTURE THAT HEARS NOTHING ENDS THE WALK. Creeping is
+            # safe but gets nowhere, and a search that creeps to the
+            # top of the knob has spent a minute of sweeps to learn
+            # what the second probe already showed. Two silent probes
+            # in a row mean the microphone is not in this path --
+            # wrong card, wrong column, or the coupler is somewhere
+            # else -- and no volume will fix that.
+            silent = [q for q in probes[-2:]
+                      if q.peak_dbfs <= SILENT_CAPTURE_DBFS]
+            if len(silent) == 2:
+                raise RuntimeError(
+                    "the capture heard nothing at %.0f%% and %.0f%%: "
+                    "the microphone is not in this path (wrong card, "
+                    "wrong column, or the coupler is elsewhere)"
+                    % (100 * silent[0].volume, 100 * silent[1].volume))
 
             if ctl.settled():
                 return _clamp(ctl.ok[0]), probes
