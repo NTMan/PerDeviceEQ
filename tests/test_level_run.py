@@ -550,16 +550,19 @@ def test_an_interrupted_search_is_not_a_search():
         level_run.pw_backend.backend = real_backend
 
 
-def test_the_map_strides_while_the_rig_answers():
-    """Below the border every rung reads alike -- his Tanchjim gave
-    eight identical rows of zeros over fourteen decibels -- so sweeps
-    spent there buy nothing. The walk strides while the answer keeps
-    coming and halves once it stops, which is where the sweeps are
-    worth spending.
+def test_the_map_climbs_and_halves_at_the_border():
+    """A border can only be pinned as tightly as the step that found
+    it, so the step is chosen for the border rather than for speed.
+
+    Measured on his JBL: 2 dB rungs went 74, 80, 87 and bracketed the
+    border at 80-87%, containing the 84-85% where he hears the change.
+    An 8 dB stride went 74, 86 and bracketed 74-86% -- no narrower
+    than the stride, and unimprovable, since halving 3.9 dB leaves
+    less than a readable step in each half.
 
     And a level known to fall short is a CEILING: without that the
-    walk halves down to a healthy rung, strides boldly again and
-    sails over the very rung it had just found short."""
+    walk halves down to a healthy rung, climbs again and sails over
+    the very rung it had just found short."""
     freqs = np.asarray(mc.log_grid())
     played = []
 
@@ -594,9 +597,11 @@ def test_the_map_strides_while_the_rig_answers():
         level_run._play_rung = rig(0.62)
         rungs = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
                                        0.5, sink_name="x", freqs=freqs)
-        # three sweeps, not eight, and the border is bracketed
-        assert len(played) <= 4
         assert rungs[-1]["stopped_by"] == "border"
+        # the bracket is no wider than two readable steps
+        lv = sorted(r["level"] for r in rungs)
+        assert 60.0 * math.log10(lv[-1] / lv[-2]) <= \
+            2.0 * level_run.MIN_READABLE_STEP
         # nothing was played above the level already known to be short
         assert max(played) <= 0.69
     finally:

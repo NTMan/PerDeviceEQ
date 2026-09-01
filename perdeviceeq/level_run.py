@@ -309,14 +309,24 @@ class AutoLevel:
 # Two decibels is the floor, measured rather than chosen: two sweeps of
 # one rig at one level disagree by about two tenths of a decibel, so a
 # 2 dB step is read with room and a 1 dB step is not.
-# HOW BOLDLY THE MAP STRIDES while the rig keeps answering, and it is
-# not the same as the finest step it can read. Below the border every
-# rung reads alike -- his Tanchjim gave eight identical rows of zeros
-# over fourteen decibels -- so sweeps spent there buy nothing. Eight
-# decibels covers ground quickly and still halves twice to land inside
-# the two decibels two sweeps can be told apart by.
-MAP_STRIDE_DB = 8.0
-MAP_STEP_DB = MAP_STRIDE_DB     # the walk's opening step
+# HOW WIDE THE MAP'S STEP IS, and it is chosen for the BORDER rather
+# than for speed.
+#
+# A bold stride does cover ground: eight decibels a rung reaches the
+# top in two sweeps where two decibels takes four. But a border can
+# only be pinned as tightly as the step that found it. A bracket
+# narrower than two readable steps cannot be split -- each half would
+# be under the two decibels two sweeps can be told apart by -- so a
+# stride of eight leaves a bracket of about four and stops there,
+# whatever else it does.
+#
+# Measured on his JBL, one rig, one sitting: a walk of 2 dB rungs went
+# 74, 80, 87 and bracketed the border at 80-87%, which is 2.2 dB wide
+# and contains the 84-85% where he hears the change. A walk of 8 dB
+# rungs went 74, 86 and bracketed 74-86% -- 3.9 dB, no narrower than
+# the stride, and it cannot be improved. One sweep saved, half the
+# precision lost, and the border is the whole point.
+MAP_STEP_DB = 2.0
 MAP_MAX_RUNGS = 8
 
 
@@ -427,15 +437,12 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             if clipped:
                 stopped = "capture"
                 break
-            # WHERE THE NEXT RUNG GOES. Below the border everything
-            # answers in full and every rung reads the same: his
-            # Tanchjim gave eight identical rows of zeros over
-            # fourteen decibels. Spending sweeps there buys nothing,
-            # so the walk STRIDES while the answer keeps coming and
-            # HALVES once it stops -- the border is what changes, and
-            # that is where the sweeps should go.
+            # WHERE THE NEXT RUNG GOES. The walk climbs in a readable
+            # step while the answer keeps coming, and HALVES once it
+            # stops -- the border is what changes, and that is where
+            # the sweeps are worth spending.
             #
-            # It strides by prediction, never by hope. The peak
+            # It climbs by prediction, never by hope. The peak
             # follows the level one for one, so the walk knows before
             # it plays where a step would land, and it will not put a
             # rung past the capture ceiling. And it strides only from
