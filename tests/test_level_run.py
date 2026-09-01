@@ -499,3 +499,48 @@ def test_the_map_records_what_stopped_it():
     finally:
         level_run._play_rung = real_rung
         level_run.pw_backend.backend = real_backend
+
+
+def test_an_interrupted_search_is_not_a_search():
+    """A level settled on days ago, a new search started by accident,
+    caught and stopped -- and the half-finished walk used to overwrite
+    the good number with wherever it happened to be standing.
+
+    Half a walk knows nothing, so it answers None and every caller
+    keeps what it had."""
+    freqs = np.asarray(mc.log_grid())
+
+    class Got:
+        mag_db = None
+        thd_db = None
+        thd_noise_db = None
+        snr_db = 45.0
+
+    def play(back, name, sink, source, wav, duration, channels,
+             sweep, fr, analyze, v, play_map):
+        g = Got()
+        g.mag_db = np.zeros(len(freqs))
+        g.thd_db = np.full(len(freqs), -60.0)
+        g.thd_noise_db = np.full(len(freqs), -80.0)
+        return None, -30.0, False, g
+
+    class Back:
+        def moratorium_begin(self, *a, **k):
+            pass
+
+        def moratorium_end(self, *a, **k):
+            pass
+
+    real_backend = level_run.pw_backend.backend
+    real_rung = level_run._play_rung
+    level_run.pw_backend.backend = lambda: Back()
+    level_run._play_rung = play
+    try:
+        vol, probes = level_run.hunt(
+            {"name": "x"}, {"name": "y"}, 2, sink_name="x",
+            freqs=freqs, should_stop=lambda: True)
+        assert vol is None
+        assert probes == []
+    finally:
+        level_run._play_rung = real_rung
+        level_run.pw_backend.backend = real_backend

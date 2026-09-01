@@ -4327,6 +4327,13 @@ class MeasureWindow(Adw.Window):
         # two want opposite things. But the tedious half -- the quiet
         # rungs, the approach -- is already behind us, so this costs
         # three or four sweeps rather than a walk of its own.
+        if vol is None:
+            # AN INTERRUPTED SEARCH IS NOT A SEARCH. Half a walk knows
+            # nothing, and letting it through would overwrite a level
+            # that was settled properly -- his case, and an ordinary
+            # one: a search started by accident and stopped in time
+            # must leave what was there alone.
+            return None, None
         if not self._stop_asked:
             try:
                 rungs = level_run.headroom_map(
@@ -4407,9 +4414,15 @@ class MeasureWindow(Adw.Window):
             self._assert_capture_gain()
             if self._level_only:
                 result["level"], result["found"] = self._hunt_level(ch)
-                self._post_status(
-                    "%s: level %d%%"
-                    % (self.ch_keys[ch], round(100 * result["level"])))
+                if result["level"] is None:
+                    self._post_status("%s: search stopped -- the level "
+                                      "is unchanged"
+                                      % self.ch_keys[ch])
+                else:
+                    self._post_status(
+                        "%s: level %d%%"
+                        % (self.ch_keys[ch],
+                           round(100 * result["level"])))
             else:
                 self.session.set_level(self._take_level)
                 result["outcome"] = self.session.take(

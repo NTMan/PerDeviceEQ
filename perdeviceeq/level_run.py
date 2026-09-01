@@ -646,10 +646,18 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
     v = start_volume(start)
     probes = []
     back = pw_backend.backend()
+    # A SEARCH THAT WAS INTERRUPTED IS NOT A SEARCH, and the caller
+    # has to be able to tell. His case, and it is the ordinary one:
+    # a level was settled on days ago, a new search is started by
+    # accident, he catches it and stops -- and the half-finished walk
+    # then overwrites the good number with wherever it happened to be
+    # standing. Answering None lets a caller keep what it had.
+    interrupted = False
 
     try:
         for step in range(1, int(max_adjust) + 1):
             if should_stop is not None and should_stop():
+                interrupted = True
                 break
             # BEFORE THE SOUND, not after it
             if on_level is not None:
@@ -699,6 +707,8 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
         except OSError:
             pass
 
+    if interrupted:
+        return None, probes
     # nothing satisfied every question: hand back the best seen rather
     # than nothing, and let the caller say so
     if ctl.ok is not None:

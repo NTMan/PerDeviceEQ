@@ -84,8 +84,11 @@ def watch_the_hunt(sink, src, width, column, play=None):
                "id": src["id"]},
         width, sink_name=sink["name"], analyze=column, on_probe=said,
         play_map=play)
-    print("\n  ANSWER: %.0f%%" % (100 * vol))
-    return vol
+    if vol is None:
+        print("\n  INTERRUPTED -- no answer, and nothing should be "
+              "overwritten with a half-finished walk")
+    else:
+        print("\n  ANSWER: %.0f%%" % (100 * vol))
     if probes:
         last = probes[-1]
         print("  last sweep: peak %.1f dBFS, SNR %s"
@@ -95,6 +98,7 @@ def watch_the_hunt(sink, src, width, column, play=None):
           "hardware,")
     print("  because a moratorium takes the measurement volume as a "
           "parameter.")
+    return vol
 
 
 def main():

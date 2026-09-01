@@ -116,8 +116,13 @@ def measure(a):
                 sweep=ses.sweep, freqs=ses.freqs,
                 pre_silence=cfg.pre_silence,
                 post_silence=cfg.post_silence, on_probe=said)
-            print("level       : %.0f%%" % (100 * vol))
-            ses.set_level(vol, found=level_run.summary(vol, probes))
+            if vol is None:
+                print("level       : search interrupted -- keeping the "
+                      "level that was already set")
+            else:
+                print("level       : %.0f%%" % (100 * vol))
+                ses.set_level(vol,
+                              found=level_run.summary(vol, probes))
         print("Artifacts   : %s" % ses.outdir)
         accepted = 0
         while accepted < a.takes:
