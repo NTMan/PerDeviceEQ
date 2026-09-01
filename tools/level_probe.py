@@ -63,7 +63,7 @@ def find(entries, needle):
 
 
 
-def watch_the_hunt(sink, src, width, column):
+def watch_the_hunt(sink, src, width, column, play=None):
     """Drive the same search the window drives, and report it."""
     print("  %-6s %-10s %-9s %-7s %-11s %-7s %s"
           % ("step", "phase", "peak", "SNR", "THD@1k", "margin", "level"))
@@ -82,8 +82,10 @@ def watch_the_hunt(sink, src, width, column):
     vol, probes = level_run.hunt(
         sink, {"name": pw_backend.entry_node(src["name"]),
                "id": src["id"]},
-        width, sink_name=sink["name"], analyze=column, on_probe=said)
+        width, sink_name=sink["name"], analyze=column, on_probe=said,
+        play_map=play)
     print("\n  ANSWER: %.0f%%" % (100 * vol))
+    return vol
     if probes:
         last = probes[-1]
         print("  last sweep: peak %.1f dBFS, SNR %s"
@@ -100,6 +102,18 @@ def main():
     ap.add_argument("--sink", required=True)
     ap.add_argument("--mic", required=True)
     ap.add_argument("--column", type=int, default=0)
+    ap.add_argument("--leave", action="store_true",
+                    help="leave the sink AT the level the hunt found. "
+                         "Without it the moratorium puts the volume "
+                         "back where it was, which is what happens "
+                         "during a real measurement")
+    ap.add_argument("--play", metavar="POS",
+                    help="channel position to play into, e.g. FL or FR. "
+                         "PipeWire routes a mono sweep by NAME, so this "
+                         "sounds ONE speaker; without it the sink "
+                         "decides, and a stereo pair playing together "
+                         "combs at the microphone. --column is about "
+                         "the MICROPHONE and settles nothing here")
     a = ap.parse_args()
 
     sink = find(pw_backend.list_sinks(), a.sink)
@@ -114,16 +128,33 @@ def main():
     print("output : %s" % sink["name"])
     print("mic    : %s  channel %d of %d\n"
           % (src["name"], a.column, width))
+    if a.play:
+        print("playing: %s only" % a.play)
     print("SWEEPS WILL PLAY. Keep the room quiet and do not move the rig.\n")
 
     try:
-        watch_the_hunt(sink, src, width, a.column)
+        vol = watch_the_hunt(sink, src, width, a.column, a.play)
+        if a.leave and vol is not None:
+            # THE MORATORIUM PUTS THE VOLUME BACK. Every probe sets the
+            # measurement level and restores it on the way out, so a
+            # hunt ends with the knob exactly where it started -- the
+            # docstring's "the level is where the hunt left it" is
+            # about the ANSWER being the whole product, not about the
+            # sink. A second tool that means to start where the hunt
+            # settled therefore starts somewhere else entirely: his
+            # map read 94% after a hunt that answered 74%, found less
+            # than one step of room below the capture ceiling, and
+            # stopped after a single rung.
+            pw_backend.set_sink_volume(sink["id"], vol)
+            print("  and the sink is left at %.0f%%" % (100 * vol))
     except KeyboardInterrupt:
         print("\nstopped.")
     except (RuntimeError, ValueError) as exc:
         print("%s" % exc)
         return 1
-    print("\nthe level is where the hunt left it")
+    print("\nthe answer is the whole product: nothing is left on the "
+          "hardware,\nand the sink's own volume is back where it was "
+          "unless --leave said otherwise")
     return 0
 
 
