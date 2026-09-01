@@ -15,11 +15,13 @@ measure_prefs (mic profiles + per-sink recall). A sweep blocks for
 seconds, so take() runs on a worker thread and results are marshalled
 back with GLib.idle_add, the same pattern meter.py uses for capture.
 """
+import copy
 import math
 import os
 import re
 import threading
 import time
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -4344,7 +4346,52 @@ class MeasureWindow(Adw.Window):
                 rungs = None
             if rungs:
                 self.session.set_headroom(self.ch_keys[ch], rungs)
+                self._store_headroom(self.ch_keys[ch], rungs)
         return vol, level_run.summary(vol, probes)
+
+    def _store_headroom(self, ch_key, rungs):
+        """Write the map into the bound profile straight away.
+
+        A map used to reach the profile only when a whole measurement
+        was saved, so re-walking a rig meant re-measuring it -- and
+        the graph went on drawing yesterday's two rungs. The search IS
+        the remeasure for this: it walks the rig and knows the answer
+        by the time it returns.
+
+        IT CARRIES ITS OWN PROVENANCE, because a map belongs to a
+        CHAIN and not to a rig. The analogue knob on his iLoud, the
+        sink, the microphone's place -- change any of them and the map
+        is about a machine that no longer exists, and nothing in the
+        profile would notice. So the date and the sink it was walked
+        through ride with it, and a reader can see when the two stopped
+        matching.
+        """
+        store = getattr(self.parent, "store", None)
+        pid = self.edit_pid
+        if store is None or not pid:
+            # a fresh measurement has no profile to write into yet --
+            # its map rides into the profile the session builds
+            return
+        prof = store.get(pid)
+        if not prof or not (prof.get("measurement") or {}).get("sessions"):
+            return
+        prof = copy.deepcopy(prof)
+        sess = prof["measurement"]["sessions"]
+        sid = sorted(sess)[-1]
+        blk = sess[sid]
+        hr = dict(blk.get("headroom") or {})
+        hr[str(ch_key)] = list(rungs)
+        blk["headroom"] = hr
+        blk["headroom_walked"] = {
+            "utc": datetime.now(timezone.utc).isoformat(
+                timespec="seconds").replace("+00:00", "Z"),
+            "sink": self.session.sink_ident.get("name")}
+        try:
+            store.save_user(prof)
+        except OSError:
+            return
+        if hasattr(self.parent, "_canvas_refresh"):
+            GLib.idle_add(self.parent._canvas_refresh)
 
     def _measure_worker(self, ch):
         """One take on a worker thread, or one level search.

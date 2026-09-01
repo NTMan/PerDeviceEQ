@@ -716,3 +716,31 @@ def test_the_session_carries_the_headroom_map():
     class Bare(S):
         _headroom = {}
     assert measure_build._session_block(Bare())["headroom"] is None
+
+
+def test_a_map_carries_when_and_through_what_it_was_walked():
+    """A map belongs to a CHAIN and not to a rig: the analogue knob on
+    a speaker, the sink, where the microphone stands -- change any of
+    them and the map describes a machine that no longer exists, and
+    nothing in the profile would notice.
+
+    So the date and the sink ride with it, and a reader can see when
+    the two stopped matching."""
+    class S:
+        sink_ident = {"name": "n", "description": "d", "device_api": "a"}
+        sweep = type("W", (), {"n_samples": 131072, "fs": 48000,
+                               "f_start": 20.0, "f_end": 20000.0,
+                               "level_dbfs": -6.0, "duration_s": 2.73})()
+        started_utc = None
+        eq_state = None
+        path_clean = None
+        _level_found = None
+        _headroom = {"FL": [{"level": 0.80, "peak_dbfs": -8.3,
+                             "spl_db": None, "heard_offset_db": -40.0,
+                             "mag_db": [-10.0]}]}
+    blk = measure_build._session_block(S())
+    assert blk["headroom"]["FL"][0]["level"] == 0.80
+    # the session block itself does not invent provenance: the writer
+    # that updates a profile in place adds it, because only it knows
+    # the walk happened now rather than when the takes were made
+    assert "headroom_walked" not in blk
