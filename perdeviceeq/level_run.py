@@ -273,9 +273,19 @@ class AutoLevel:
         return v * 10.0 ** (db / 60.0) if db > 0.0 else v
 
 
-MAP_STEP_DB = 4.0           # bold while the rig answers, halved on a
-#                             shortfall; the ceiling is then bracketed
-MAP_MAX_RUNGS = 6
+# THE MAP WALKS IN THE FINEST STEP IT CAN READ, which is not the step
+# the search uses. They want different things: a search wants the
+# ceiling quickly and a bold step gets there in three sweeps, while the
+# map's output is a CURVE ALONG THE KNOB and its step is that curve's
+# resolution. His JBL Tour Pro 3 came back with rungs at 80% and 93%
+# and nothing between: the curve could only be green or red, while he
+# could hear the change well before 93%.
+#
+# Two decibels is the floor, measured rather than chosen: two sweeps of
+# one rig at one level disagree by about two tenths of a decibel, so a
+# 2 dB step is read with room and a 1 dB step is not.
+MAP_STEP_DB = 2.0           # == MIN_READABLE_STEP, declared below
+MAP_MAX_RUNGS = 8
 
 
 def headroom_map(sink, source, channels, start_volume, sink_name=None,
@@ -322,12 +332,11 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
     wav = write_sweep_files(outdir, sweep, pre, post)
     duration = pre + sweep.duration_s + post
     back = pw_backend.backend()
-    ppo = getattr(mc, "GRID_PPO", 96)
 
     rungs = []
+    exact = []              # (level, peak) unrounded, for the decisions
     v = _clamp(start_volume)
     step = float(step_db)
-    lo = hi = None
     try:
         for i in range(int(max_rungs)):
             if should_stop is not None and should_stop():
@@ -344,6 +353,13 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             off = (float(got.noise_dbfs) - float(got.signal_dbfs)
                    if got.noise_dbfs is not None
                    and got.signal_dbfs is not None else None)
+            # ROUNDING IS FOR STORAGE, NOT FOR ARITHMETIC. The walk
+            # keeps exact levels and peaks for its own decisions: with
+            # a 2 dB step and a peak rounded to two places, the step
+            # between two rungs comes out 1.99 and the comparison that
+            # asks for MIN_READABLE_STEP throws it away -- so no
+            # bracket ever forms and the walk marches to the top.
+            exact.append((float(v), float(peak_db)))
             rungs.append({"level": round(float(v), 4),
                           "peak_dbfs": round(peak_db, 2),
                           "spl_db": None,
@@ -354,43 +370,29 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                                      for x in mag]})
             if clipped:
                 break
-            # read against the loudest rung QUIETER than this one:
-            # halving steps BACK, so the rung played last is not
-            # always the loudest played
-            below = None
-            for r in rungs[:-1]:
-                if r["level"] < v and (below is None
-                                       or r["level"] > below["level"]):
-                    below = r
-            if below is not None:
-                asked = asked_db((below["level"], below["peak_dbfs"]),
-                                 (v, peak_db))
-                if asked >= MIN_READABLE_STEP and off is not None:
-                    prev = np.array([np.nan if x is None else x
-                                     for x in below["mag_db"]], float)
-                    short, _ = shortfall(prev, mag, mag - off, asked,
-                                         freqs, ppo)
-                    if short.any():
-                        hi = v if hi is None else min(hi, v)
-                    else:
-                        lo = v if lo is None else max(lo, v)
-            if lo and hi:
-                span = 60.0 * math.log10(hi / lo)
-                # splitting must leave a readable step in each half
-                if span < 2.0 * MIN_READABLE_STEP:
-                    break
-                step = span / 2.0
-                v = lo
+            # A MAP DOES NOT BRACKET. Closing on a ceiling is the
+            # SEARCH's job -- it wants one number and stops as soon as
+            # it has it. Every rung here is a point of a curve, and
+            # the rungs ABOVE a ceiling are the interesting ones: they
+            # are where the loss grows. So the walk simply climbs in
+            # the finest step it can read until a brake stops it.
             # the peak follows the level one for one, so the walk
             # knows before it plays where a step would land
             from_peak = peak_db
-            for r in rungs:
-                if abs(r["level"] - v) < 1e-9:
-                    from_peak = r["peak_dbfs"]
+            for lv, pk in exact:
+                if abs(lv - v) < 1e-9:
+                    from_peak = pk
             take = min(step, stop_peak_dbfs - from_peak)
             if take < MIN_READABLE_STEP:
                 break
-            v = _clamp(v * 10.0 ** (take / 60.0))
+            nxt = _clamp(v * 10.0 ** (take / 60.0))
+            # AND THE KNOB HAS A TOP. Once it is there the walk cannot
+            # buy another rung, and asking for one plays the same sweep
+            # again and again -- a synthetic rig with room to spare
+            # took five identical rungs at 100%.
+            if nxt <= v + 1e-9:
+                break
+            v = nxt
     finally:
         for fn in os.listdir(outdir):
             try:
@@ -434,7 +436,8 @@ def summary(volume, probes):
 # recovered, and short of half the step is short by any reading.
 ANSWER_SHORT = 0.5          # of the asked step; below this it is scatter
 HEARD_OVER_NOISE_DB = 10.0  # a rung speaks only where it was heard
-MIN_READABLE_STEP = 2.0     # measured: the scatter between sweeps is
+MIN_READABLE_STEP = MAP_STEP_DB
+#                             measured: the scatter between sweeps is
 #                             two tenths of a decibel, so a 2 dB step
 #                             is read with room and a 1 dB step is not
 
