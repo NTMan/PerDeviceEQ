@@ -284,7 +284,14 @@ class AutoLevel:
 # Two decibels is the floor, measured rather than chosen: two sweeps of
 # one rig at one level disagree by about two tenths of a decibel, so a
 # 2 dB step is read with room and a 1 dB step is not.
-MAP_STEP_DB = 2.0           # == MIN_READABLE_STEP, declared below
+# HOW BOLDLY THE MAP STRIDES while the rig keeps answering, and it is
+# not the same as the finest step it can read. Below the border every
+# rung reads alike -- his Tanchjim gave eight identical rows of zeros
+# over fourteen decibels -- so sweeps spent there buy nothing. Eight
+# decibels covers ground quickly and still halves twice to land inside
+# the two decibels two sweeps can be told apart by.
+MAP_STRIDE_DB = 8.0
+MAP_STEP_DB = MAP_STRIDE_DB     # the walk's opening step
 MAP_MAX_RUNGS = 8
 
 
@@ -332,6 +339,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
     wav = write_sweep_files(outdir, sweep, pre, post)
     duration = pre + sweep.duration_s + post
     back = pw_backend.backend()
+    ppo = getattr(mc, "GRID_PPO", 96)
 
     rungs = []
     exact = []              # (level, peak) unrounded, for the decisions
@@ -358,6 +366,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
     # Three of his five rigs stop at the microphone rather than at
     # themselves, so the difference is not a corner case.
     stopped = "rungs"
+    hi_lv = None            # the quietest level known to fall short
     try:
         for i in range(int(max_rungs)):
             if should_stop is not None and should_stop():
@@ -393,14 +402,72 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             if clipped:
                 stopped = "capture"
                 break
-            # A MAP DOES NOT BRACKET. Closing on a ceiling is the
-            # SEARCH's job -- it wants one number and stops as soon as
-            # it has it. Every rung here is a point of a curve, and
-            # the rungs ABOVE a ceiling are the interesting ones: they
-            # are where the loss grows. So the walk simply climbs in
-            # the finest step it can read until a brake stops it.
+            # WHERE THE NEXT RUNG GOES. Below the border everything
+            # answers in full and every rung reads the same: his
+            # Tanchjim gave eight identical rows of zeros over
+            # fourteen decibels. Spending sweeps there buys nothing,
+            # so the walk STRIDES while the answer keeps coming and
+            # HALVES once it stops -- the border is what changes, and
+            # that is where the sweeps should go.
+            #
+            # It strides by prediction, never by hope. The peak
+            # follows the level one for one, so the walk knows before
+            # it plays where a step would land, and it will not put a
+            # rung past the capture ceiling. And it strides only from
+            # a rung that came back HEALTHY: a bold jump from a rung
+            # that was already short would land somewhere nobody
+            # asked for, which on an earphone is not a three-second
+            # inconvenience.
+            short = False
+            below = None
+            for k in range(len(rungs) - 1):
+                if exact[k][0] < v and (below is None
+                                        or exact[k][0] > exact[below][0]):
+                    below = k
+            if below is not None and off is not None:
+                asked = asked_db(exact[below], (v, peak_db))
+                if asked >= MIN_READABLE_STEP:
+                    prev = np.array([np.nan if x is None else x
+                                     for x in rungs[below]["mag_db"]],
+                                    float)
+                    sh, _ok = shortfall(prev, mag, mag - off, asked,
+                                        freqs, ppo)
+                    short = bool(sh.any())
+            if short:
+                # the border is between this rung and the one below:
+                # close on it rather than climbing away from it
+                lo_lv = exact[below][0] if below is not None else None
+                if lo_lv is None:
+                    stopped = "rungs"
+                    break
+                hi_lv = v if hi_lv is None else min(hi_lv, v)
+                span = 60.0 * math.log10(hi_lv / lo_lv)
+                if span < 2.0 * MIN_READABLE_STEP:
+                    stopped = "border"
+                    break
+                step = span / 2.0
+                v = lo_lv
+            else:
+                step = float(step_db)
+                # AND A KNOWN-SHORT LEVEL IS A CEILING. Without this
+                # the walk halves down to a healthy rung, then strides
+                # boldly again and sails straight over the rung it had
+                # just found short: 50, 68 (short), 58, and then 79 --
+                # bracketing a border it had already passed. Once a
+                # level is known to fall short, nothing above it is
+                # worth a sweep.
+                if hi_lv is not None:
+                    room = 60.0 * math.log10(hi_lv / v)
+                    if room < 2.0 * MIN_READABLE_STEP:
+                        stopped = "border"
+                        break
+                    step = min(step, room / 2.0)
             # the peak follows the level one for one, so the walk
             # knows before it plays where a step would land
+            # the peak follows the level one for one, so the walk
+            # knows before it plays where a step would land -- and it
+            # asks the rung it is stepping FROM, which after a halving
+            # is not the rung played last
             from_peak = peak_db
             for lv, pk in exact:
                 if abs(lv - v) < 1e-9:
@@ -463,7 +530,7 @@ def summary(volume, probes):
 # recovered, and short of half the step is short by any reading.
 ANSWER_SHORT = 0.5          # of the asked step; below this it is scatter
 HEARD_OVER_NOISE_DB = 10.0  # a rung speaks only where it was heard
-MIN_READABLE_STEP = MAP_STEP_DB
+MIN_READABLE_STEP = 2.0
 #                             measured: the scatter between sweeps is
 #                             two tenths of a decibel, so a 2 dB step
 #                             is read with room and a 1 dB step is not

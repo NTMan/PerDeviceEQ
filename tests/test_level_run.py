@@ -544,3 +544,57 @@ def test_an_interrupted_search_is_not_a_search():
     finally:
         level_run._play_rung = real_rung
         level_run.pw_backend.backend = real_backend
+
+
+def test_the_map_strides_while_the_rig_answers():
+    """Below the border every rung reads alike -- his Tanchjim gave
+    eight identical rows of zeros over fourteen decibels -- so sweeps
+    spent there buy nothing. The walk strides while the answer keeps
+    coming and halves once it stops, which is where the sweeps are
+    worth spending.
+
+    And a level known to fall short is a CEILING: without that the
+    walk halves down to a healthy rung, strides boldly again and
+    sails over the very rung it had just found short."""
+    freqs = np.asarray(mc.log_grid())
+    played = []
+
+    class Got:
+        def __init__(self, mag):
+            self.mag_db = mag
+            self.noise_dbfs = -80.0
+            self.signal_dbfs = -40.0
+
+    def rig(border):
+        def play(back, name, sink, source, wav, duration, channels,
+                 sweep, fr, analyze, v, play_map):
+            played.append(v)
+            db = 60.0 * math.log10(v / 0.5)
+            mag = np.full(len(freqs), db)
+            inb = (freqs >= 20.0) & (freqs <= 90.0)
+            mag[inb] -= 2.0 * max(0.0, 60.0 * math.log10(v / border))
+            return None, -30.0 + db, False, Got(mag)
+        return play
+
+    class Back:
+        def moratorium_begin(self, *a, **k):
+            pass
+
+        def moratorium_end(self, *a, **k):
+            pass
+
+    real_backend = level_run.pw_backend.backend
+    real_rung = level_run._play_rung
+    level_run.pw_backend.backend = lambda: Back()
+    try:
+        level_run._play_rung = rig(0.62)
+        rungs = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
+                                       0.5, sink_name="x", freqs=freqs)
+        # three sweeps, not eight, and the border is bracketed
+        assert len(played) <= 4
+        assert rungs[-1]["stopped_by"] == "border"
+        # nothing was played above the level already known to be short
+        assert max(played) <= 0.69
+    finally:
+        level_run._play_rung = real_rung
+        level_run.pw_backend.backend = real_backend
