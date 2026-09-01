@@ -79,11 +79,23 @@ def watch_the_hunt(sink, src, width, column, play=None):
                  "n/a" if p.margin_db is None else "%+.1f dB" % p.margin_db,
                  100 * p.volume))
 
+    def about_to(v, step):
+        """BEFORE the sweep, not after it.
+
+        The table below prints a rung once it has played, which is
+        too late to be a warning: by then the level has already been
+        in someone's ears. The window that drives this same hunt has
+        announced it beforehand since the near miss with the wrong
+        earphone in the coupler; a tool run by hand, into a coupler,
+        has more need of it and not less.
+        """
+        print("  %-6d %-10s %.0f%%" % (step, "playing", 100 * v))
+
     vol, probes = level_run.hunt(
         sink, {"name": pw_backend.entry_node(src["name"]),
                "id": src["id"]},
         width, sink_name=sink["name"], analyze=column, on_probe=said,
-        play_map=play)
+        on_level=about_to, play_map=play)
     if vol is None:
         print("\n  INTERRUPTED -- no answer, and nothing should be "
               "overwritten with a half-finished walk")
@@ -94,10 +106,6 @@ def watch_the_hunt(sink, src, width, column, play=None):
         print("  last sweep: peak %.1f dBFS, SNR %s"
               % (last.peak_dbfs,
                  "n/a" if last.snr_db is None else "%.1f dB" % last.snr_db))
-    print("\n  the number is the whole product: nothing was left on the "
-          "hardware,")
-    print("  because a moratorium takes the measurement volume as a "
-          "parameter.")
     return vol
 
 
