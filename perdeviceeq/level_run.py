@@ -337,9 +337,31 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
     exact = []              # (level, peak) unrounded, for the decisions
     v = _clamp(start_volume)
     step = float(step_db)
+    # WHAT STOPPED THE WALK. It never stops because the rig gave out
+    # -- a map does not bracket, it climbs past a ceiling on purpose,
+    # since the rungs above one are where the loss grows. So the
+    # reason is always about the WALK: "capture" when the microphone
+    # ran out of room, "knob" when the volume is at its top, "rungs"
+    # when the budget of sweeps ran out, "asked" when a caller said
+    # stop.
+    #
+    # It is recorded because it decides what may be said about levels
+    # ABOVE the loudest rung. If the top rung already shows a loss,
+    # louder is worse and that may be stated: the mechanisms here are
+    # monotone in level -- a port breaks up faster with flow, a driver
+    # runs further out of stroke, a limiter clamps harder. But if the
+    # top rung is clean and the CAPTURE stopped us, nothing at all is
+    # known up there and the rig may well be fine: his Tanchjim
+    # answered every rung of fourteen decibels and stopped only
+    # because the microphone did.
+    #
+    # Three of his five rigs stop at the microphone rather than at
+    # themselves, so the difference is not a corner case.
+    stopped = "rungs"
     try:
         for i in range(int(max_rungs)):
             if should_stop is not None and should_stop():
+                stopped = "asked"
                 break
             if on_level is not None:
                 on_level(v, i + 1)
@@ -369,6 +391,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                                      else round(float(x), 2)
                                      for x in mag]})
             if clipped:
+                stopped = "capture"
                 break
             # A MAP DOES NOT BRACKET. Closing on a ceiling is the
             # SEARCH's job -- it wants one number and stops as soon as
@@ -384,6 +407,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                     from_peak = pk
             take = min(step, stop_peak_dbfs - from_peak)
             if take < MIN_READABLE_STEP:
+                stopped = "capture"
                 break
             nxt = _clamp(v * 10.0 ** (take / 60.0))
             # AND THE KNOB HAS A TOP. Once it is there the walk cannot
@@ -391,6 +415,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # again and again -- a synthetic rig with room to spare
             # took five identical rungs at 100%.
             if nxt <= v + 1e-9:
+                stopped = "knob"
                 break
             v = nxt
     finally:
@@ -404,6 +429,8 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         except OSError:
             pass
     rungs.sort(key=lambda r: r["level"])
+    if rungs:
+        rungs[-1]["stopped_by"] = stopped
     return rungs
 
 

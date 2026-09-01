@@ -443,3 +443,59 @@ def test_the_step_is_what_arrived_not_what_the_knob_promised():
     # no peak to ask, so the knob is all there is
     got = level_run.asked_db((0.40, None), (0.50, None))
     assert abs(got - 60.0 * math.log10(0.5 / 0.4)) < 1e-9
+
+
+def test_the_map_records_what_stopped_it():
+    """Whether anything may be said about levels ABOVE the loudest
+    rung depends on what ended the walk.
+
+    A clean top rung that ended at the CAPTURE says nothing about
+    louder: his Tanchjim answered every rung of fourteen decibels and
+    stopped only because the microphone ran out of room, and three of
+    his five rigs stop that way. A top rung that already shows a loss
+    does say something, because the mechanisms are monotone in level.
+
+    The rig itself never stops the walk -- a map climbs past a ceiling
+    on purpose, since the rungs above one are where the loss grows."""
+    freqs = np.asarray(mc.log_grid())
+
+    class Got:
+        def __init__(self, mag):
+            self.mag_db = mag
+            self.noise_dbfs = -80.0
+            self.signal_dbfs = -40.0
+
+    def rig(head_db, start):
+        """A rig that answers everything; only the capture limits it."""
+        def play(back, name, sink, source, wav, duration, channels,
+                 sweep, fr, analyze, v, play_map):
+            db = 60.0 * math.log10(v / start)
+            return None, -level_run.AUTO_PEAK_CEIL * 0 - head_db + db, \
+                False, Got(np.full(len(freqs), db))
+        return play
+
+    class Back:
+        def moratorium_begin(self, *a, **k):
+            pass
+
+        def moratorium_end(self, *a, **k):
+            pass
+
+    real_backend = level_run.pw_backend.backend
+    real_rung = level_run._play_rung
+    level_run.pw_backend.backend = lambda: Back()
+    try:
+        # eight decibels of room under the ceiling: the microphone
+        # stops the walk long before the rig would have
+        level_run._play_rung = rig(8.0, 0.5)
+        rungs = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
+                                       0.5, sink_name="x", freqs=freqs)
+        assert rungs[-1]["stopped_by"] == "capture"
+        # and with the volume already at its top there is nowhere to go
+        level_run._play_rung = rig(40.0, 1.0)
+        rungs = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
+                                       1.0, sink_name="x", freqs=freqs)
+        assert rungs[-1]["stopped_by"] == "knob"
+    finally:
+        level_run._play_rung = real_rung
+        level_run.pw_backend.backend = real_backend
