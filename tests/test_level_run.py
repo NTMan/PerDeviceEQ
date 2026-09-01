@@ -657,3 +657,53 @@ def test_a_silent_capture_does_not_send_the_ramp_climbing():
     finally:
         level_run._play_rung = real_rung
         level_run.pw_backend.backend = real_backend
+
+
+def test_a_knob_decibel_is_not_a_decibel():
+    """On a sink with a volume scale of its own the delivered gain
+    outruns the asked one: his JBL answers AVRCP's 128 steps and
+    arrived 7.0 dB louder for 4.1 asked, 1.72 to one.
+
+    A wall that predicts its landing from the knob therefore lands
+    somewhere else, and the bolder the stride the worse it is: two of
+    his rigs came back at 0.0 dBFS, clipped, from a step computed to
+    reach exactly -2.0. The walk measures the ratio as it goes, and
+    before it has one it assumes the worst it has ever seen."""
+    freqs = np.asarray(mc.log_grid())
+    peaks = []
+
+    class Got:
+        def __init__(self, mag):
+            self.mag_db = mag
+            self.noise_dbfs = -80.0
+            self.signal_dbfs = -40.0
+
+    def bluetooth(start, pk0, gain_ratio):
+        """A sink that delivers `gain_ratio` dB for every knob dB."""
+        def play(back, name, sink, source, wav, duration, channels,
+                 sweep, fr, analyze, v, play_map):
+            db = 60.0 * math.log10(v / start) * gain_ratio
+            peaks.append(pk0 + db)
+            return None, pk0 + db, False, \
+                Got(np.full(len(freqs), db))
+        return play
+
+    class Back:
+        def moratorium_begin(self, *a, **k):
+            pass
+
+        def moratorium_end(self, *a, **k):
+            pass
+
+    real_backend = level_run.pw_backend.backend
+    real_rung = level_run._play_rung
+    level_run.pw_backend.backend = lambda: Back()
+    try:
+        level_run._play_rung = bluetooth(0.73, -9.8, 1.72)
+        level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.73,
+                               sink_name="x", freqs=freqs)
+        # nothing was played past the capture ceiling
+        assert max(peaks) <= level_run.AUTO_PEAK_CEIL + 0.1
+    finally:
+        level_run._play_rung = real_rung
+        level_run.pw_backend.backend = real_backend
