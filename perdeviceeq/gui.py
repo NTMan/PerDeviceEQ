@@ -586,22 +586,50 @@ class EqWindow(Adw.ApplicationWindow):
         self._loss_vol = vol
         self.view.set_loss(self._loss_at(vol))
 
+    def _delivered_db(self, freqs):
+        """What the correction adds at each frequency, in dB.
+
+        The preamp takes decibels off everywhere and the filters give
+        some back where they lift, so this is a CURVE and not a
+        number. At a frequency lifted by 10 dB against a preamp of
+        -10 it is zero -- the rig gets exactly what the sweep gave it
+        -- and two octaves up it is -10.
+        """
+        bands = [eq.Band.from_dict(b) if isinstance(b, dict) else b
+                 for b in (self.bands or [])]
+        pre = float(getattr(self, "preamp", 0.0) or 0.0)
+        try:
+            return np.asarray(eq.response_db(pre, bands, list(freqs)),
+                              float)
+        except Exception:
+            return np.full(len(freqs), pre)
+
     def _loss_at(self, volume):
         """Output the rig is not giving at `volume`, per grid point.
 
-        THE MAP IS A FEW MEASURED LEVELS AND NOTHING BETWEEN THEM, so
-        this holds the last rung at or below the knob rather than
-        drawing a line to the next one. His JBL answers in full at
-        77% and loses 3.9 dB at 20 Hz by 90%: the transition is a
-        step, not a slope, and interpolating would put 2 dB at 83%
-        where nothing was measured. Above the loudest rung there is
-        nothing to say at all, so it says nothing.
+        THE SWEEP PLAYED FLAT AND THE MUSIC DOES NOT, so the knob is
+        not the level the rig receives. Every rung of the map was
+        measured with an unattenuated sweep; what a listener plays
+        goes through the correction first, and the correction is a
+        curve. His words for it: the bass arrives at the sweep's own
+        level because the filters give back what the preamp took,
+        while everything that shouts is turned down.
 
-        A LOSS COUNTS ONLY WHERE IT CLEARS THE SPREAD BETWEEN SWEEPS
-        in that band. Six runs of one earphone put that spread at two
-        tenths of a decibel in the midrange and close to a whole one
-        at 20 Hz over Bluetooth, which is why the threshold is a
-        curve taken from the rungs themselves and not one number.
+        So each frequency is read at the rung matching what the rig
+        RECEIVES there -- knob plus correction -- and different
+        frequencies may come from different rungs. On a profile that
+        cuts 10 dB flat, a knob at 80% reads the map's 55% in the
+        midrange and its 80% wherever the filters lift by ten.
+
+        THE MAP IS A FEW MEASURED LEVELS AND NOTHING BETWEEN THEM, so
+        each frequency holds the last rung at or below its delivered
+        level rather than interpolating to the next. His JBL answers
+        in full at 77% and loses 3.9 dB at 90%: the transition is a
+        step, not a slope. Below the quietest rung and above the
+        loudest there is nothing to say, and it says nothing.
+
+        A LOSS COUNTS ONLY WHERE THE MAP CALLS IT ONE, and then only
+        where it clears twice the spread between sweeps in that band.
         """
         p = self.store.get(self.current_pid) or {}
         m = (p.get("measurement") or {})
@@ -614,37 +642,39 @@ class EqWindow(Adw.ApplicationWindow):
         if not maps or not grid or volume is None:
             return None
         lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
+        n = max(len(r["mag_db"]) for rungs in maps for r in rungs)
+        freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
+        # the level the rig actually receives, per frequency
+        with np.errstate(all="ignore"):
+            here = float(volume) * 10.0 ** (
+                self._delivered_db(freqs) / 60.0)
         worst = None
         for rungs in maps:
             base = rungs[0]
-            here = None
-            for r in rungs:
-                if r["level"] <= float(volume) + 1e-9:
-                    here = r
-            if here is None or here is base:
-                continue
-            rise = level_run.asked_db(
-                (base["level"], base.get("peak_dbfs")),
-                (here["level"], here.get("peak_dbfs")))
-            off = here.get("heard_offset_db")
-            if off is None:
-                continue
-            n = len(here["mag_db"])
-            freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
             bm = np.array([np.nan if x is None else float(x)
                            for x in base["mag_db"]], float)
-            cm = np.array([np.nan if x is None else float(x)
-                           for x in here["mag_db"]], float)
-            with np.errstate(all="ignore"):
-                d = level_run.shortfall_db(bm, cm, cm - off, rise,
-                                           freqs, ppo)
-                # TWICE the scatter, because a loss is a DIFFERENCE
-                # of two sweeps and each brings its own. Against a
-                # single take's spread his Denon lit 355 points of
-                # the curve by a fifth of a decibel -- red almost
-                # everywhere, and meaning nothing.
-                d = np.where(d > 2.0 * self._spread(ppo, n), d, 0.0)
-            worst = d if worst is None else np.fmax(worst, d)
+            take = np.zeros(n)
+            for r in rungs[1:]:
+                rise = level_run.asked_db(
+                    (base["level"], base.get("peak_dbfs")),
+                    (r["level"], r.get("peak_dbfs")))
+                off = r.get("heard_offset_db")
+                if off is None or rise < level_run.MIN_READABLE_STEP:
+                    continue
+                cm = np.array([np.nan if x is None else float(x)
+                               for x in r["mag_db"]], float)
+                with np.errstate(all="ignore"):
+                    d = level_run.shortfall_db(bm, cm, cm - off, rise,
+                                               freqs, ppo)
+                    short, _ok = level_run.shortfall(bm, cm, cm - off,
+                                                     rise, freqs, ppo)
+                    d = np.where(short, d, 0.0)
+                    d = np.where(d > 2.0 * self._spread(ppo, n), d, 0.0)
+                # this rung speaks only where the rig is driven at
+                # least as hard as the rung was
+                take = np.where(here >= r["level"] - 1e-9,
+                                np.nan_to_num(d), take)
+            worst = take if worst is None else np.fmax(worst, take)
         if worst is None:
             return None
         return [None if not np.isfinite(v) else float(v) for v in worst]

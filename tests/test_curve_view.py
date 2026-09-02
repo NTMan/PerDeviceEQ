@@ -682,3 +682,30 @@ def test_it_is_no_longer_a_forecast_once_it_carries_a_measurement():
     it is not predicting anything -- it is what comes out. His JBL
     gives 3.9 dB less at 20 Hz past about 80% of the knob."""
     assert _lossy([0.0, 0.0, 3.9])
+
+
+def _delivered(knob, correction_db):
+    """What the rig receives at ONE frequency, in the units the map
+    speaks: the sweeps that built the map played flat, while music
+    goes through the correction first."""
+    return knob * 10.0 ** (correction_db / 60.0)
+
+
+def test_what_the_rig_receives_is_a_curve_not_a_number():
+    """Every rung of the map was measured with an UNATTENUATED sweep.
+    What a listener plays goes through the correction, and the
+    correction is a curve: the preamp takes decibels off everywhere
+    and the filters give some back where they lift.
+
+    His words: the bass arrives at the sweep's own level because the
+    filters return what the preamp took, while everything that shouts
+    is turned down. So different frequencies read different rungs of
+    the same map."""
+    # a preamp of -10 with a 10 dB lift: the rig gets what the sweep
+    # gave it, and the knob reads its own rung
+    assert abs(_delivered(0.80, 0.0) - 0.80) < 1e-9
+    # two octaves up, where nothing is lifted, it reads much lower
+    assert abs(_delivered(0.80, -10.0) - 0.55) < 0.01
+    # and where the correction LIFTS more than the preamp cuts, the
+    # rig is driven harder than the knob suggests
+    assert _delivered(0.80, +4.0) > 0.80
