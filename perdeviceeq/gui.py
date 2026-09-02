@@ -584,7 +584,43 @@ class EqWindow(Adw.ApplicationWindow):
         if abs(vol - (getattr(self, "_loss_vol", None) or -1)) < 1e-4:
             return
         self._loss_vol = vol
-        self.view.set_loss(self._loss_at(vol))
+        loss = self._loss_at(vol)
+        self.view.set_loss(loss)
+        self.view.set_advice(self._loss_advice(loss))
+
+    def _loss_advice(self, loss):
+        """One line: how far past the rig this is, and the floor that
+        would fix it without giving up level.
+
+        BOTH NUMBERS COME OUT OF THE MAP, and neither is new work. How
+        far past is the worst loss on the curve. Where to cut is the
+        TOP of the band the loss lives in -- everything below it is
+        being asked for and not delivered, so a floor there stops
+        asking without touching anything the rig can still do.
+
+        Checked against his ear on the iLoud: the map put the loss in
+        40-92 Hz, he tried a floor at 60 Hz, and the noise went. The
+        top of the band is what the arithmetic offers, which is the
+        same neighbourhood he found by hand.
+        """
+        if not loss:
+            return None
+        a = np.array([np.nan if x is None else float(x) for x in loss],
+                     float)
+        bad = np.isfinite(a) & (a > 0.0)
+        if not bad.any():
+            return None
+        grid = ((self.store.get(self.current_pid) or {})
+                .get("measurement") or {}).get("grid") or {}
+        if not grid:
+            return None
+        lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
+        freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(len(a))])
+        f_lo, f_hi = float(freqs[bad][0]), float(freqs[bad][-1])
+        return ("%s-%s Hz is short by up to %.1f dB; a floor at %s "
+                "asks for none of it"
+                % (_fmt_hz(f_lo), _fmt_hz(f_hi), float(np.nanmax(a)),
+                   _fmt_hz(f_hi)))
 
     def _delivered_db(self, freqs):
         """What the correction adds at each frequency, in dB.

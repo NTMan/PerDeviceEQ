@@ -709,3 +709,39 @@ def test_what_the_rig_receives_is_a_curve_not_a_number():
     # and where the correction LIFTS more than the preamp cuts, the
     # rig is driven harder than the knob suggests
     assert _delivered(0.80, +4.0) > 0.80
+
+
+def _advice_band(loss, freqs):
+    """The band a loss lives in, and the floor that stops asking for
+    it -- the law the advice line states, in the open."""
+    a = [x for x in loss]
+    bad = [i for i, x in enumerate(a)
+           if x is not None and math.isfinite(x) and x > 0]
+    if not bad:
+        return None
+    return freqs[bad[0]], freqs[bad[-1]], max(a[i] for i in bad)
+
+
+def test_the_line_says_where_it_is_short_and_what_floor_stops_it():
+    """The strip and the curve say WHERE a rig runs out and HOW MUCH.
+    A listener still has to decide what to do, and both numbers worth
+    knowing come straight out of the map: how far past this is, and
+    the floor that would stop asking for it.
+
+    The floor offered is the TOP of the band -- everything below is
+    being asked for and not delivered, so a floor there stops asking
+    without touching anything the rig can still do. Checked against
+    his ear on the iLoud: the map put the loss in 40-92 Hz, he tried
+    60 Hz by hand, and the noise went."""
+    freqs = [20.0 * 2 ** (i / 12.0) for i in range(60)]
+    quiet = [0.0] * len(freqs)
+    assert _advice_band(quiet, freqs) is None
+
+    loss = list(quiet)
+    for i, f in enumerate(freqs):
+        if 40.0 <= f <= 92.0:
+            loss[i] = 3.4
+    lo, hi, worst = _advice_band(loss, freqs)
+    assert 39.0 <= lo <= 41.0
+    assert 88.0 <= hi <= 93.0
+    assert worst == 3.4

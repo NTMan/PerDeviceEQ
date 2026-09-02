@@ -149,6 +149,20 @@ class PeqView(Gtk.Box):
         pdrag.connect("drag-end", self._protect_drag_end)
         self.protect_strip.add_controller(pdrag)
         self.append(self.protect_strip)
+
+        # WHAT TO DO ABOUT IT, in one line under the strip. The strip
+        # and the curve say WHERE a rig runs out and HOW MUCH; a
+        # listener still has to decide what to do, and the two things
+        # worth knowing -- how far past this is, and the floor that
+        # would stop asking for it -- both come straight out of the
+        # map. It stays hidden while there is nothing to say.
+        self.advice = Gtk.Label(xalign=0.0)
+        self.advice.add_css_class("dim-label")
+        self.advice.add_css_class("caption")
+        self.advice.set_wrap(True)
+        self.advice.set_visible(False)
+        self.append(self.advice)
+
         self._protect = None
         self._protect_cb = None
         self._protect_drag = None
@@ -238,6 +252,11 @@ class PeqView(Gtk.Box):
     # the step and the rig either delivered it or did not.
     _CUBE_PX = 10
     _CUBE_GAP = 1
+
+    def set_advice(self, text=None):
+        """One line of what to do, or nothing."""
+        self.advice.set_text(text or "")
+        self.advice.set_visible(bool(text))
 
     def set_loss(self, loss=None):
         """Output the rig is not giving at the current level, per grid
