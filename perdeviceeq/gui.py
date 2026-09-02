@@ -631,8 +631,20 @@ class EqWindow(Adw.ApplicationWindow):
         -10 it is zero -- the rig gets exactly what the sweep gave it
         -- and two octaves up it is -10.
         """
+        # THE TASTE IS PART OF WHAT THE RIG RECEIVES. It is not part
+        # of a profile -- it composes over the correction, after it,
+        # for every chain -- and this reading had been leaving it out
+        # entirely. His own layer lifts 50 Hz by twelve decibels, so
+        # the arithmetic was crediting the driver with twelve it never
+        # got to keep, and reported clean at levels where his ear and
+        # a multitone probe both say the rig is four decibels short.
         bands = [eq.Band.from_dict(b) if isinstance(b, dict) else b
                  for b in (self.bands or [])]
+        try:
+            bands += [eq.Band.from_dict(b) if isinstance(b, dict) else b
+                      for b in (self.pref_layers.active_bands() or [])]
+        except Exception:
+            pass
         pre = float(getattr(self, "preamp", 0.0) or 0.0)
         try:
             return np.asarray(eq.response_db(pre, bands, list(freqs)),

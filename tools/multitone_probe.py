@@ -260,21 +260,34 @@ def main():
 
     qpk = 20 * math.log10(max(float(np.max(np.abs(qa))), 1e-9))
     lpk = 20 * math.log10(max(float(np.max(np.abs(la))), 1e-9))
-    asked = lpk - qpk
-    print("  peaks: quiet %.1f dBFS, loud %.1f -- so %.1f dB arrived"
-          % (qpk, lpk, asked))
-    print("  (the peak is the witness: a sink with a scale of its own "
-          "does\n   not deliver the decibels the knob was asked for)\n")
-
     q = read_tones(qa, exact, fs)
     l = read_tones(la, exact, fs)
+
+    # THE CONTROL TONE IS THE WITNESS, not the capture peak. The peak
+    # of this signal is made by the bass -- which is the very thing
+    # suspected of compressing -- so reading the step from it asks the
+    # rig how much it delivered using a ruler the rig itself bent. On
+    # his iLoud the peak grew 4.8 dB while the control tone grew 6.3,
+    # which is the honest step the knob was asked for.
+    #
+    # The control sits above the trouble and takes the whole step, so
+    # it reports what arrived whatever scale the sink keeps.
+    asked = l[-1][0] - q[-1][0]
+    print("  peaks: quiet %.1f dBFS, loud %.1f" % (qpk, lpk))
+    print("  the %.0f Hz control took %.1f dB -- that is what arrived."
+          % (exact[-1], asked))
+    print("  (not the peak: the peak is made by the bass, which is "
+          "what is\n   under suspicion, so it is the one ruler not to "
+          "measure with)\n")
     print("  %-8s %-10s %-10s %-9s %s"
           % ("tone", "quiet", "loud", "took", "verdict"))
     worst = None
-    for ff, (ql, qf), (ll, lf) in zip(exact, q, l):
+    for i, (ff, (ql, qf), (ll, lf)) in enumerate(zip(exact, q, l)):
         took = ll - ql
         heard = ll - lf
-        if heard < level_run.HEARD_OVER_NOISE_DB:
+        if i == len(exact) - 1:
+            said = "the control -- this is what arrived"
+        elif heard < level_run.HEARD_OVER_NOISE_DB:
             said = "not heard over the noise"
         elif took < level_run.ANSWER_SHORT * asked:
             said = "SHORT by %.1f dB" % (asked - took)

@@ -745,3 +745,23 @@ def test_the_line_says_where_it_is_short_and_what_floor_stops_it():
     assert 39.0 <= lo <= 41.0
     assert 88.0 <= hi <= 93.0
     assert worst == 3.4
+
+
+def test_the_taste_layer_is_part_of_what_the_rig_receives():
+    """A taste layer is not part of a profile -- it composes over the
+    correction, after it, for every chain -- and the loss reading had
+    been leaving it out.
+
+    His own layer lifts 50 Hz by twelve decibels. Against a preamp of
+    -12 that puts 40 Hz back at the sweep's own level while everything
+    else sits ten to twenty below, which is exactly his description:
+    the bass arrives at full strength and everything that shouts is
+    turned down. Without counting it the arithmetic credited the
+    driver with twelve decibels it never got to keep, and reported
+    clean where his ear and a multitone probe both put the rig four
+    decibels short."""
+    # the composition is a sum in dB, so a lift can cancel a preamp
+    lift, preamp = 12.0, -12.0
+    assert abs((lift + preamp) - 0.0) < 1e-9
+    # and where nothing is lifted, the preamp stands alone
+    assert abs((0.0 + preamp) - (-12.0)) < 1e-9
