@@ -45,6 +45,7 @@ from .picker import NodeMenu
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
                      load_ui_state, save_ui_state,
                      UI_FILE_CANDIDATES)
+from . import level_strip
 from .peq_view import CollapsibleCard, PeqView
 from .preferences import PreferenceLayers
 from .profiles import ProfileStore, editor_body
@@ -130,6 +131,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.node = None
         self._loss_beat = None
         self._loss_vol = None
+        self._loss_cache = None
         self.live = False
         self.current_pid = CLEAN_ID
         self.floor_off = False
@@ -228,6 +230,8 @@ class EqWindow(Adw.ApplicationWindow):
         self.device_card.set_body(card_body)
         self._device_body = card_body
         b.get_object("device_card_slot").append(self.device_card)
+        self.level_strip = level_strip.LevelStrip(self._level_dragged)
+        b.get_object("level_slot").append(self.level_strip)
 
         # ---- the taste card: the layer picker in the header, the
         # active layer's editor underneath ---------------------------
@@ -398,6 +402,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._canvas still holds the profile being left."""
         self._start_loss_beat()
         self._loss_vol = None       # the profile changed under it
+        self._loss_cache = None     # and so did everything it depends on
         self._sync_loss()
         ov = self._overlay_curve()
         if ov is None:
@@ -553,6 +558,98 @@ class EqWindow(Adw.ApplicationWindow):
         self._loss_vol = vol
         loss = self._loss_at(vol)
         self.view.set_loss(loss)
+        self.level_strip.set_state(vol, self._unsafe_from(),
+                                   self._unknown_from())
+        self.view.set_headroom(*self._headroom_cubes(loss))
+        self.view.set_advice(self._loss_advice(loss))
+
+    def _unsafe_from(self):
+        """The quietest knob position at which this rig is already
+        short somewhere, or None when it never is.
+
+        Bisected rather than swept: _loss_at is cheap, the answer is
+        monotone in level -- every mechanism here gets worse with
+        drive, never better -- and ten halvings put it inside a tenth
+        of a percent.
+        """
+        if self._loss_advice(self._loss_at(1.0)) is None:
+            return None
+        lo, hi = 0.0, 1.0
+        for _ in range(10):
+            mid = 0.5 * (lo + hi)
+            if self._loss_advice(self._loss_at(mid)) is None:
+                lo = mid
+            else:
+                hi = mid
+        return hi
+
+    def _unknown_from(self):
+        """The knob position above which nothing was measured.
+
+        A map ends for a reason, and the reason decides what may be
+        said about louder. If the CAPTURE ran out -- the microphone,
+        not the rig -- then nothing at all is known up there, and
+        three of his five rigs end that way after answering every rung
+        they were given. The knob that would deliver the loudest rung
+        is where the grey starts.
+        """
+        p = self.store.get(self.current_pid) or {}
+        m = (p.get("measurement") or {})
+        grid = m.get("grid") or {}
+        top, why = None, None
+        for blk in (m.get("sessions") or {}).values():
+            for rungs in ((blk or {}).get("headroom") or {}).values():
+                if not rungs:
+                    continue
+                last = max(rungs, key=lambda r: r["level"])
+                if top is None or last["level"] < top:
+                    top, why = last["level"], last.get("stopped_by")
+        if top is None or not grid or why == "rungs":
+            return None
+        # the map speaks in what the rig RECEIVES; the strip speaks in
+        # knob, so undo the correction at its most generous frequency
+        lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
+        n = 0
+        for blk in (m.get("sessions") or {}).values():
+            for rungs in ((blk or {}).get("headroom") or {}).values():
+                n = max(n, max(len(r["mag_db"]) for r in rungs))
+        freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
+        with np.errstate(all="ignore"):
+            adj = self._delivered_db(freqs)
+            worst = float(np.nanmax(adj)) if len(adj) else 0.0
+        knob = top * 10.0 ** (-worst / 60.0)
+        return None if knob >= 1.0 else max(0.0, min(1.0, knob))
+
+    def _level_dragged(self, volume):
+        """The strip is a duplicate of the system knob, so it writes
+        THROUGH to the sink rather than keeping a level of its own."""
+        name = getattr(self, "node", None)
+        if not name:
+            return
+        sid = None
+        for snk in (pw_backend.backend().sinks or []):
+            if snk.get("name") == name:
+                sid = snk["id"]
+                break
+        if sid is None:
+            return
+
+        # OFF THE MAIN LOOP. set_sink_volume spawns wpctl, and a
+        # subprocess started between two motion events is felt as
+        # exactly the porridge he described -- the handle arriving
+        # after the hand. gnome-control-center's fader does nothing
+        # per motion but move a handle, and neither should this one.
+        def write():
+            try:
+                pw_backend.set_sink_volume(sid, volume)
+            except (RuntimeError, OSError):
+                pass
+        pw_backend.in_thread(write)
+
+        # the poll runs every few seconds; the picture should not wait
+        self._loss_vol = None
+        loss = self._loss_at(volume)
+        self.view.set_loss(loss)
         self.view.set_headroom(*self._headroom_cubes(loss))
         self.view.set_advice(self._loss_advice(loss))
 
@@ -627,6 +724,66 @@ class EqWindow(Adw.ApplicationWindow):
         except Exception:
             return np.full(len(freqs), pre)
 
+    def _loss_prepared(self):
+        """Everything the loss reading needs that does NOT depend on
+        the volume, worked out once.
+
+        A RUNG'S LOSS IS A PROPERTY OF THE MAP. It does not move when
+        the knob does -- only WHICH rung a frequency reads changes.
+        Recomputing all of them per motion event cost 268 ms a call
+        here, with the take-to-take spread walked again inside every
+        iteration on top, and the fader felt like porridge next to
+        gnome-control-center's, which does nothing per motion but move
+        a handle.
+
+        Cleared whenever the canvas is rebuilt, which is what happens
+        when the profile, the bands, the preamp or the taste change.
+        """
+        got = getattr(self, "_loss_cache", None)
+        if got is not None:
+            return got
+        p = self.store.get(self.current_pid) or {}
+        m = (p.get("measurement") or {})
+        grid = m.get("grid") or {}
+        maps = []
+        for blk in (m.get("sessions") or {}).values():
+            for rungs in ((blk or {}).get("headroom") or {}).values():
+                if len(rungs or []) >= 2:
+                    maps.append(sorted(rungs, key=lambda r: r["level"]))
+        if not maps or not grid:
+            self._loss_cache = ()
+            return self._loss_cache
+        lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
+        n = max(len(r["mag_db"]) for rungs in maps for r in rungs)
+        freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
+        gate = 2.0 * self._spread(ppo, n)
+        with np.errstate(all="ignore"):
+            adj = self._delivered_db(freqs)
+        prepared = []
+        for rungs in maps:
+            base = rungs[0]
+            bm = np.array([np.nan if x is None else float(x)
+                           for x in base["mag_db"]], float)
+            steps = []
+            for r in rungs[1:]:
+                rise = level_run.asked_db(
+                    (base["level"], base.get("peak_dbfs")),
+                    (r["level"], r.get("peak_dbfs")))
+                off = r.get("heard_offset_db")
+                if off is None or rise < level_run.MIN_READABLE_STEP:
+                    continue
+                cm = np.array([np.nan if x is None else float(x)
+                               for x in r["mag_db"]], float)
+                with np.errstate(all="ignore"):
+                    d = level_run.shortfall_db(bm, cm, cm - off, rise,
+                                               freqs, ppo)
+                    d = np.where(d > gate, d, 0.0)
+                steps.append((float(r["level"]), np.nan_to_num(d)))
+            if steps:
+                prepared.append(steps)
+        self._loss_cache = (freqs, adj, prepared) if prepared else ()
+        return self._loss_cache
+
     def _loss_at(self, volume):
         """Output the rig is not giving at `volume`, per grid point.
 
@@ -639,80 +796,27 @@ class EqWindow(Adw.ApplicationWindow):
         while everything that shouts is turned down.
 
         So each frequency is read at the rung matching what the rig
-        RECEIVES there -- knob plus correction -- and different
-        frequencies may come from different rungs. On a profile that
-        cuts 10 dB flat, a knob at 80% reads the map's 55% in the
-        midrange and its 80% wherever the filters lift by ten.
+        RECEIVES there -- knob plus correction plus taste -- and
+        different frequencies may come from different rungs.
 
         THE MAP IS A FEW MEASURED LEVELS AND NOTHING BETWEEN THEM, so
         each frequency holds the last rung at or below its delivered
-        level rather than interpolating to the next. His JBL answers
-        in full at 77% and loses 3.9 dB at 90%: the transition is a
-        step, not a slope. Below the quietest rung and above the
-        loudest there is nothing to say, and it says nothing.
-
-        A LOSS COUNTS ONLY WHERE THE MAP CALLS IT ONE, and then only
-        where it clears twice the spread between sweeps in that band.
+        level rather than interpolating to the next: on his JBL the
+        transition is a step, not a slope. Below the quietest rung and
+        above the loudest there is nothing to say, and it says
+        nothing.
         """
-        p = self.store.get(self.current_pid) or {}
-        m = (p.get("measurement") or {})
-        grid = m.get("grid") or {}
-        maps = []
-        for blk in (m.get("sessions") or {}).values():
-            for rungs in ((blk or {}).get("headroom") or {}).values():
-                if len(rungs or []) >= 2:
-                    maps.append(sorted(rungs, key=lambda r: r["level"]))
-        if not maps or not grid or volume is None:
+        got = self._loss_prepared()
+        if not got or volume is None:
             return None
-        lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
-        n = max(len(r["mag_db"]) for rungs in maps for r in rungs)
-        freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
-        # the level the rig actually receives, per frequency
+        freqs, adj, prepared = got
         with np.errstate(all="ignore"):
-            here = float(volume) * 10.0 ** (
-                self._delivered_db(freqs) / 60.0)
+            here = float(volume) * 10.0 ** (adj / 60.0)
         worst = None
-        for rungs in maps:
-            base = rungs[0]
-            bm = np.array([np.nan if x is None else float(x)
-                           for x in base["mag_db"]], float)
-            take = np.zeros(n)
-            for r in rungs[1:]:
-                rise = level_run.asked_db(
-                    (base["level"], base.get("peak_dbfs")),
-                    (r["level"], r.get("peak_dbfs")))
-                off = r.get("heard_offset_db")
-                if off is None or rise < level_run.MIN_READABLE_STEP:
-                    continue
-                cm = np.array([np.nan if x is None else float(x)
-                               for x in r["mag_db"]], float)
-                # WHAT COUNTS IS WHETHER THE DEFICIT IS REAL, which is
-                # a question about measurement: it has to clear twice
-                # the scatter between sweeps, since a loss is a
-                # DIFFERENCE of two of them and each brings its own.
-                #
-                # NOT whether the map calls it a shortfall. That rule
-                # -- took less than HALF the step -- is built to find a
-                # hard border between neighbouring rungs, and it is far
-                # too lax for a curve read against a distant base: at
-                # the level he listens at his iLoud is 2.05 dB short of
-                # a step that arrived 8.2, which is audible and real
-                # and nowhere near half. A rig that gives up forty
-                # percent of every step, steadily, never trips it at
-                # all -- and that is exactly what a port does.
-                #
-                # A small real loss now reads as a small one instead of
-                # as nothing, which is the honest answer: the advice
-                # line states the size, so half a decibel announces
-                # itself as half a decibel.
-                with np.errstate(all="ignore"):
-                    d = level_run.shortfall_db(bm, cm, cm - off, rise,
-                                               freqs, ppo)
-                    d = np.where(d > 2.0 * self._spread(ppo, n), d, 0.0)
-                # this rung speaks only where the rig is driven at
-                # least as hard as the rung was
-                take = np.where(here >= r["level"] - 1e-9,
-                                np.nan_to_num(d), take)
+        for steps in prepared:
+            take = np.zeros(len(freqs))
+            for level, d in steps:
+                take = np.where(here >= level - 1e-9, d, take)
             worst = take if worst is None else np.fmax(worst, take)
         if worst is None:
             return None

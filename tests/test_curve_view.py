@@ -792,3 +792,109 @@ def test_nothing_under_a_decibel_earns_a_sentence():
     floor = 0.5 * 2.0
     assert 0.04 < floor                     # the Tanchjim stays quiet
     assert 2.6 > floor                      # the iLoud speaks
+
+
+def _unsafe_from(speaks_at):
+    """The bisection the level strip shades from: the quietest knob
+    position at which the rig is already short somewhere. Monotone in
+    level, because every mechanism here gets worse with drive and
+    never better."""
+    if not speaks_at(1.0):
+        return None
+    lo, hi = 0.0, 1.0
+    for _ in range(10):
+        mid = 0.5 * (lo + hi)
+        if speaks_at(mid):
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
+def test_the_strip_shades_from_where_the_rig_stops_following():
+    """His iLoud is short from about 70% of the knob upward, with his
+    correction and his taste; he settled at 60% by ear on the
+    orchestral passage. A rig that never runs short gets no shading at
+    all, which is his Tanchjim at every position."""
+    edge = _unsafe_from(lambda v: v >= 0.70)
+    assert 0.69 < edge < 0.71
+    assert _unsafe_from(lambda v: False) is None
+
+
+def test_unmeasured_is_neither_safe_nor_unsafe():
+    """A map ends for a reason, and the reason decides what may be
+    said about louder. If the CAPTURE ran out -- the microphone, not
+    the rig -- nothing at all is known above the loudest rung, and
+    three of his five rigs end that way after answering every rung
+    they were given.
+
+    Drawing that stretch as safe would be the same invention this
+    project keeps removing, in the comfortable direction. It gets its
+    own colour, and it is painted OVER the others so it never inherits
+    their verdict."""
+    def grey_from(stopped_by, top_level):
+        """The law: a budget that ran out explored what it meant to,
+        so nothing is unknown; any other ending leaves the ground
+        above the loudest rung unmeasured."""
+        return None if stopped_by == "rungs" else top_level
+
+    assert grey_from("rungs", 0.80) is None
+    assert grey_from("capture", 0.80) == 0.80
+    assert grey_from("knob", 0.95) == 0.95
+    assert grey_from("asked", 0.50) == 0.50
+
+
+def test_a_fader_belongs_to_the_hand_while_it_is_held():
+    """Two things made the level fader feel like porridge. A write per
+    motion event, each a wpctl subprocess, so the hand outruns the
+    pipe. And the poller then handing back a level it read up to three
+    seconds ago, jumping the handle to where the hand no longer is.
+
+    pavucontrol's answer is the right one: while a control is dragged
+    it belongs to the hand, and what the server says about it is
+    ignored until the hand lets go and the server has had a moment to
+    agree."""
+    write_every, hold_after = 0.05, 0.60
+
+    def handle(level, dragging, since_release, from_server):
+        """Where the handle sits: the hand's position while held and
+        for a moment after, the server's once it has agreed."""
+        if dragging or since_release < hold_after:
+            return level
+        return from_server
+
+    # mid-drag the server's stale reading is ignored
+    assert handle(0.62, True, 0.0, 0.85) == 0.62
+    # and for a moment after, while the write is still in flight
+    assert handle(0.62, False, 0.1, 0.85) == 0.62
+    # then the server has the last word again
+    assert handle(0.62, False, 1.0, 0.62) == 0.62
+    assert write_every < hold_after
+
+
+def test_a_rungs_loss_does_not_move_when_the_knob_does():
+    """What changes with the volume is WHICH rung a frequency reads,
+    not what that rung lost. Recomputing every rung per motion event
+    cost 268 ms a call, with the take-to-take spread walked again
+    inside each iteration, and the fader felt like porridge next to
+    gnome-control-center's -- which does nothing per motion but move a
+    handle.
+
+    Worked out once and selected per frequency, the same reading takes
+    half a millisecond."""
+    # two rungs, each with its own loss, and a delivered level that
+    # picks between them
+    rungs = [(0.60, 0.0), (0.70, 2.5), (0.80, 4.0)]
+
+    def read(delivered):
+        take = 0.0
+        for level, loss in rungs:
+            if delivered >= level:
+                take = loss
+        return take
+
+    assert read(0.65) == 0.0
+    assert read(0.75) == 2.5
+    assert read(0.95) == 4.0
+    # and nothing about the rungs themselves changed between those
+    assert rungs[1][1] == 2.5

@@ -155,6 +155,16 @@
                 <property name="orientation">vertical</property>
                 <property name="spacing">18</property>
 
+                <!-- the playback level, with the stretch of it the
+                     rig cannot follow. ABOVE the device card because
+                     it is not about the device's correction: it is
+                     the level the whole chain is driven at, and the
+                     thing a listener reaches for first. Built in
+                     code, hidden until a profile has a map. -->
+                <child>
+                  <object class="GtkBox" id="level_slot"/>
+                </child>
+
                 <!-- the device card: profile picker + trust in the
                      header, the collapsible editor underneath; the
                      card itself is built in code -->
