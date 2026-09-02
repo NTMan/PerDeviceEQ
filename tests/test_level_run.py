@@ -550,19 +550,17 @@ def test_an_interrupted_search_is_not_a_search():
         level_run.pw_backend.backend = real_backend
 
 
-def test_the_map_climbs_and_halves_at_the_border():
-    """A border can only be pinned as tightly as the step that found
-    it, so the step is chosen for the border rather than for speed.
+def test_the_map_climbs_past_the_border_rather_than_closing_on_it():
+    """Bracketing is the SEARCH's job: it wants one number and stops
+    the moment it has it. A map's rungs are the points of a curve, and
+    the ones ABOVE a border are the most valuable, because that is
+    where the loss grows.
 
-    Measured on his JBL: 2 dB rungs went 74, 80, 87 and bracketed the
-    border at 80-87%, containing the 84-85% where he hears the change.
-    An 8 dB stride went 74, 86 and bracketed 74-86% -- no narrower
-    than the stride, and unimprovable, since halving 3.9 dB leaves
-    less than a readable step in each half.
-
-    And a level known to fall short is a CEILING: without that the
-    walk halves down to a healthy rung, climbs again and sails over
-    the very rung it had just found short."""
+    An earlier cut walked boldly and halved onto the border, then
+    stopped: on his iLoud it ended at 57% while the level he listens
+    at delivers 70% at 40 Hz, so it stopped just short of the only
+    part he needed. With an even step the border is located to that
+    step anyway."""
     freqs = np.asarray(mc.log_grid())
     played = []
 
@@ -576,11 +574,11 @@ def test_the_map_climbs_and_halves_at_the_border():
         def play(back, name, sink, source, wav, duration, channels,
                  sweep, fr, analyze, v, play_map):
             played.append(v)
-            db = 60.0 * math.log10(v / 0.5)
+            db = 60.0 * math.log10(v / 0.42)
             mag = np.full(len(freqs), db)
-            inb = (freqs >= 20.0) & (freqs <= 90.0)
+            inb = (freqs >= 40.0) & (freqs <= 90.0)
             mag[inb] -= 2.0 * max(0.0, 60.0 * math.log10(v / border))
-            return None, -30.0 + db, False, Got(mag)
+            return None, -22.0 + db, False, Got(mag)
         return play
 
     class Back:
@@ -594,20 +592,19 @@ def test_the_map_climbs_and_halves_at_the_border():
     real_rung = level_run._play_rung
     level_run.pw_backend.backend = lambda: Back()
     try:
-        level_run._play_rung = rig(0.62)
+        level_run._play_rung = rig(0.55)
         rungs = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
-                                       0.5, sink_name="x", freqs=freqs)
-        assert rungs[-1]["stopped_by"] == "border"
-        # the bracket is no wider than two readable steps
+                                       0.42, sink_name="x", freqs=freqs)
         lv = sorted(r["level"] for r in rungs)
-        assert 60.0 * math.log10(lv[-1] / lv[-2]) <= \
-            2.0 * level_run.MIN_READABLE_STEP
-        # nothing was played above the level already known to be short
-        assert max(played) <= 0.69
+        # it did not stop at the border it found around 55%
+        assert lv[-1] > 0.80
+        # and the rungs are an even ladder, so the border is located
+        # to one step without any closing in
+        steps = [60.0 * math.log10(b / a) for a, b in zip(lv, lv[1:])]
+        assert max(steps) - min(steps) < 0.3
     finally:
         level_run._play_rung = real_rung
         level_run.pw_backend.backend = real_backend
-
 
 def test_a_silent_capture_does_not_send_the_ramp_climbing():
     """SILENCE IS NOT QUIETNESS. analyze_take reports -120 dBFS for a
