@@ -327,7 +327,28 @@ class AutoLevel:
 # the stride, and it cannot be improved. One sweep saved, half the
 # precision lost, and the border is the whole point.
 MAP_STEP_DB = 2.0
-MAP_MAX_RUNGS = 8
+MAP_MAX_RUNGS = 12
+
+# HOW FAR BELOW THE SEARCH'S LEVEL THE MAP BEGINS.
+#
+# It used to begin AT it, and that put the whole map in the wrong
+# place. The search settles at the loudest level a take can be made
+# at; a listener plays much quieter than that, because the correction
+# stands in between. On his iLoud, with a preamp of -17.5 and his
+# taste layer, a knob at 85% delivers the equivalent of 58% at 50 Hz
+# and 47% at 80 -- while the map ran from 66% up. Almost the whole
+# range he actually uses lay BELOW the quietest rung, where a map
+# says nothing at all.
+#
+# The other half of the same mistake: every rung is read against the
+# first one, so the first one's loss is zero BY DEFINITION. Starting
+# at the search's level meant the reference was the loudest level in
+# the profile, and whether the rig was already running out there was
+# never asked. A reference has to be quiet enough to be believed.
+#
+# Twelve decibels reaches down to a third of the search's level, which
+# on his rigs covers where he listens and leaves room under it.
+MAP_BELOW_DB = 12.0
 
 
 def headroom_map(sink, source, channels, start_volume, sink_name=None,

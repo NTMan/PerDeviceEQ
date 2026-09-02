@@ -712,3 +712,24 @@ def test_a_knob_decibel_is_not_a_decibel():
     finally:
         level_run._play_rung = real_rung
         level_run.pw_backend.backend = real_backend
+
+
+def test_the_map_begins_below_the_search_not_at_it():
+    """The search settles at the loudest level a take can be made at.
+    A listener plays much quieter, because the correction stands in
+    between: on his iLoud, with a preamp of -17.5 and his taste layer,
+    a knob at 85% delivers the equivalent of 58% at 50 Hz and 47% at
+    80 -- while the map ran from 66% up, so almost the whole range he
+    uses lay BELOW the quietest rung, where a map says nothing.
+
+    And the reference matters as much as the range: every rung is read
+    against the first, whose loss is therefore zero BY DEFINITION.
+    Starting at the search's level made the loudest level in the
+    profile the thing everything else was believed against."""
+    assert level_run.MAP_BELOW_DB > 0
+    start = 0.66 * 10.0 ** (-level_run.MAP_BELOW_DB / 60.0)
+    assert 0.40 < start < 0.45
+    # and the budget reaches back up past where the search settled
+    top = start * 10.0 ** (level_run.MAP_STEP_DB
+                           * (level_run.MAP_MAX_RUNGS - 1) / 60.0)
+    assert top > 0.66

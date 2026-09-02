@@ -4339,7 +4339,8 @@ class MeasureWindow(Adw.Window):
                 rungs = level_run.headroom_map(
                     self.session.sink, self.session.source,
                     self.session.cfg.channels,
-                    vol, sink_name=self.session.sink_ident["name"],
+                    vol * 10.0 ** (-level_run.MAP_BELOW_DB / 60.0),
+                    sink_name=self.session.sink_ident["name"],
                     analyze=self.mic_of[ch],
                     sweep=self.session.sweep, freqs=self.session.freqs,
                     pre_silence=self.session.cfg.pre_silence,
