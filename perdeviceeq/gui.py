@@ -563,7 +563,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.view.set_headroom(*self._headroom_cubes(loss))
         self.view.set_advice(self._loss_advice(loss))
 
-    def _unsafe_from(self):
+    def _unsafe_from(self, adj=None):
         """The quietest knob position at which this rig is already
         short somewhere, or None when it never is.
 
@@ -576,8 +576,9 @@ class EqWindow(Adw.ApplicationWindow):
         if not got:
             return None
         freqs, _prepared = got
-        with np.errstate(all="ignore"):
-            adj = self._delivered_db(freqs)
+        if adj is None:
+            with np.errstate(all="ignore"):
+                adj = self._delivered_db(freqs)
         if self._loss_advice(self._loss_at(1.0, adj)) is None:
             return None
         lo, hi = 0.0, 1.0
@@ -700,7 +701,7 @@ class EqWindow(Adw.ApplicationWindow):
                 % (_fmt_hz(f_lo), _fmt_hz(f_hi), float(np.nanmax(a)),
                    _fmt_hz(f_hi)))
 
-    def _delivered_db(self, freqs):
+    def _delivered_db(self, freqs, preamp=None):
         """What the correction adds at each frequency, in dB.
 
         The preamp takes decibels off everywhere and the filters give
@@ -737,7 +738,8 @@ class EqWindow(Adw.ApplicationWindow):
                       for b in (self.pref_layers.active_bands() or [])]
         except Exception:
             pass
-        pre = float(getattr(self, "preamp", 0.0) or 0.0)
+        pre = (float(getattr(self, "preamp", 0.0) or 0.0)
+               if preamp is None else float(preamp))
         try:
             return np.asarray(eq.response_db(pre, bands, list(freqs)),
                               float)
@@ -1896,17 +1898,37 @@ class EqWindow(Adw.ApplicationWindow):
             # The correction's curve is computed once here and handed
             # to both readings, since it is the same curve and the
             # only part of this that the floor moved.
+            # WITH THE PREAMP THAT WILL BE APPLIED, not the one still
+            # showing. Auto follows the chain's own peak, so cutting
+            # the floor lower lets it off its leash and everything
+            # gets louder again -- and Auto only recomputes when the
+            # hand lets go. So the sweep promised a clear zone and the
+            # release took it back: he watched the red leave the strip
+            # and return the moment he let go.
+            #
+            # That is not an oscillation to be tamed. Every floor
+            # position has exactly ONE answer; the preview was simply
+            # showing a different one. Costing half a millisecond a
+            # channel, the honest answer is affordable per motion, and
+            # what he sweeps past is now what he gets.
             got = self._loss_prepared()
             adj = None
             if got:
+                pre = self.preamp
+                if self.preamp_auto:
+                    t = self._auto_preamp_db()
+                    pre = -t if t else 0.0
                 with np.errstate(all="ignore"):
-                    adj = self._delivered_db(got[0])
+                    adj = self._delivered_db(got[0], preamp=pre)
             loss = self._loss_at(self._loss_vol, adj)
             self.view.set_loss(loss)
             self.view.set_headroom(*self._headroom_cubes(loss))
             self.view.set_advice(self._loss_advice(loss))
+            # THE SAME adj FOR BOTH. The cubes were reading the
+            # preamp that will land while the shading was still
+            # reading the one on screen: one picture, two answers.
             self.level_strip.set_state(self._loss_vol,
-                                       self._unsafe_from(),
+                                       self._unsafe_from(adj),
                                        self._unknown_from())
         # THE SWEEP IS HEARD ON EVERY MOVE; THE CANVAS IS NOT REBUILT.
         # A rebuild throws away everything the loss reading precomputed

@@ -176,3 +176,55 @@ def test_the_vectorised_response_agrees_with_the_scalar_one():
     finally:
         _eq._np = keep
     assert max(abs(a - b) for a, b in zip(fast, slow)) < 1e-6
+
+
+def test_auto_preamp_spends_what_the_floor_frees():
+    """Cutting the floor higher frees headroom, and Auto hands it
+    straight back as loudness -- so with Auto on, sweeping the floor
+    does not clear the zone. His words for the shape of it: he watched
+    the red leave the strip while sweeping and return the instant he
+    let go, because Auto only recomputed on release.
+
+    That is not an oscillation to tame. Every floor position has
+    exactly ONE answer; the preview was showing a different one. With
+    the preamp that will actually land:
+
+        floor off  preamp -15.6  safe to 65%
+        40 Hz      preamp  -7.6  safe to 52%
+        60 Hz      preamp  -2.3  safe to 57%
+
+    and with the preamp held fixed instead, the floor does buy what it
+    looks like it should: 70%, 76%, 95%, no limit at all."""
+    auto = [(None, -15.6, 0.65), (40.0, -7.6, 0.52), (60.0, -2.3, 0.57)]
+    # Auto climbs toward zero as the floor rises: the headroom is spent
+    pres = [p for _hz, p, _s in auto]
+    assert pres == sorted(pres)
+    # and the safe level does NOT simply improve with the floor
+    assert auto[1][2] < auto[0][2]
+
+    fixed = [(None, 0.70), (40.0, 0.76), (50.0, 0.95), (60.0, None)]
+    seen = [v for _hz, v in fixed if v is not None]
+    assert seen == sorted(seen)
+
+
+def test_chasing_cubes_with_auto_on_moves_them_up_the_band():
+    """His observation, and the numbers agree: with Auto on, cutting
+    the floor frees headroom that Auto hands to the NEIGHBOURING
+    bands, so the marks do not go away -- they climb.
+
+        floor off   3 marks, 32-63 Hz,   safe to 65%
+        40 Hz       6 marks, up to 126,  safe to 52%
+        80 Hz       3 marks, 63-126,     safe to 67%
+        100 Hz      2 marks, 80-126,     safe to 77%
+
+    Which is honest behaviour of the pair rather than a fault in the
+    picture, and it was invisible until the preview started using the
+    preamp that will land. The practical reading: a floor buys
+    something only with Auto off."""
+    marks = [(None, 3, 0.65), (40.0, 6, 0.52), (80.0, 3, 0.67),
+             (100.0, 2, 0.77)]
+    # cutting to 40 Hz makes BOTH worse: more marks, less level
+    assert marks[1][1] > marks[0][1]
+    assert marks[1][2] < marks[0][2]
+    # and the marks never reach zero, they only move up
+    assert min(n for _hz, n, _s in marks) > 0
