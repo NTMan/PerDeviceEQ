@@ -607,7 +607,14 @@ class EqWindow(Adw.ApplicationWindow):
             return None
         a = np.array([np.nan if x is None else float(x) for x in loss],
                      float)
-        bad = np.isfinite(a) & (a > 0.0)
+        # AND IT HAS TO BE WORTH SAYING. A deficit can clear the
+        # scatter and still be nothing: his Tanchjim reads a few
+        # hundredths of a decibel around 35 Hz, which is a true
+        # measurement and an absurd sentence -- "short by up to
+        # 0.0 dB". Half a readable step is the smallest thing worth a
+        # line, and it is not a taste: below it two sweeps of one rig
+        # are already closer together than the claim.
+        bad = np.isfinite(a) & (a >= 0.5 * level_run.MIN_READABLE_STEP)
         if not bad.any():
             return None
         grid = ((self.store.get(self.current_pid) or {})
@@ -711,12 +718,28 @@ class EqWindow(Adw.ApplicationWindow):
                     continue
                 cm = np.array([np.nan if x is None else float(x)
                                for x in r["mag_db"]], float)
+                # WHAT COUNTS IS WHETHER THE DEFICIT IS REAL, which is
+                # a question about measurement: it has to clear twice
+                # the scatter between sweeps, since a loss is a
+                # DIFFERENCE of two of them and each brings its own.
+                #
+                # NOT whether the map calls it a shortfall. That rule
+                # -- took less than HALF the step -- is built to find a
+                # hard border between neighbouring rungs, and it is far
+                # too lax for a curve read against a distant base: at
+                # the level he listens at his iLoud is 2.05 dB short of
+                # a step that arrived 8.2, which is audible and real
+                # and nowhere near half. A rig that gives up forty
+                # percent of every step, steadily, never trips it at
+                # all -- and that is exactly what a port does.
+                #
+                # A small real loss now reads as a small one instead of
+                # as nothing, which is the honest answer: the advice
+                # line states the size, so half a decibel announces
+                # itself as half a decibel.
                 with np.errstate(all="ignore"):
                     d = level_run.shortfall_db(bm, cm, cm - off, rise,
                                                freqs, ppo)
-                    short, _ok = level_run.shortfall(bm, cm, cm - off,
-                                                     rise, freqs, ppo)
-                    d = np.where(short, d, 0.0)
                     d = np.where(d > 2.0 * self._spread(ppo, n), d, 0.0)
                 # this rung speaks only where the rig is driven at
                 # least as hard as the rung was

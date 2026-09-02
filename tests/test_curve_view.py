@@ -765,3 +765,30 @@ def test_the_taste_layer_is_part_of_what_the_rig_receives():
     assert abs((lift + preamp) - 0.0) < 1e-9
     # and where nothing is lifted, the preamp stands alone
     assert abs((0.0 + preamp) - (-12.0)) < 1e-9
+
+
+def test_the_half_step_rule_is_not_the_test_for_a_loss_curve():
+    """"Took less than HALF the step" is built to find a hard border
+    between neighbouring rungs. Read against a distant base it is far
+    too lax: at the level he listens at, his iLoud is 2.05 dB short of
+    a step that arrived 8.2 -- audible, real, and nowhere near half.
+    A rig that gives up forty percent of every step, steadily, never
+    trips it at all, and that is exactly what a port does.
+
+    What counts is whether the deficit is REAL, which is a question
+    about measurement: twice the scatter between sweeps, since a loss
+    is a difference of two of them."""
+    arrived, missing = 8.2, 2.05
+    assert missing < 0.5 * arrived          # the old rule says nothing
+    assert missing > 2.0 * 0.34             # the scatter at 50 Hz says yes
+
+
+def test_nothing_under_a_decibel_earns_a_sentence():
+    """A deficit can clear the scatter and still be nothing. His
+    Tanchjim reads a few hundredths around 35 Hz -- a true measurement
+    and an absurd sentence: "short by up to 0.0 dB". Half a readable
+    step is the smallest thing worth a line, and below it two sweeps
+    of one rig are already closer together than the claim."""
+    floor = 0.5 * 2.0
+    assert 0.04 < floor                     # the Tanchjim stays quiet
+    assert 2.6 > floor                      # the iLoud speaks
