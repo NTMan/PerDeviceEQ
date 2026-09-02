@@ -127,6 +127,20 @@ His goal lines ride each task verbatim.
    own strip. The automatic floor was tried and its result did
    not satisfy the architect, which decided task 6.
 
+   **Second verdict (Sep 2): the warning band was withdrawn,
+   and what replaced it is task 12.** The band asked "how much
+   dirt is there", and that question has no honest answer here:
+   every form of it is a RATIO, and a denominator collapses
+   wherever a rig makes no sound. It marked a subwoofer's own
+   silence below 35 Hz as dirt; it marked an iLoud driven past
+   its port as defective when the cure was less level, and
+   advised cutting to 100 Hz where 54 was the answer. Three
+   separate gates were fitted over one evening and the leak
+   came back in a new place each time. The take fields stay --
+   a rag in the port drops `hohd_db` by twenty decibels, which
+   no other quantity showed so cleanly, and they guard the take
+   itself, since deconvolution assumes linearity.
+
 6. **[Off | Auto | Set].** The Floor button becomes an
    AdwToggleGroup (he found the component) speaking the
    Measure grammar: Auto follows the zone -- and after task 5,
@@ -143,6 +157,16 @@ His goal lines ride each task verbatim.
    marks on the graph. A hand sweeps the handle until the
    distortion is gone -- and since Aug 26 it sweeps with the
    warning band under its finger rather than by ear alone.
+
+   **Amended (Sep 2).** The band is gone; the handle now sweeps
+   with the level map under it -- the strip's shading, the red
+   stretch of the curve, the marks and the advice line, all
+   live. Two findings the handle had been hiding: the floor was
+   never in the chain the reading summed, so cutting lower
+   walked the safe level BACKWARDS; and with the preamp on Auto
+   a floor buys no level at all, because Auto hands the freed
+   headroom to the neighbouring bands and the marks climb
+   rather than clear.
 
 7. **Exchange v1, the design round.** The agenda grew by his
    questions: is it a service page of its own; what lives on
@@ -222,6 +246,81 @@ His goal lines ride each task verbatim.
     a constant, a target captured by the capsule a hand points
     at. Twenty-two commits, and the architect's verdict on it
     is that it was worth the disruption.
+
+12. **What the rig can still follow.** What task 5's band was
+    reaching for, asked as a question that has an answer. Not
+    "how much dirt", which is a ratio and collapses, but "at
+    what level does this rig stop delivering what the
+    correction asks of it" -- measured against the rig itself
+    at another volume, so there is no denominator.
+
+    **Shipped (Sep 2).** The level search walks upward from
+    well below the level it measures at, two decibels a rung,
+    and stores level, capture peak and the whole response for
+    each. The editor reads it at the level the rig RECEIVES --
+    knob, preamp, filters, floor and taste, which is a curve
+    and not a number -- and paints the volume strip green, red
+    and grey, turns the prediction red exactly where it stops
+    predicting and renames it, marks the thirds of an octave,
+    and states in one line what floor would stop asking.
+
+    Confirmed by ear three times on two rigs: the search
+    bracketed an iLoud at 41-48% and he heard it clear at 44%;
+    a floor at 54 Hz cured a passage that a floor at 100 would
+    have over-cut; and the marks on an orchestral passage went
+    out at the level he had settled on by hand. A multitone
+    probe, asked because a sweep was suspected of being too
+    gentle, agreed with the sweep to within its own scatter --
+    that suspicion is dead, and the excursion arithmetic in
+    tools/multitone_probe.py says why.
+
+    **Open, in order of how soon it will be wanted:**
+
+    (a) *The map belongs to a chain, not to a transducer.* A
+    Tanchjim measured through an M62 says nothing useful about
+    the same earphone on a weaker amplifier: the knob is not a
+    common axis. The fix is cheap and not yet cut -- the
+    capture PEAK is the common axis, it is already stored on
+    every rung, and the peak follows the level one for one
+    within a chain, so a single level_probe run on the new
+    amplifier anchors the old map. Until then the profile
+    should say the map is chain-bound.
+
+    (b) *One sweep per rung.* Over Bluetooth one rung came back
+    0.78 dB down across a few dozen hertz that two other runs
+    did not see. Two sweeps and a median would settle it, at
+    twice the time; no wired rig has shown it.
+
+    (c) *One earphone's map did not repeat, and the reason is
+    probably the seal.* Three walks of a JBL Tour Pro 3
+    differed by 1.5 dB below 30 Hz with nothing at 1 kHz, which
+    is a seal's signature and not a driver's. It is ONE
+    specimen: the other five in-ear rigs here never showed it,
+    but neither did they show a border at all -- theirs sits
+    above what the microphone can reach, so there was nothing
+    to disagree about. What is established is that a rig
+    standing AT its border reads unstably there, not that
+    in-ear maps expire.
+
+    (d) *Above the loudest rung, nothing is known* whenever the
+    capture rather than the rig ended the walk, which is three
+    of the five rigs here. Lowering the input gain for the walk
+    would move that ceiling -- and this is the one place in the
+    project where the right answer may be NOT to measure.
+
+    A loudspeaker past its border makes a noise. An earphone
+    past its border may not come back, and the reason its
+    border is out of reach is usually that its own amplifier
+    cannot get there -- on a TWS the weak amplifier IS the
+    protection. Driving an IEM from something that can reach
+    removes it and puts the consequence on us. His words:
+    a serious amplifier kills an IEM.
+
+    So if the ceiling is ever moved, it moves for rigs whose
+    own chain could already reach the border, and grey stays
+    grey for the rest. Reaching further into an earphone is not
+    a better measurement; it is a broken earphone with a
+    number attached.
 
 ## Shipped
 
@@ -501,6 +600,35 @@ His goal lines ride each task verbatim.
 
 ## Established facts worth not re-deriving
 
+- **The capture peak follows the level one for one within a chain**, and
+  is the only honest witness of what a rig was given: a knob decibel is
+  not a decibel on a sink that keeps its own scale. His JBL delivered
+  7.0 dB for 4.1 asked, 1.72 to one, and a wall predicting from the knob
+  clipped two rigs at 0.0 dBFS.
+- **Two sweeps of one rig at one level disagree by about 0.2 dB** in the
+  midrange and close to 1 dB at 20 Hz over Bluetooth. So a 2 dB step is
+  readable and a 1 dB step is not, and a loss must clear TWICE that
+  scatter to be worth drawing -- a loss is a difference of two sweeps.
+- **Loss of output is monotone in level.** A port breaks up faster with
+  flow, a driver runs further out of stroke, a limiter clamps harder;
+  none of them improves with drive. That is what lets a bisection find
+  where the shading starts, and what lets "below the quietest rung" be
+  inferred rather than measured.
+- **A sweep is not too gentle.** The suspicion that music asks more,
+  because the whole low end arrives together, does not survive the
+  arithmetic: displacement goes as amplitude over frequency squared, so
+  at a fixed peak every added tone makes the others quieter faster than
+  the sum grows. Four bass tones ask 0.87 of a lone tone's stroke, seven
+  ask 0.67, and one real track's loudest bass moment asks 0.68. A
+  multitone probe agreed with the sweep to within its own scatter.
+- **Held tones do not sag.** Across five rigs a tone held for 8-23 s
+  moved by at most 0.19 dB, so neither voice-coil heating nor a slow
+  limiter acts within a walk. Pauses between rungs are unnecessary.
+- **With the preamp on Auto, a floor buys no level.** Auto follows the
+  chain's own peak, so headroom the floor frees goes straight to the
+  neighbouring bands: the marks climb rather than clear. Cutting to
+  40 Hz doubled them and cost thirteen points; with the preamp fixed the
+  same floor took the safe level from 70% to 95%.
 - Sink monitor in in-node topology = **pre-EQ** (Bypass-toggle experiment);
   post-EQ level must be computed, which the meter does.
 - BT absolute volume does not protect against quantization clipping;

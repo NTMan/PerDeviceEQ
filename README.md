@@ -286,12 +286,17 @@ The tool does not choose; it shows what each choice costs.
   different level at the same percentage, and the map does not
   transfer. Re-run the level search after changing amplifier, sink, or
   the card's own analogue level.
-* **On in-ear rigs it lasts until they are reseated.** Three walks of
-  one earphone here differed by 1.5 dB below 30 Hz with nothing at
-  1 kHz — the signature of a seal, not of a driver.
+* **A rig standing AT its border reads unstably there.** Three walks of
+  one earphone differed by 1.5 dB below 30 Hz with nothing at 1 kHz —
+  a seal's signature rather than a driver's. That is one specimen; the
+  other in-ear rigs tested never showed it, but neither did they reach
+  a border at all.
 * **Above the loudest rung it says nothing** when the capture stopped
   the walk rather than the rig. That is the grey stretch, and on three
-  of the five rigs tested here it is where the walk ended.
+  of the five rigs tested here it is where the walk ended. It is left
+  grey on purpose: a speaker past its border makes a noise, an earphone
+  past its border may not come back, and on a TWS the modest amplifier
+  is itself the protection.
 * **Each rung is one sweep.** Over Bluetooth one of them came back
   0.78 dB down across a few dozen hertz that two other runs did not
   see. Wired rigs have not shown it.
