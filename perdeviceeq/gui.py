@@ -572,12 +572,18 @@ class EqWindow(Adw.ApplicationWindow):
         drive, never better -- and ten halvings put it inside a tenth
         of a percent.
         """
-        if self._loss_advice(self._loss_at(1.0)) is None:
+        got = self._loss_prepared()
+        if not got:
+            return None
+        freqs, _prepared = got
+        with np.errstate(all="ignore"):
+            adj = self._delivered_db(freqs)
+        if self._loss_advice(self._loss_at(1.0, adj)) is None:
             return None
         lo, hi = 0.0, 1.0
         for _ in range(10):
             mid = 0.5 * (lo + hi)
-            if self._loss_advice(self._loss_at(mid)) is None:
+            if self._loss_advice(self._loss_at(mid, adj)) is None:
                 lo = mid
             else:
                 hi = mid
@@ -712,6 +718,20 @@ class EqWindow(Adw.ApplicationWindow):
         # a multitone probe both say the rig is four decibels short.
         bands = [eq.Band.from_dict(b) if isinstance(b, dict) else b
                  for b in (self.bands or [])]
+        # THE FLOOR IS IN THE CHAIN TOO, and it was the one part of it
+        # this reading could not see. floor_bands() never enters a
+        # profile's band lists -- it is assembled when the graph is
+        # built -- so cutting the floor lower did nothing here except
+        # let the automatic preamp off its leash, which made
+        # EVERYTHING read louder and walked the safe level backwards.
+        # His words: the harder he cut, the less volume he was
+        # allowed.
+        try:
+            prof = self.store.get(self.current_pid) or {}
+            bands += [eq.Band.from_dict(b)
+                      for b in (eq.floor_bands(prof) or [])]
+        except Exception:
+            pass
         try:
             bands += [eq.Band.from_dict(b) if isinstance(b, dict) else b
                       for b in (self.pref_layers.active_bands() or [])]
@@ -757,8 +777,6 @@ class EqWindow(Adw.ApplicationWindow):
         n = max(len(r["mag_db"]) for rungs in maps for r in rungs)
         freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
         gate = 2.0 * self._spread(ppo, n)
-        with np.errstate(all="ignore"):
-            adj = self._delivered_db(freqs)
         prepared = []
         for rungs in maps:
             base = rungs[0]
@@ -781,10 +799,16 @@ class EqWindow(Adw.ApplicationWindow):
                 steps.append((float(r["level"]), np.nan_to_num(d)))
             if steps:
                 prepared.append(steps)
-        self._loss_cache = (freqs, adj, prepared) if prepared else ()
+        # THE CORRECTION'S OWN CURVE IS NOT CACHED WITH THE MAP. The
+        # map is a property of the rig and costs a sixth of a second
+        # to work out; the correction changes whenever a handle moves
+        # and now costs under a millisecond. Keeping them together
+        # meant a floor drag had to rebuild the whole thing, so the
+        # shading only caught up when the hand let go.
+        self._loss_cache = (freqs, prepared) if prepared else ()
         return self._loss_cache
 
-    def _loss_at(self, volume):
+    def _loss_at(self, volume, adj=None):
         """Output the rig is not giving at `volume`, per grid point.
 
         THE SWEEP PLAYED FLAT AND THE MUSIC DOES NOT, so the knob is
@@ -809,7 +833,10 @@ class EqWindow(Adw.ApplicationWindow):
         got = self._loss_prepared()
         if not got or volume is None:
             return None
-        freqs, adj, prepared = got
+        freqs, prepared = got
+        if adj is None:
+            with np.errstate(all="ignore"):
+                adj = self._delivered_db(freqs)
         with np.errstate(all="ignore"):
             here = float(volume) * 10.0 ** (adj / 60.0)
         worst = None
@@ -1844,10 +1871,67 @@ class EqWindow(Adw.ApplicationWindow):
         self.floor_hz = p.get("floor_hz")
         if final:
             self.store.save_user(p)
-        self._load_slot(self.cur_ch)
-        self._update_headroom()   # outside the loading gate
-        self._canvas_refresh()
-        self._apply_now()
+        # ONLY THE FLOOR MOVED. _load_slot rebuilds the band table --
+        # GTK widgets, one row per band -- and the floor changes no
+        # bands at all; the clip estimate walks every chain. Doing
+        # either per motion event is why the HANDLE ITSELF lagged the
+        # mouse: the redraw it asks for only happens once the handler
+        # returns, and the handler was rebuilding the editor first.
+        #
+        # A drag needs three things and no more: the floor's own
+        # stages, so the strip and the curve show where it stands; the
+        # curves; and the sound.
+        if final:
+            self._load_slot(self.cur_ch)
+            self._update_headroom()   # outside the loading gate
+        else:
+            self.view.set_floor(eq.floor_bands(p))
+            # EVERYTHING THE FLOOR CHANGES MOVES WITH IT. Cutting
+            # higher is done to buy volume back, and every reading of
+            # that was waiting for the hand to let go: the shading on
+            # the level strip, the red stretch of the curve, the cubes
+            # and the line. The volume fader beside it renames the
+            # curve the instant it crosses -- this one should too.
+            #
+            # The correction's curve is computed once here and handed
+            # to both readings, since it is the same curve and the
+            # only part of this that the floor moved.
+            got = self._loss_prepared()
+            adj = None
+            if got:
+                with np.errstate(all="ignore"):
+                    adj = self._delivered_db(got[0])
+            loss = self._loss_at(self._loss_vol, adj)
+            self.view.set_loss(loss)
+            self.view.set_headroom(*self._headroom_cubes(loss))
+            self.view.set_advice(self._loss_advice(loss))
+            self.level_strip.set_state(self._loss_vol,
+                                       self._unsafe_from(),
+                                       self._unknown_from())
+        # THE SWEEP IS HEARD ON EVERY MOVE; THE CANVAS IS NOT REBUILT.
+        # A rebuild throws away everything the loss reading precomputed
+        # and works it out again -- a sixth of a second -- so doing it
+        # per motion event gave this handle the same porridge the level
+        # fader had. The graph still republishes each move, because the
+        # point of sweeping the floor is to HEAR it.
+        if final:
+            self._canvas_refresh()
+        else:
+            ov = self._overlay_curve()
+            if ov is not None:
+                f, meas, spread, band = ov
+                self.view.set_curves(f, meas, spread, band)
+                self.view.set_target(self._lawful_target(f, meas))
+        # THE PICTURE FOLLOWS THE HAND; THE GRAPH DOES NOT HAVE TO.
+        # Publishing rebuilds the filter chain in the server, and at
+        # motion rate that is thirty of them a second for an ear that
+        # cannot hear the difference between one sweep step and the
+        # next. The sweep is still heard continuously -- just not
+        # thirty times a second.
+        now = time.monotonic()
+        if final or now - getattr(self, "_floor_applied", 0.0) > 0.12:
+            self._floor_applied = now
+            self._apply_now()
         if final:
             self._sync_floor_btn()
 

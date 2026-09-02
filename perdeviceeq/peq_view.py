@@ -335,8 +335,15 @@ class PeqView(Gtk.Box):
         lo = max(FMIN, min(f, FMAX / 1.2))
         self._protect = lo
         self.protect_strip.queue_draw()
+        # EVERY MOTION IS DRAWN; the caller decides what is expensive.
+        # This used to hand the handle over six or seven times a
+        # second, which is what a hand feels as steps -- the volume
+        # fader beside it redraws on every event and throttles only
+        # its write. Since the response is summed in one pass the
+        # drawing costs a few milliseconds, so the throttle here is
+        # only wide enough to skip a burst of coalesced events.
         now = time.monotonic()
-        if self._protect_cb and now - self._protect_emit > 0.15:
+        if self._protect_cb and now - self._protect_emit > 0.03:
             self._protect_emit = now
             self._protect_cb(lo, False)
 

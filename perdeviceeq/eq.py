@@ -8,6 +8,11 @@ Pure computation -- no GTK, no subprocess, no filesystem.
 
 import math, cmath, re
 
+try:
+    import numpy as _np
+except ImportError:                              # pragma: no cover
+    _np = None
+
 from .config import FS, FMIN, FMAX, TYPE_TO_LABEL
 
 
@@ -436,14 +441,41 @@ def mag_db(c, f, fs=FS):
 
 
 def response_db(preamp, bands, freqs):
+    """The chain's magnitude at each frequency, in dB.
+
+    ONE PASS WITH NUMPY WHERE THERE IS NUMPY. This is the hottest
+    arithmetic in the program: the editor calls it for the predicted
+    curve, the target, the clip estimate on every channel and the
+    level reading -- four or five times per motion event while a
+    handle is dragged. As a Python loop over a thousand frequencies
+    times twenty-five bands that was 13.6 ms a call, and the handles
+    felt like porridge; the same sum through numpy is a fraction of a
+    millisecond.
+
+    The scalar path stays for the case where numpy is missing, and a
+    court holds the two to agreement.
+    """
     coeffs = [biquad(b.type, b.freq, b.gain, b.q) for b in bands if b.enabled]
-    out = []
-    for f in freqs:
-        s = preamp
-        for c in coeffs:
-            s += mag_db(c, f)
-        out.append(s)
-    return out
+    if _np is None or not coeffs:
+        out = []
+        for f in freqs:
+            s = preamp
+            for c in coeffs:
+                s += mag_db(c, f)
+            out.append(s)
+        return out
+    f = _np.asarray(list(freqs), float)
+    w = 2.0 * math.pi * f / FS
+    z1 = _np.exp(-1j * w)
+    z2 = z1 * z1
+    total = _np.zeros(len(f))
+    for b0, b1, b2, a0, a1, a2 in coeffs:
+        H = (b0 + b1 * z1 + b2 * z2) / (a0 + a1 * z1 + a2 * z2)
+        m = _np.abs(H)
+        total += _np.where(m > 1e-12,
+                           20.0 * _np.log10(_np.maximum(m, 1e-12)),
+                           -120.0)
+    return [float(preamp + v) for v in total]
 
 
 # ---- headroom / clip estimate (ROADMAP Task 2, tier 1) ---------------------
