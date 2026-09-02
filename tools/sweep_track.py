@@ -28,7 +28,16 @@ import struct
 import sys
 
 FS = 48000
-N_SWEEP = 262144
+# THE SWEEP THIS TRACKS IS THE ONE THE APP PLAYS, and it must follow
+# it. measure_core.DEFAULT_N is the authority; this file stays free of
+# imports so it can be dropped on a machine with nothing installed, so
+# the number is mirrored here and has to be changed with it. It was
+# 262144 for weeks after the measurement halved to 131072, and a
+# tracker reading the wrong trajectory reports a level train for a
+# sweep that was never played.
+#
+# --samples N overrides it for a recording of any other length.
+N_SWEEP = 131072
 F0, F1 = 20.0, 20000.0
 DUR = N_SWEEP / FS
 LNR = math.log(F1 / F0)
@@ -122,6 +131,13 @@ def find_onset(x, fs):
 
 
 def main():
+    args = sys.argv[1:]
+    if "--samples" in args:
+        i = args.index("--samples")
+        globals()["N_SWEEP"] = int(args[i + 1])
+        globals()["DUR"] = N_SWEEP / FS
+        del args[i:i + 2]
+    sys.argv = [sys.argv[0]] + args
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     for path in sys.argv[1:]:

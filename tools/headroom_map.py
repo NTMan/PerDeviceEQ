@@ -48,6 +48,7 @@ Runs from any directory. The volume is left where the walk stopped.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -231,6 +232,13 @@ def main():
                          "(default %.1f, the finest step two sweeps "
                          "can be told apart by)" % level_run.MAP_STEP_DB)
     ap.add_argument("--rungs", type=int, default=level_run.MAP_MAX_RUNGS)
+    ap.add_argument("--keep", metavar="DIR",
+                    help="write each rung's capture into DIR, with a "
+                         "sidecar naming the level and the sweep. A "
+                         "hand on a slider is not a step and a walk "
+                         "disturbs a room for a minute; the questions "
+                         "asked of one evening's rungs afterwards are "
+                         "not all known while it runs")
     ap.add_argument("--stop-peak", type=float,
                     default=level_run.AUTO_PEAK_CEIL,
                     help="stop before a capture peak above this")
@@ -286,12 +294,27 @@ def main():
         said.append(v)
         print("  rung %d at %.0f%% ..." % (i, 100 * v))
 
+    def keep(index, v, chan, sweep):
+        if not a.keep:
+            return
+        import soundfile as sf
+        os.makedirs(a.keep, exist_ok=True)
+        sf.write(os.path.join(a.keep, "rung%02d.wav" % index),
+                 np.asarray(chan), sweep.fs)
+        with open(os.path.join(a.keep, "rung%02d.json" % index),
+                  "w") as fh:
+            json.dump({"index": index, "volume_cubic": float(v),
+                       "n_samples": sweep.n_samples, "fs": sweep.fs,
+                       "f_start": sweep.f_start, "f_end": sweep.f_end,
+                       "column": 0}, fh, indent=1)
+
     try:
         rungs = level_run.headroom_map(
             sink, {"name": pw_backend.entry_node(src["name"]),
                    "id": src["id"]},
             width, start, sink_name=sink["name"], analyze=column,
             freqs=freqs, play_map=a.play, on_level=note,
+            on_rung=keep,
             stop_peak_dbfs=a.stop_peak, step_db=a.step_db,
             max_rungs=a.rungs)
     except (RuntimeError, ValueError) as exc:

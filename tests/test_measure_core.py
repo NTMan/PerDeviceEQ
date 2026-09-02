@@ -390,3 +390,19 @@ def test_the_sweep_and_its_lead_come_from_one_place():
     # the lead covers the highest order the group tracks
     need = sw.sweep_rate_l * math.log(mc.HOHD_ORDERS[1])
     assert mc.DEFAULT_PRE_SILENCE >= need
+
+
+def test_the_standalone_tracker_follows_the_measurement_sweep():
+    """tools/sweep_track.py stays free of imports so it can be dropped
+    on a machine with nothing installed, which means its copy of the
+    sweep length has to be kept in step by hand -- and it was not: it
+    read 262144 for weeks after the measurement halved to 131072, so
+    it walked a trajectory for a sweep that was never played.
+
+    This court is the thing that would have caught that."""
+    import os
+    import re
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(here, "tools", "sweep_track.py")).read()
+    n = int(re.search(r"^N_SWEEP = (\d+)", src, re.M).group(1))
+    assert n == mc.DEFAULT_N

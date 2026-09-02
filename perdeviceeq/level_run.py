@@ -354,7 +354,7 @@ MAP_BELOW_DB = 12.0
 def headroom_map(sink, source, channels, start_volume, sink_name=None,
                  analyze=0, sweep=None, freqs=None,
                  pre_silence=None, post_silence=None, play_map=None,
-                 on_level=None, should_stop=None,
+                 on_level=None, should_stop=None, on_rung=None,
                  stop_peak_dbfs=AUTO_PEAK_CEIL, step_db=MAP_STEP_DB,
                  max_rungs=MAP_MAX_RUNGS):
     """Climb from the level the search settled at, keeping what each
@@ -431,6 +431,15 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             chan, peak_db, clipped, got = _play_rung(
                 back, name, sink, source, wav, duration, channels,
                 sweep, freqs, analyze, v, play_map)
+            # A CALLER MAY WANT THE CAPTURE ITSELF. Keeping the wav is
+            # not the package's business -- but a walk that disturbs a
+            # room for a minute and throws the recordings away is a
+            # walk that has to be repeated for every new question, and
+            # this project has re-read one evening's rungs a dozen
+            # times. The hook hands them over; what to do with them is
+            # the caller's.
+            if on_rung is not None:
+                on_rung(i + 1, v, chan, sweep)
             mag = np.asarray(got.mag_db, float)
             # the response is relative and the noise absolute, so one
             # offset turns the whole curve into a margin over this
@@ -646,28 +655,6 @@ def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
             sm[k] = float(np.median(seg))
     ok = np.isfinite(sm) & (np.asarray(heard, float) > HEARD_OVER_NOISE_DB)
     return np.where(ok, np.maximum(0.0, asked_db - sm), np.nan)
-
-
-def spans(mask, freqs):
-    """Contiguous frequency spans of a boolean mask, as [lo, hi] pairs.
-
-    LISTED rather than summarised as "below N Hz": a rig can run out
-    in the bass and again in the middle -- his iLoud does both, the
-    port near 60 Hz and the amplifier above 850 at full level -- and
-    one bound would swallow everything between.
-    """
-    f = np.asarray(freqs, float)
-    out, start = [], None
-    for k, on in enumerate(mask):
-        if on and start is None:
-            start = k
-        elif not on and start is not None:
-            out.append([round(float(f[start]), 1),
-                        round(float(f[k - 1]), 1)])
-            start = None
-    if start is not None:
-        out.append([round(float(f[start]), 1), round(float(f[-1]), 1)])
-    return out
 
 
 class Probe:

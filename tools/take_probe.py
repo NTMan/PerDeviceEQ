@@ -11,7 +11,10 @@ session after a silent arming wait, so a regression shows up as a
 mid-sweep level knife in one train and not the others.
 
 Every mode waits out its own silent arming period (default 600 s),
-synthesizes its own exponential sweep (20 Hz - 20 kHz, 5.46 s,
+synthesizes its own exponential sweep (20 Hz - 20 kHz, 2.73 s --
+the length the measurement plays; the point is to reproduce a real
+session, and a probe playing a signal the app retired reproduces
+nothing),
 -6 dBFS), plays it through --sink while recording --source, and
 prints the level train along the sweep's trajectory via
 sweep_track.py from the same directory.
@@ -74,7 +77,7 @@ def run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
-def synth_sweep(path, fs=48000, n=262144, f0=20.0, f1=20000.0,
+def synth_sweep(path, fs=48000, n=131072, f0=20.0, f1=20000.0,
                 level_db=-6.0, lead=0.5, tail=0.5):
     dur = n / fs
     lnr = math.log(f1 / f0)
