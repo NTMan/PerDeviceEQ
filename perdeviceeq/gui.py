@@ -396,7 +396,6 @@ class EqWindow(Adw.ApplicationWindow):
         button, because this runs when the canvas is REBUILT.
         The button syncs at the top of a profile load, when
         self._canvas still holds the profile being left."""
-        self.view.set_headroom(*self._headroom_cubes())
         self._start_loss_beat()
         self._loss_vol = None       # the profile changed under it
         self._sync_loss()
@@ -467,79 +466,47 @@ class EqWindow(Adw.ApplicationWindow):
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
         self._on_edit()
 
-    def _headroom_cubes(self):
-        """Thirds of an octave where this rig stopped answering, from
-        the map its level search left in the profile.
+    def _headroom_cubes(self, loss=None):
+        """Thirds of an octave where the rig is short RIGHT NOW.
 
-        ONE CUBE PER BAND, carrying the EARLIEST rung that fell short
-        there: a band that gives out at 48% of the knob is worse than
-        one that holds to 86%, and the earliest is what a listener
-        meets first. The deficit comes from that same rung, so shade
-        and level describe one measurement rather than two.
+        THE SAME NUMBERS AS THE CURVE. These used to be built from the
+        whole map at once, band by band across every rung, while the
+        curve was built from what the rig receives at the level it is
+        being driven at. So they disagreed on screen: the cubes drew
+        40-92 Hz off the map while the line and the red stretch said
+        40.6-54.2 Hz at his knob and his correction. Two answers to
+        one question is one answer too many.
+
+        A cube is now a third of an octave of the loss curve, and it
+        appears and moves with it.
         """
+        if not loss:
+            return (None, None)
         p = self.store.get(self.current_pid) or {}
-        m = (p.get("measurement") or {})
-        grid = m.get("grid") or {}
-        sess = m.get("sessions") or {}
-        maps = []
-        for blk in sess.values():
-            hr = (blk or {}).get("headroom") or {}
-            for rungs in hr.values():
-                if rungs:
-                    maps.append(rungs)
-        if not maps or not grid:
+        grid = ((p.get("measurement") or {}).get("grid") or {})
+        if not grid:
             return (None, None)
         lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
-        n = max(len(r["mag_db"]) for rungs in maps for r in rungs)
+        a = np.array([np.nan if x is None else float(x) for x in loss],
+                     float)
+        n = len(a)
         freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
-        worst = {}
-        for rungs in maps:
-            rungs = sorted(rungs, key=lambda r: r["level"])
-            for i in range(1, len(rungs)):
-                a, b = rungs[i - 1], rungs[i]
-                asked = level_run.asked_db(
-                    (a["level"], a.get("peak_dbfs")),
-                    (b["level"], b.get("peak_dbfs")))
-                if asked < level_run.MIN_READABLE_STEP:
-                    continue
-                off = b.get("heard_offset_db")
-                if off is None:
-                    continue
-                pm = np.array([np.nan if x is None else float(x)
-                               for x in a["mag_db"]], float)
-                cm = np.array([np.nan if x is None else float(x)
-                               for x in b["mag_db"]], float)
-                with np.errstate(all="ignore"):
-                    deficit = level_run.shortfall_db(
-                        pm, cm, cm - off, asked, freqs, ppo)
-                    short, _ = level_run.shortfall(
-                        pm, cm, cm - off, asked, freqs, ppo)
-                if not short.any():
-                    continue
-                # gather into thirds of an octave
-                w = max(1, int(round(ppo / 3.0)))
-                for k in range(0, len(freqs), w):
-                    sel = short[k:k + w]
-                    if not sel.any():
-                        continue
-                    band = (float(freqs[k]),
-                            float(freqs[min(k + w, len(freqs)) - 1]))
-                    d = float(np.nanmax(deficit[k:k + w][sel]))
-                    prev = worst.get(k)
-                    if prev is None or b["level"] < prev[4]:
-                        worst[k] = (band[0], band[1], d, asked,
-                                    b["level"])
-        if not worst:
+        w = max(1, int(round(ppo / 3.0)))
+        floor = 0.5 * level_run.MIN_READABLE_STEP
+        cubes = []
+        for k in range(0, n, w):
+            seg = a[k:k + w]
+            hit = np.isfinite(seg) & (seg >= floor)
+            if not hit.any():
+                continue
+            cubes.append((float(freqs[k]),
+                          float(freqs[min(k + w, n) - 1]),
+                          float(np.nanmax(seg[hit])),
+                          float(level_run.MAP_STEP_DB), None))
+        if not cubes:
             return (None, None)
-        cubes = [worst[k] for k in sorted(worst)]
-        return cubes, min(c[4] for c in cubes)
+        return cubes, None
 
-    # WHAT THE KNOB IS DOING RIGHT NOW. The loss depends on the level
-    # and on nothing else the app controls, so the only way to draw it
-    # truthfully is to know where the volume stands. A heartbeat is
-    # the honest way to ask: the volume can be moved by anyone -- the
-    # desktop, a hotkey, another program -- and a subscription would
-    # only hear our own writes.
     def _start_loss_beat(self):
         """Ride the backend's own tick rather than starting another.
 
@@ -586,6 +553,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._loss_vol = vol
         loss = self._loss_at(vol)
         self.view.set_loss(loss)
+        self.view.set_headroom(*self._headroom_cubes(loss))
         self.view.set_advice(self._loss_advice(loss))
 
     def _loss_advice(self, loss):
