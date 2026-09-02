@@ -35,10 +35,12 @@ nothing — lives in [TRUST.md](TRUST.md).
 - **Incremental takes.** Every accepted sweep is persisted the moment it
   lands. Add takes across sessions, delete a bad one, re-fit — the profile
   only improves.
-- **Distortion on the record.** Every take stores its harmonics and its
-  own noise floor, drawn per take and summed into a warning band under
-  the correction, so a boost that would be heard as rasp is visible
-  before you reach for it.
+- **What the rig can still follow.** The level search walks upward past
+  the level it measures at and records where the rig stops delivering
+  what the correction asks of it. The volume strip shades the part of
+  the knob it cannot follow, the curve turns red there and calls itself
+  *what you hear*, and a line says what floor would stop asking. Every
+  take also stores its harmonics and its own noise floor.
 - **Per output device.** Each sink — built-in speakers, HDMI, a specific
   Bluetooth headset (by MAC) — remembers its own EQ and gets it back
   automatically.
@@ -213,7 +215,7 @@ a per-channel progress bar, lands gain-staged (Safe preamp), and the
 profile is playing. The trust plaque under the graph offers **Re-fit**
 after you add or remove takes later.
 
-### Distortion, and the Floor
+### What a take confesses
 
 A take records more than the response. It confesses the second and third
 harmonic, the total harmonic distortion and the noise the room and the
@@ -222,17 +224,77 @@ and summarised in the panel's header as `THD@1k`. Where a harmonic falls
 outside the sweep the pen stops instead of guessing, and the graph says
 *no harmonic evidence* over that region.
 
-The **Floor** is a high-pass under the correction, the answer to a woofer
-asked for excursion it does not have — where more bass buys distortion
-rather than bass. Its handle carries a warning band along the top of its
-own strip: one curve for the whole profile, the worst channel at each
-frequency, painted where the measured distortion passes the point at
-which it is heard. That threshold moves with frequency, because hearing
-does — roughly −18 dB re the tone at 20 Hz against −40 dB from 1 kHz up.
-Whole percents pass unnoticed in the bass; tenths of one do not in the
-midband. A profile whose takes carry no confession is painted not at
-all: an absence of evidence and an absence of distortion must not wear
-the same colour.
+### What the rig can still follow
+
+A correction assumes the rig is LINEAR: ask for 6 dB more at 60 Hz and
+expect 6 dB more. Past some level that stops being true — a port
+breaks up, a driver runs out of stroke, a limiter clamps — and the
+prediction on screen is then simply wrong.
+
+The level search measures where that begins. Having settled on a level
+to take profiles at, it walks UPWARD from well below it in steps of
+2 dB, comparing each rung with the quietest one, and stores what it
+found in the profile: for every rung, the level, the capture peak and
+the whole response. Three or four extra sweeps.
+
+What the editor does with that map:
+
+* **The level strip above the device card** duplicates the system
+  volume — it reads the sink and writes back to it, it is not a second
+  volume. Green is measured and followed, **red** is measured and not
+  followed, and **grey is not measured**: a walk often ends because the
+  MICROPHONE ran out of room rather than the rig, and painting that
+  stretch green would be a guess.
+* **The green curve turns red where the rig cannot follow**, and
+  renames itself *what you hear* — because that part of it is a
+  measurement rather than a forecast.
+* **Marks under the graph** show the thirds of an octave involved.
+* **A line under them** says how far past the rig this is and the floor
+  that would stop asking for it.
+
+All of that is read at the level the rig actually RECEIVES, which is
+not the knob: the correction, its preamp, the floor and the taste layer
+all stand in between, and they are a curve rather than a number. A
+frequency lifted 10 dB against a preamp of −10 gets exactly what the
+sweep gave it; two octaves up it gets ten less.
+
+### The Floor
+
+The **Floor** is a high-pass under the correction: the answer to a
+woofer asked for excursion it does not have. Sweeping it, everything
+above follows the handle live — the strip's shading, the curve, the
+marks and the line — so the trade is visible while it is made.
+
+Two things about it are worth knowing before reaching for it.
+
+**With Auto preamp on, a floor buys no volume.** Auto follows the
+chain's own peak, so cutting the floor higher frees headroom that Auto
+immediately hands to the neighbouring bands: the marks do not clear,
+they climb. On one small ported monitor here, cutting to 40 Hz doubled
+the marks and cost thirteen points of safe level; the same floor with
+the preamp held fixed took the safe level from 70% to 95%.
+
+**And a floor cannot fix what the rig has not got.** Where the marks
+say a band is short, the choices are to ask for less of it — a floor,
+or less volume — or to give that band to something that can play it.
+The tool does not choose; it shows what each choice costs.
+
+### What the map does not cover
+
+* **It belongs to a CHAIN, not to a transducer.** The knob is measured
+  through one amplifier; the same earphone on a weaker one reaches a
+  different level at the same percentage, and the map does not
+  transfer. Re-run the level search after changing amplifier, sink, or
+  the card's own analogue level.
+* **On in-ear rigs it lasts until they are reseated.** Three walks of
+  one earphone here differed by 1.5 dB below 30 Hz with nothing at
+  1 kHz — the signature of a seal, not of a driver.
+* **Above the loudest rung it says nothing** when the capture stopped
+  the walk rather than the rig. That is the grey stretch, and on three
+  of the five rigs tested here it is where the walk ended.
+* **Each rung is one sweep.** Over Bluetooth one of them came back
+  0.78 dB down across a few dozen hertz that two other runs did not
+  see. Wired rigs have not shown it.
 
 ### Speakers with a UMIK-1
 

@@ -112,12 +112,16 @@ measurement.
 
 So the harmonics are published rather than judged. They are
 drawn under each take's response in the takes list,
-summarised as `THD@1k` in the panel's header, and summed
-across the profile into the warning band along the Floor
-handle's strip -- worst channel at each frequency, painted
-by how far the measured distortion passes the point at which
-it is heard, which moves with frequency because hearing
-does. A profile whose takes carry no confession is not
+summarised as `THD@1k` in the panel's header, and kept in
+the profile. They are NOT painted as a hint to cut: a strip
+that did that was tried and withdrawn, because a ratio has a
+denominator and a denominator collapses wherever a rig makes
+no sound -- it marked a subwoofer's own silence below 35 Hz
+as dirt, and marked a monitor driven past its port as
+defective when the cure was less level. What the editor
+paints instead is measured against the rig itself at another
+volume, and has no denominator to collapse. A profile whose
+takes carry no confession is not
 painted at all: an absence of evidence and an absence of
 distortion must not wear the same colour.
 
@@ -148,7 +152,16 @@ say where the curve is worth reading. It never gates
 playback.
 
 What replaced the automatic floor is the hand, better
-informed: the warning band described above lies along the
-handle's own strip, so a floor is swept up until the
-distortion under the finger goes out, rather than by ear
+informed: sweeping the handle moves the shading on the level
+strip, the red stretch of the curve and the marks under it
+live, so a floor is swept up until what the rig cannot
+follow goes out from under the finger, rather than by ear
 alone.
+
+That informing has a limit worth stating here, since this
+file is about what the program may claim. With the preamp on
+Auto a floor buys no level at all: Auto follows the chain's
+own peak, so headroom the floor frees is handed straight to
+the neighbouring bands and the marks climb rather than
+clear. The editor shows this while it happens and does not
+choose for anyone.
