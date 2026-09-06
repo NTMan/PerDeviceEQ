@@ -79,7 +79,11 @@ def main():
     ap.add_argument("--steps", type=int, default=10)
     ap.add_argument("--dwell", type=float, default=1.5,
                     help="seconds of silence per rung")
-    ap.add_argument("--no-refine", action="store_true")
+    ap.add_argument("--passes", type=int,
+                    default=knee_run.PASSES,
+                    help="walks of the same plan; the noise "
+                         "is measured from how far they "
+                         "fall out with each other")
     ap.add_argument("--quiet-sink", metavar="NAME", default=None,
                     help="mute foreign streams on this output for the "
                          "duration -- the ladder measures silence, so "
@@ -229,28 +233,43 @@ def main():
                 print("           below it the graph makes up the "
                       "difference, so the walk starts here\n")
                 args.lo = floor
-            print("  %-10s %-16s %-11s %s" % ("gain", "", "noise", "peak"))
-            for db in knee.plan(args.lo, args.hi, args.steps):
-                r = w.visit(db)
-                if r is not None:
-                    say(r, len(w.rungs), args.steps)
-            knee.mark_transients(w.rungs)
-            if not args.no_refine:
-                fine = knee.refine(w.rungs)
-                if fine:
-                    print("\nrefining between %.1f and %.1f dB"
-                          % (min(fine), max(fine)))
-                    for db in fine:
-                        r = w.visit(db)
-                        if r is not None:
-                            say(r, len(w.rungs), args.steps + len(fine))
-                    knee.mark_transients(w.rungs)
-            rungs = w.rungs
+            points = knee.plan(args.lo, args.hi, args.steps)
+            step = (abs(points[-1] - points[0]) / max(1, len(points) - 1)
+                    if len(points) > 1 else 0.0)
+            npass = max(1, int(args.passes))
+            total = npass * len(points)
+            walks = []
+            for k in range(npass):
+                print("\npass %d of %d" % (k + 1, npass))
+                print("  %-10s %-16s %-11s %s"
+                      % ("gain", "", "noise", "peak"))
+                first = len(w.rungs)
+                for db in points:
+                    r = w.visit(db)
+                    if r is not None:
+                        say(r, len(w.rungs), total)
+                part = w.rungs[first:]
+                if part:
+                    knee.mark_transients(part)
+                    walks.append(part)
+            avg, scatter = knee.average(walks)
+            rungs = avg or w.rungs
             # THE ANSWER IS LEFT ON THE CARD. This tool does one thing
             # and its whole life is the walk, so there is nowhere else
             # for the working point to live: putting the old gain back
             # would erase the only thing the run produced.
-            v = knee.verdict(w.rungs) if w.rungs else None
+            v = knee.verdict(rungs, scatter=scatter) if rungs else None
+            if v is not None and len(walks) > 1:
+                each = [knee.verdict(q, scatter=scatter) for q in walks]
+                ok, why = knee.agree(each, step)
+                print("\nthe passes said: %s"
+                      % ", ".join(x.kind for x in each))
+                if scatter is not None:
+                    print("noise on one rung, measured from the passes: "
+                          "%.2f dB" % scatter)
+                if not ok:
+                    v = knee.Verdict("unclear", rungs, v.segments,
+                                     scatter=scatter, note=why)
             if v is not None and v.work_db is not None:
                 w.leave_at(db_to_cubic(v.work_db))
                 print("\nleft the gain at %.3f (cubic) -- the working "

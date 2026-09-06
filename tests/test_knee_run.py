@@ -127,10 +127,44 @@ def test_a_column_the_source_does_not_have_is_refused(card):
 def test_progress_is_reported_for_every_rung(card):
     seen = []
     knee_run.ladder(card.src, 0, lo_db=-60.0, hi_db=0.0, steps=6,
-                    dwell=0.05, refine=False,
+                    dwell=0.05, passes=2,
                     on_rung=lambda r, done, total: seen.append((done, total)))
-    assert [d for d, _ in seen] == [1, 2, 3, 4, 5, 6]
-    assert all(t == 6 for _, t in seen)
+    # the count runs across the WHOLE walk, not per pass: a hand
+    # watching "rung 3 of 6" twice cannot tell progress from a stall
+    assert [d for d, _ in seen] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    assert all(t == 12 for _, t in seen)
+
+
+def test_the_ladder_walks_its_plan_more_than_once(card):
+    """The noise is measured by asking the same rung again, so the
+    number of passes is what the walk actually costs and what its
+    scatter is worth. One pass measures nothing about its own noise."""
+    seen = []
+    v, _ = knee_run.ladder(card.src, 0, lo_db=-60.0, hi_db=0.0, steps=5,
+                           dwell=0.05, passes=3,
+                           on_rung=lambda r, d, t: seen.append(r.gain_db))
+    assert len(seen) == 15
+    assert v.scatter is not None
+
+
+def test_passes_that_disagree_are_reported_as_disagreement(card,
+                                                           monkeypatch):
+    """A ladder that answers differently each time has not answered.
+    Seven walks of one input in one hour gave three kinds, and the
+    tool printed each with the same confidence as the rest."""
+    seq = iter(range(1000))
+
+    def kinds(rungs, margin_db=knee.MARGIN_DB, max_k=knee.MAX_K,
+              scatter=None):
+        n = next(seq)
+        return knee.Verdict("knee" if n % 2 else "input", rungs,
+                            knee_db=-30.0 if n % 2 else None)
+
+    monkeypatch.setattr(knee, "verdict", kinds)
+    v, _ = knee_run.ladder(card.src, 0, lo_db=-60.0, hi_db=0.0, steps=4,
+                           dwell=0.05, passes=3)
+    assert v.kind == "unclear"
+    assert "disagree" in v.note
 
 
 def test_a_rung_carries_the_gain_the_card_took(card):
@@ -241,7 +275,7 @@ def test_the_ladder_moves_only_its_own_column(card, monkeypatch):
     monkeypatch.setattr(pw_backend, "route_hw_position",
                         lambda r, ch: r["channel_volumes"][ch])
     knee_run.ladder(card.src, 1, lo_db=-40.0, hi_db=0.0, steps=4,
-                    dwell=0.05, refine=False)
+                    dwell=0.05, passes=1)
     assert written, "the ladder wrote nothing"
     assert all(ch == 1 for ch, _ in written)
     # and it put ITS channel back, leaving the other where it was

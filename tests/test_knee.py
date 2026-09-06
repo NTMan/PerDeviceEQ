@@ -431,3 +431,85 @@ def test_the_exponent_is_the_card_and_not_the_physics():
         v = knee.verdict(rungs)
         assert v.curve is not None
         assert v.curve.n == pytest.approx(want, abs=0.3)
+
+
+# --- the noise is measured, not fitted -------------------------------
+#
+# Every threshold in describe() is a multiple of the scatter, and the
+# scatter used to be the residual about the segments split() had just
+# chosen to make that residual small. This bench measured the size of
+# the error in the field: seven walks of one input inside one hour,
+# same room, same fader, nothing playing.
+
+SEVEN = [
+    [-169.87, -160.41, -160.73, -156.37, -150.50, -146.21, -140.71,
+     -133.20, -128.38, -122.41, -119.98],
+    [-169.93, -166.25, -161.30, -155.78, -151.27, -146.05, -140.33,
+     -136.07, -129.67, -123.43, -120.73],
+    [-170.66, -165.94, -161.87, -153.52, -147.33, -144.47, -138.42,
+     -131.18, -129.92, -125.43, -121.54],
+    [-169.59, -165.99, -159.48, -156.03, -150.89, -145.33, -141.38,
+     -136.17, -130.98, -126.07, -121.51],
+    [-171.07, -166.09, -160.88, -156.19, -150.05, -145.71, -141.66,
+     -131.03, -130.22, -126.39, -120.89],
+    [-170.61, -166.40, -159.25, -156.45, -151.24, -146.60, -140.34,
+     -135.63, -131.38, -125.74, -120.10],
+    [-170.67, -165.28, -160.43, -155.54, -148.21, -143.43, -138.94,
+     -135.69, -131.33, -124.99, -119.06],
+]
+SEVEN_GAINS = [-50.0, -45.0, -40.0, -35.0, -30.0, -25.0, -20.0,
+               -15.0, -10.0, -5.0, 0.0]
+
+
+def _walk(vals):
+    return [knee.Rung(g, v) for g, v in zip(SEVEN_GAINS, vals)]
+
+
+def test_the_scatter_is_measured_from_the_passes():
+    """Not from the fit it is meant to police. On this input the truth
+    is 1.3 dB a rung; the residual about the fitted segments printed
+    between 0.11 and 0.89 for the same seven walks."""
+    _, scatter = knee.average([_walk(v) for v in SEVEN])
+    assert scatter == pytest.approx(1.3, abs=0.3)
+    for vals in SEVEN:
+        parts = knee.split(_walk(vals))
+        assert knee.scatter_of(parts) < scatter
+
+
+def test_the_measured_scatter_forbids_a_knee_in_pure_noise():
+    """These seven walks are one straight line: the control is digital
+    and scales the converter's floor along with everything else, so no
+    knee exists to be found. Three of the seven claimed one anyway."""
+    rungs, scatter = knee.average([_walk(v) for v in SEVEN])
+    v = knee.verdict(rungs, scatter=scatter)
+    assert v.kind == "input"
+    assert v.scatter == pytest.approx(scatter)
+    segs, _ = knee.describe(rungs, scatter=scatter)
+    assert all(s.kind == "rising" for s in segs)
+
+
+def test_passes_that_answered_differently_do_not_agree():
+    each = [knee.verdict(_walk(v)) for v in SEVEN]
+    ok, why = knee.agree(each, 5.0)
+    assert not ok and why
+
+
+def test_a_real_knee_survives_the_measured_scatter():
+    """The guard must not have gone blind. A chain whose crossing is
+    known by arithmetic is still read, and still read in the right
+    place, with the same noise the field showed."""
+    read = chain(-118.0, -60.0)                      # crossing at -58
+    rungs = ladder(read, lo=-90.0, hi=-20.0, steps=11, refine=False)
+    v = knee.verdict(rungs, scatter=1.3)
+    assert v.kind == "knee"
+    assert v.knee_db == pytest.approx(-58.0, abs=4.0)
+
+
+def test_averaging_marks_a_pass_that_fell_out_with_the_others():
+    read = chain(-118.0, -60.0)
+    walks = [[knee.Rung(g, read(g)) for g in SEVEN_GAINS]
+             for _ in range(3)]
+    walks[0][4].rms_dbfs += 25.0                     # a car went past
+    rungs, scatter = knee.average(walks)
+    assert rungs[4].suspect
+    assert not any(r.suspect for i, r in enumerate(rungs) if i != 4)

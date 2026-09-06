@@ -369,12 +369,27 @@ def scatter_of(parts):
     return (_rss(parts) / dof) ** 0.5
 
 
-def describe(rungs, max_k=MAX_K):
-    """(segments, scatter) with every segment named flat or rising."""
+def describe(rungs, max_k=MAX_K, scatter=None):
+    """(segments, scatter) with every segment named flat or rising.
+
+    `scatter` is the noise ONE rung carries, measured by walking the
+    ladder more than once. Pass it whenever it is known.
+
+    Without it the fallback is scatter_of(), the residual about the
+    segments split() chose -- and split() chooses them to make that
+    residual small, so the estimate is circular: the more pieces it
+    cuts, the smaller the noise it reports, and the easier the next
+    piece is to justify. The field measured the size of the error.
+    Seven ladders on one input inside an hour scattered 1.29 dB per
+    rung, while the tool printed 0.11 to 0.89 -- and once, on another
+    evening, 1.50 where the truth was 0.34. It misses in both
+    directions, which is what a circular estimate does.
+    """
     parts = split(rungs, max_k=max_k)
     if not parts:
         return [], 0.0
-    scatter = scatter_of(parts)
+    if scatter is None:
+        scatter = scatter_of(parts)
     need = max(FLOOR_DB, SCATTER_K * scatter)
 
     # A PIECE MUST SPAN FAR ENOUGH FOR ITS SLOPE TO EXIST. Least
@@ -488,6 +503,87 @@ def refine(rungs, points=5):
     if hi - lo <= 1e-9:
         return []
     return [lo + (hi - lo) * i / (points - 1) for i in range(points)]
+
+
+def average(passes):
+    """Fold repeated walks of one plan into one ladder, and MEASURE
+    the noise. Returns (rungs, scatter).
+
+    Every pass visited the same planned points in the same order, so
+    the i-th rung of one pass and the i-th of the next are the same
+    question asked twice. The answer is their mean; the noise is how
+    far they stood apart. This is the only estimate of the noise in
+    the whole file that does not come out of the fit it is meant to
+    police -- see describe() for what the circular one costs.
+
+    A point whose passes fell out with each other by more than
+    SCATTER_K times that noise is marked suspect instead of trusted.
+    A car going past during one dwell looks exactly like this, and
+    seeing it needs no crest factor and no mean-against-median: it
+    needs the same rung measured again.
+    """
+    passes = [list(p) for p in passes if p]
+    if not passes:
+        return [], 0.0
+    if len(passes) == 1:
+        return list(passes[0]), None
+    n = min(len(p) for p in passes)
+    if n == 0:
+        return [], 0.0
+    spreads, means = [], []
+    for i in range(n):
+        col = [p[i] for p in passes]
+        vals = [r.rms_dbfs for r in col]
+        m = sum(vals) / len(vals)
+        var = sum((v - m) ** 2 for v in vals) / (len(vals) - 1)
+        spreads.append(var ** 0.5)
+        means.append((col, m))
+    scatter = (sum(x * x for x in spreads) / len(spreads)) ** 0.5
+    out = []
+    for (col, m), sd in zip(means, spreads):
+        gain = sum(r.gain_db for r in col) / len(col)
+        peaks = [r.peak_dbfs for r in col if r.peak_dbfs is not None]
+        blocks = [r.blocks for r in col if r.blocks is not None]
+        r = Rung(gain, m,
+                 peak_dbfs=(sorted(peaks)[len(peaks) // 2]
+                            if peaks else None),
+                 raw=col[0].raw,
+                 blocks=(sum(blocks) if blocks else None))
+        if scatter > 0.0 and sd > SCATTER_K * scatter:
+            r.suspect = True
+        out.append(r)
+    return out, scatter
+
+
+def agree(verdicts, step_db):
+    """Do repeated walks of one ladder say the same thing? (ok, why)
+
+    The answer to a ladder is a claim about a chain, so it has to
+    survive being asked twice. Seven walks of one input inside one
+    hour returned three different kinds and put the knee eighteen
+    decibels apart, every one printed with the same confidence as the
+    rest. Nothing in the output told which to believe, because nothing
+    in one walk can.
+
+    Agreement is the same kind, and for a knee, positions inside one
+    step of the walk: the walk cannot place anything finer than the
+    distance between its own rungs, so asking for better than that
+    would reject good answers.
+    """
+    live = [v for v in verdicts if v is not None]
+    if not live:
+        return False, "no pass produced a reading"
+    kinds = sorted({v.kind for v in live})
+    if len(kinds) > 1:
+        return False, "the passes disagree: " + ", ".join(kinds)
+    ks = [v.knee_db for v in live if v.knee_db is not None]
+    if len(ks) > 1:
+        spread = max(ks) - min(ks)
+        if spread > abs(step_db):
+            return False, ("the passes put the knee %.1f dB apart, "
+                           "more than the %.1f dB between rungs"
+                           % (spread, abs(step_db)))
+    return True, ""
 
 
 def mark_transients(rungs, slack=CREST_SLACK, excess_db=EXCESS_DB):
@@ -615,10 +711,17 @@ def _boundary(a, b):
     return min(max((ia - ib) / (sb - sa), a.lo), b.hi)
 
 
-def verdict(rungs, margin_db=MARGIN_DB, max_k=MAX_K):
-    """Read a finished ladder."""
+def verdict(rungs, margin_db=MARGIN_DB, max_k=MAX_K, scatter=None):
+    """Read a finished ladder.
+
+    `scatter` as in describe(). When it is given it also becomes what
+    the Verdict REPORTS, because a fit residual is not the noise: a
+    three-parameter model on eleven noisy rungs can miss them by less
+    than the noise and still put the knee anywhere it likes.
+    """
     rungs = sorted(rungs, key=lambda r: r.gain_db)
-    segs, scatter = describe(rungs, max_k=max_k)
+    segs, fitted = describe(rungs, max_k=max_k, scatter=scatter)
+    said = fitted if scatter is None else float(scatter)
     if not segs:
         return Verdict("unclear", rungs,
                        note="too few trusted rungs to fit anything")
@@ -661,16 +764,16 @@ def verdict(rungs, margin_db=MARGIN_DB, max_k=MAX_K):
             # equal below the bottom rung: the input already outweighs
             # the converter everywhere that was walked
             return Verdict("input", rungs, segs, work_db=lo,
-                           scatter=curve.resid, curve=curve,
+                           scatter=said, curve=curve,
                            software_below=software_below, note=_INPUT_NOTE)
         if k >= hi:
             return Verdict("converter", rungs, segs, work_db=hi,
-                           scatter=curve.resid, curve=curve,
+                           scatter=said, curve=curve,
                            software_below=software_below,
                            note=_CONVERTER_NOTE)
         return Verdict("knee", rungs, segs, knee_db=k,
                        work_db=min(k + margin_db, hi),
-                       scatter=curve.resid, curve=curve,
+                       scatter=said, curve=curve,
                        software_below=software_below,
                        note="below the knee the converter is what is "
                             "being measured and SNR falls with the "
@@ -688,7 +791,7 @@ def verdict(rungs, margin_db=MARGIN_DB, max_k=MAX_K):
         k = _boundary(segs[last_knee], segs[last_knee + 1])
         return Verdict("knee", rungs, segs, knee_db=k,
                        work_db=min(k + margin_db, rungs[-1].gain_db),
-                       scatter=scatter, software_below=software_below,
+                       scatter=said, software_below=software_below,
                        note="below the knee the converter is what is "
                             "being measured and SNR falls with the "
                             "signal; above it SNR no longer improves "
@@ -696,13 +799,13 @@ def verdict(rungs, margin_db=MARGIN_DB, max_k=MAX_K):
 
     if all(k == "rising" for k in kinds):
         return Verdict("input", rungs, segs, work_db=rungs[0].gain_db,
-                       scatter=scatter, note=_INPUT_NOTE)
+                       scatter=said, note=_INPUT_NOTE)
 
     if all(k == "flat" for k in kinds):
         return Verdict("converter", rungs, segs, work_db=rungs[-1].gain_db,
-                       scatter=scatter, note=_CONVERTER_NOTE)
+                       scatter=said, note=_CONVERTER_NOTE)
 
-    return Verdict("unclear", rungs, segs, scatter=scatter,
+    return Verdict("unclear", rungs, segs, scatter=said,
                    software_below=software_below,
                    note="the curve reads %s, which is no floor under a "
                         "rise and no one regime throughout"

@@ -28,6 +28,9 @@ from . import inmeter, knee, pw_backend
 SETTLE_S = 0.35      # after a write, before believing what is heard
 POLL_S = 0.02        # faster than the meter publishes, so none is missed
 DWELL_S = 1.5        # silence averaged per rung
+PASSES = 3           # walks of the same plan. Fewer than two and the
+                     # noise cannot be measured at all, and every
+                     # threshold downstream goes back to guessing
 FLOOR_PROBE = 0.05   # cubic: low enough that any card's own control
                      # has bottomed out, and not zero, which is mute
 
@@ -362,14 +365,33 @@ def unity_db(source):
 
 
 def ladder(source, column=0, lo_db=-60.0, hi_db=0.0, steps=10,
-           dwell=DWELL_S, refine=True, on_rung=None, should_stop=None,
-           from_floor=True, quiet_sink=None):
+           dwell=DWELL_S, on_rung=None, should_stop=None,
+           from_floor=True, quiet_sink=None, passes=PASSES):
     """Walk the whole thing and read it.
 
     The walk starts at the CARD's floor when it has one, not at the
     number passed in: below that point the card is standing still and
     the graph is making up the difference, so those rungs measure a
     multiplier rather than a chain.
+
+    THE PLAN IS WALKED `passes` TIMES and the answer comes from all of
+    them at once. Not for precision -- for the noise. Everything
+    downstream compares something against the scatter of a rung, and
+    until now that scatter was the residual of the fit being judged,
+    which is circular and was measured to be wrong by a factor of ten.
+    Repetition is what makes it a measurement.
+
+    The passes are also asked to AGREE. One walk cannot know whether
+    its own answer would survive being asked again, and in the field
+    it did not: seven walks of one input in one hour returned three
+    different kinds. Disagreement is now reported as disagreement
+    instead of being resolved by whichever pass ran last.
+
+    The refining stage is gone with them. It halved the step between
+    rungs and did nothing to the noise, turning a reading worth 2.7
+    standard deviations into one worth 1.1; with the scatter measured
+    honestly its rungs are inside `thin` anyway and describe() merges
+    them away.
 
     `on_rung(rung, done, total)` is called after every step, and
     `should_stop()` is asked before each; a walk that stops early
@@ -382,22 +404,34 @@ def ladder(source, column=0, lo_db=-60.0, hi_db=0.0, steps=10,
             w.floor_db = floor
             lo_db = floor
         points = knee.plan(lo_db, hi_db, steps)
-        total = len(points)
-        for i, db in enumerate(points):
-            if should_stop is not None and should_stop():
-                return knee.verdict(w.rungs), w
-            r = w.visit(db)
-            if r is not None and on_rung is not None:
-                on_rung(r, i + 1, total)
-        knee.mark_transients(w.rungs)
-        if refine:
-            fine = knee.refine(w.rungs)
-            total += len(fine)
-            for i, db in enumerate(fine):
+        step = (abs(points[-1] - points[0]) / max(1, len(points) - 1)
+                if len(points) > 1 else 0.0)
+        n = max(1, int(passes))
+        total = n * len(points)
+        walks, stopped = [], False
+        for _ in range(n):
+            first = len(w.rungs)
+            for db in points:
                 if should_stop is not None and should_stop():
+                    stopped = True
                     break
                 r = w.visit(db)
                 if r is not None and on_rung is not None:
                     on_rung(r, len(w.rungs), total)
-            knee.mark_transients(w.rungs)
-        return knee.verdict(w.rungs), w
+            part = w.rungs[first:]
+            if part:
+                knee.mark_transients(part)
+                walks.append(part)
+            if stopped:
+                break
+        if not walks:
+            return knee.verdict(w.rungs), w
+        rungs, scatter = knee.average(walks)
+        v = knee.verdict(rungs, scatter=scatter)
+        if len(walks) > 1:
+            each = [knee.verdict(p, scatter=scatter) for p in walks]
+            ok, why = knee.agree(each, step)
+            if not ok:
+                v = knee.Verdict("unclear", rungs, v.segments,
+                                 scatter=scatter, note=why)
+        return v, w
