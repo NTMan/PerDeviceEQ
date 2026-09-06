@@ -304,9 +304,25 @@ His goal lines ride each task verbatim.
 
     (d) *Above the loudest rung, nothing is known* whenever the
     capture rather than the rig ended the walk, which is three
-    of the five rigs here. Lowering the input gain for the walk
-    would move that ceiling -- and this is the one place in the
-    project where the right answer may be NOT to measure.
+    of the five rigs here. Lowering the input gain moves that
+    ceiling, but only where the gain is analogue. ON THE UMIK-2
+    NOTHING LINUX CAN REACH IS: both controls it publishes sit
+    after conversion, so cutting one moves the peak in the FILE
+    and leaves the converter where it was. A ceiling reached
+    that way is not the rig's, and a map read above the old one
+    was taken through a converter already at or past full
+    scale.
+
+    The microphone itself is not the problem. It has an
+    analogue preamp, and by two field reports it leaves the
+    factory at +18 dB out of a 0..+42 range, with the number
+    written into the calibration file. So on a default unit
+    eighteen decibels of acoustic headroom are sitting there --
+    behind a Mac/Windows tool, off every bus Linux speaks. That
+    is a task, not a wall, and it is filed with the M62 work.
+
+    And this remains the one place in the project where the
+    right answer may be NOT to measure.
 
     A loudspeaker past its border makes a noise. An earphone
     past its border may not come back, and the reason its
@@ -604,7 +620,32 @@ His goal lines ride each task verbatim.
   is the only honest witness of what a rig was given: a knob decibel is
   not a decibel on a sink that keeps its own scale. His JBL delivered
   7.0 dB for 4.1 asked, 1.72 to one, and a wall predicting from the knob
-  clipped two rigs at 0.0 dBFS.
+  clipped two rigs at 0.0 dBFS. IT WITNESSES ONLY WHILE WHAT SETS IT
+  STANDS BEFORE THE CONVERTER. A digital input gain scales the peak in
+  the file and leaves the voltage at the converter alone, so a take can
+  read -24 dBFS with the converter at full scale and nothing in the
+  recording shows the difference.
+- **Both capture gains the UMIK-2 publishes are digital**, and the
+  descriptor says so without any measurement: its whole audio topology
+  is input terminal 1 (Microphone) -> feature unit 11 -> output
+  terminal 22 (USB Streaming), and a feature unit downstream of the
+  input terminal is downstream of conversion. There is no extension
+  unit. The walk agrees: cut one control by hand and drive the other
+  over its whole range and the recorded noise falls from -120.9 to
+  -170.0 dBFS, slope one, no floor anywhere, seven runs, which the room
+  scaled by 100 dB predicts within half a decibel while every
+  arrangement putting the converter inside the pair predicts 3 dB
+  higher. The analogue preamp is on the vendor HID interface only,
+  hidraw, usage page 0xFF00, 64 bytes each way.
+- **One element can wear more than one control, and the desktop drives
+  one of them.** The UMIK-2's feature unit publishes a master plus two
+  per-channel volumes; ALSA splits them into `Mic Capture Volume`
+  numid=4 (the pair) and numid=5 (the master), each 0..50 over -50..0
+  dB, and PipeWire moves the pair while never looking at the master.
+  The M62 is the other shape of the same trap -- there the digital trim
+  and the analogue preamp really are two elements. Either way a fader
+  honestly at 100% describes nothing, and `fader_kind`, which reads one
+  route and one element, covers neither.
 - **Two sweeps of one rig at one level disagree by about 0.2 dB** in the
   midrange and close to 1 dB at 20 Hz over Bluetooth. So a 2 dB step is
   readable and a 1 dB step is not, and a loss must clear TWICE that
