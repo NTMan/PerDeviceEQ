@@ -430,7 +430,7 @@ def ladder(source, column=0, lo_db=-60.0, hi_db=0.0, steps=10,
         v = knee.verdict(rungs, scatter=scatter)
         if len(walks) > 1:
             each = [knee.verdict(p, scatter=scatter) for p in walks]
-            ok, why = knee.agree(each, step)
+            ok, why = knee.agree(each, step, kind=v.kind)
             if not ok:
                 v = knee.Verdict("unclear", rungs, v.segments,
                                  scatter=scatter, note=why)

@@ -555,28 +555,54 @@ def average(passes):
     return out, scatter
 
 
-def agree(verdicts, step_db):
-    """Do repeated walks of one ladder say the same thing? (ok, why)
+def agree(verdicts, step_db, kind=None):
+    """Do repeated walks of one ladder back its answer? (ok, why)
 
-    The answer to a ladder is a claim about a chain, so it has to
-    survive being asked twice. Seven walks of one input inside one
-    hour returned three different kinds and put the knee eighteen
-    decibels apart, every one printed with the same confidence as the
-    rest. Nothing in the output told which to believe, because nothing
-    in one walk can.
+    `kind` is what the AVERAGED ladder said, and that is the answer.
+    The passes are asked whether a MAJORITY of them back it. They are
+    not asked to be unanimous, and the field is what settled that.
 
-    Agreement is the same kind, and for a knee, positions inside one
-    step of the walk: the walk cannot place anything finer than the
-    distance between its own rungs, so asking for better than that
-    would reject good answers.
+    Unanimity was the first rule here and it was chosen with no field
+    case to test it against. Five walks later: one pass carries three
+    times the variance of the mean of three, and on a chain with no
+    knee at all -- proven none, by the device descriptor -- a single
+    pass invented one in four of fifteen. Unanimity therefore threw
+    away two correct answers out of five for the sake of the noisiest
+    third of the data.
+
+    The mechanism is worth naming, because it is backwards from the
+    intuition. On the CLEANEST ladders the floor-plus-rise model does
+    not converge at all: a straight line gives three parameters
+    nothing to hold. It converges on a single pass because a single
+    pass is noisy. Convergence there is evidence of noise, not of
+    structure, so the noisiest pass is exactly the one that speaks
+    most confidently.
+
+    What a majority catches is a SPOILED pass -- a sneeze, a chair,
+    both seen and both marked -- outvoted by the two either side of
+    it. Whether it would also catch a room drifting steadily under the
+    walk is UNTESTED: of six field disagreements not one turned out to
+    be a drift, and the one that looked like it was a single pass
+    standing 1.7 dB high.
+
+    Passing `kind=None` keeps the old unanimous reading, which is what
+    a caller wants when there is no averaged ladder to answer for.
     """
     live = [v for v in verdicts if v is not None]
     if not live:
         return False, "no pass produced a reading"
-    kinds = sorted({v.kind for v in live})
-    if len(kinds) > 1:
-        return False, "the passes disagree: " + ", ".join(kinds)
-    ks = [v.knee_db for v in live if v.knee_db is not None]
+    if kind is None:
+        kinds = sorted({v.kind for v in live})
+        if len(kinds) > 1:
+            return False, "the passes disagree: " + ", ".join(kinds)
+        backing = live
+    else:
+        backing = [v for v in live if v.kind == kind]
+        if 2 * len(backing) <= len(live):
+            return False, ("only %d of %d passes back %s -- they said "
+                           "%s" % (len(backing), len(live), kind,
+                                   ", ".join(v.kind for v in live)))
+    ks = [v.knee_db for v in backing if v.knee_db is not None]
     if len(ks) > 1:
         spread = max(ks) - min(ks)
         if spread > abs(step_db):

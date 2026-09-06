@@ -525,3 +525,50 @@ def test_a_straight_line_does_not_claim_which_side_of_the_converter():
     assert v.kind == "input"
     assert "BEFORE" not in v.note
     assert "headroom is free" not in v.note
+
+
+# --- what the passes are asked ---------------------------------------
+
+def _said(kind, knee_db=None):
+    return knee.Verdict(kind, [], knee_db=knee_db)
+
+
+def test_one_spoiled_pass_does_not_sink_two_good_ones():
+    """Five walks of an input with no knee -- proven none, by the
+    device descriptor -- had a single pass claim one in four cases out
+    of fifteen. Under unanimity that cost two correct answers out of
+    five, and both times the averaged ladder was a straight line."""
+    each = [_said("input"), _said("knee", -30.0), _said("input")]
+    ok, why = knee.agree(each, 5.0, kind="input")
+    assert ok and not why
+
+
+def test_a_kind_only_one_pass_backs_is_not_an_answer():
+    each = [_said("input"), _said("knee", -30.0), _said("knee", -12.0)]
+    ok, why = knee.agree(each, 5.0, kind="input")
+    assert not ok
+    assert "1 of 3" in why
+
+
+def test_a_knee_the_passes_place_far_apart_is_not_an_answer():
+    """Backing the kind is not enough. Three walks that all say knee
+    and put it at -30, -49 and -12 have not placed anything."""
+    each = [_said("knee", -30.0), _said("knee", -49.0),
+            _said("knee", -12.0)]
+    ok, why = knee.agree(each, 5.0, kind="knee")
+    assert not ok and "apart" in why
+
+
+def test_the_seven_field_walks_back_their_averaged_answer():
+    """The whole point of a majority, on real data. Read one at a time
+    these seven give five input, one knee and one nothing at all --
+    and the truth is input, known from the device descriptor. The
+    averaged ladder says input and five of seven back it. Unanimity
+    would have thrown the right answer away over the two."""
+    each = [knee.verdict(_walk(v)) for v in SEVEN]
+    assert sorted(v.kind for v in each).count("input") == 5
+    rungs, scatter = knee.average([_walk(v) for v in SEVEN])
+    v = knee.verdict(rungs, scatter=scatter)
+    assert v.kind == "input"
+    assert knee.agree(each, 5.0, kind=v.kind)[0]
+    assert not knee.agree(each, 5.0)[0]           # the old unanimity

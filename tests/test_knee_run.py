@@ -164,7 +164,7 @@ def test_passes_that_disagree_are_reported_as_disagreement(card,
     v, _ = knee_run.ladder(card.src, 0, lo_db=-60.0, hi_db=0.0, steps=4,
                            dwell=0.05, passes=3)
     assert v.kind == "unclear"
-    assert "disagree" in v.note
+    assert "1 of 3" in v.note
     # and it recommends NOTHING. The report used to print a working
     # gain here while the code that acts on it had correctly left the
     # card alone, so the two halves of one run contradicted each other

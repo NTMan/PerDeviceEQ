@@ -261,7 +261,7 @@ def main():
             v = knee.verdict(rungs, scatter=scatter) if rungs else None
             if v is not None and len(walks) > 1:
                 each = [knee.verdict(q, scatter=scatter) for q in walks]
-                ok, why = knee.agree(each, step)
+                ok, why = knee.agree(each, step, kind=v.kind)
                 print("\nthe passes said: %s"
                       % ", ".join(x.kind for x in each))
                 if scatter is not None:
