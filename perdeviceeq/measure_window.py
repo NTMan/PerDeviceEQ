@@ -3648,10 +3648,12 @@ class MeasureWindow(Adw.Window):
             row.set_value(100)
             self._gain_guard = False
             row.set_tooltip_text(
-                {"attenuator": "This input's gain can only attenuate: "
-                               "it sits after the converter, so "
-                               "lowering it throws resolution away "
-                               "and buys no headroom. Held at full.",
+                {"attenuator": "This input's gain has no travel above "
+                               "unity: it can only cut. Whether that "
+                               "reaches the converter or only the "
+                               "recording is not something the flags "
+                               "say, and on the one input measured "
+                               "here it did not. Held at full.",
                  "software": "This input has no gain of its own -- "
                              "this fader would only be a multiplier "
                              "in software, which buys no headroom and "
@@ -3994,7 +3996,14 @@ class MeasureWindow(Adw.Window):
             krow.set_text("no measurement mic resolved")
             return
         if not getattr(self, "_gain_ok", False):
-            krow.set_text("this input has no gain of its own")
+            # two different facts, and one line was stating the wrong
+            # one on half the devices: an ATTENUATOR has a gain, fifty
+            # decibels of it on a UMIK-2, it simply has no travel above
+            # unity. Only "software" means there is no element at all.
+            krow.set_text(
+                "this input's gain can only cut, held at full"
+                if getattr(self, "_fader_kind", None) == "attenuator"
+                else "this input has no gain of its own")
             return
         v = self._knee.get(self._knee_key())
         text = None
