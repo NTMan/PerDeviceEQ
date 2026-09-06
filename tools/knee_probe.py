@@ -186,7 +186,7 @@ def main():
                  "   CAUGHT SOMETHING (+%.1f dB over the median)" % ex
                  if ex is not None and ex > knee.EXCESS_DB else ""))
 
-    rungs = []
+    rungs, v, scatter = [], None, None
     try:
         with knee_run.Walk(src, args.column, dwell=args.dwell,
                            quiet_sink=args.quiet_sink) as w:
@@ -294,7 +294,18 @@ def main():
         print("\nrungs marked suspect caught a transient -- something made")
         print("a noise during them, and they took no part in the fit.")
 
-    v = knee.verdict(rungs)
+    # THE ONE THE WALK PRODUCED, not a second opinion. This used to call
+    # verdict() again here, which threw away both the scatter measured
+    # from the passes and the check that the passes agreed -- so a run
+    # whose passes said knee, knee, input printed VERDICT: input and
+    # suggested a working gain, while the code above had correctly left
+    # the card alone because its own verdict was unclear. The report
+    # contradicted the action.
+    if v is None:
+        if not rungs:
+            print("nothing was measured")
+            return 1
+        v = knee.verdict(rungs, scatter=scatter)
     print("\n%s" % _draw(v.rungs))
     if v.segments:
         print("  the curve reads, in order:")

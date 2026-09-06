@@ -513,3 +513,15 @@ def test_averaging_marks_a_pass_that_fell_out_with_the_others():
     rungs, scatter = knee.average(walks)
     assert rungs[4].suspect
     assert not any(r.suspect for i, r in enumerate(rungs) if i != 4)
+
+
+def test_a_straight_line_does_not_claim_which_side_of_the_converter():
+    """A UMIK-2 walks fifty decibels at slope one and its control is
+    digital by the device descriptor, so the note this verdict carries
+    must not say the control can only be sitting before the
+    converter."""
+    rungs, scatter = knee.average([_walk(v) for v in SEVEN])
+    v = knee.verdict(rungs, scatter=scatter)
+    assert v.kind == "input"
+    assert "BEFORE" not in v.note
+    assert "headroom is free" not in v.note

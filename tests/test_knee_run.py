@@ -165,6 +165,10 @@ def test_passes_that_disagree_are_reported_as_disagreement(card,
                            dwell=0.05, passes=3)
     assert v.kind == "unclear"
     assert "disagree" in v.note
+    # and it recommends NOTHING. The report used to print a working
+    # gain here while the code that acts on it had correctly left the
+    # card alone, so the two halves of one run contradicted each other
+    assert v.work_db is None
 
 
 def test_a_rung_carries_the_gain_the_card_took(card):

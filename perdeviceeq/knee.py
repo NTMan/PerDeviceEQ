@@ -812,13 +812,27 @@ def verdict(rungs, margin_db=MARGIN_DB, max_k=MAX_K, scatter=None):
                         % " then ".join(kinds))
 
 
+# WHAT A STRAIGHT LINE DOES AND DOES NOT SAY. This said the control
+# could only be sitting BEFORE the converter, and a UMIK-2 disproved
+# it: its capture volume is a feature unit downstream of the input
+# terminal, digital by the descriptor, and it still walked fifty
+# decibels at slope one. A gain AFTER the converter scales its floor
+# along with the signal and gives the same straight line. The ladder
+# cannot tell the two apart, so it no longer claims to.
+#
+# The advice narrows with the claim. Flat SNR across the walk is
+# measured and stands. That the headroom is free does not: it is free
+# only where the cut happens before conversion. Where it happens after,
+# cutting moves the peak in the FILE and leaves the converter exactly
+# where it was, which buys a number rather than a margin.
 _INPUT_NOTE = (
-    "the recorded noise answers the control across the whole range, "
-    "which can only happen if what is being measured sits BEFORE it: "
-    "the input already outweighs the converter here, so no more gain "
-    "buys SNR. Work at the bottom of the searched range -- not the "
-    "control's minimum, the bottom of what was walked -- and the "
-    "headroom is free")
+    "the recorded noise follows the control across the whole range, so "
+    "SNR is the same everywhere on it and no position is better than "
+    "another for noise. Which side of the converter the control sits "
+    "on is NOT settled by this: a gain after it scales the converter's "
+    "floor along with the signal and draws the same straight line. So "
+    "the bottom of the walk costs nothing in SNR, and whether it buys "
+    "real headroom depends on that unanswered question")
 
 _CONVERTER_NOTE = (
     "the converter outweighs the input across the whole range, so this "
