@@ -398,6 +398,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
 
     rungs = []
     exact = []              # (level, peak) unrounded, for the decisions
+    scatter = None          # the base rung against a repeat of itself
     v = _clamp(start_volume)
     step = float(step_db)
     # WHAT STOPPED THE WALK. It never stops because the rig gave out
@@ -431,6 +432,38 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             chan, peak_db, clipped, got = _play_rung(
                 back, name, sink, source, wav, duration, channels,
                 sweep, freqs, analyze, v, play_map)
+
+            # THE FIRST RUNG IS PLAYED TWICE, and the pair is the
+            # map's own measure of how much two sweeps of one rig
+            # disagree. Everything above is read against this rung, so
+            # its scatter is the floor a loss has to clear to be worth
+            # believing -- and taking that floor from the profile's
+            # TAKES instead tied a map to a measurement it has nothing
+            # to do with. A map is a property of the rig; the takes
+            # are an answer about its response. One sweep more, and
+            # the two come apart.
+            if i == 0:
+                again = _play_rung(back, name, sink, source, wav,
+                                   duration, channels, sweep, freqs,
+                                   analyze, v, play_map)[3]
+                a = np.asarray(got.mag_db, float)
+                b = np.asarray(again.mag_db, float)
+                scatter = np.abs(a - b)
+                # ONLY WHERE THE RUNG WAS HEARD. Where a rig makes no
+                # sound the two sweeps compare two noises, and the
+                # difference is whatever the room felt like: his iLoud
+                # read 0.06 dB across the band and 33.95 at the edges
+                # of the grid. The gate is closed there anyway, so
+                # nothing was wrong -- but a number that size sitting
+                # in a profile is a trap for whoever takes its
+                # maximum.
+                off0 = (float(got.noise_dbfs) - float(got.signal_dbfs)
+                        if got.noise_dbfs is not None
+                        and got.signal_dbfs is not None else None)
+                if off0 is not None:
+                    scatter = np.where(a - off0 > HEARD_OVER_NOISE_DB,
+                                       scatter, np.nan)
+
             # A CALLER MAY WANT THE CAPTURE ITSELF. Keeping the wav is
             # not the package's business -- but a walk that disturbs a
             # room for a minute and throws the recordings away is a
@@ -455,6 +488,11 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # bracket ever forms and the walk marches to the top.
             exact.append((float(v), float(peak_db)))
             rungs.append({"level": round(float(v), 4),
+                          "scatter_db": (
+                              [None if not math.isfinite(x)
+                               else round(float(x), 3)
+                               for x in scatter]
+                              if i == 0 else None),
                           "peak_dbfs": round(peak_db, 2),
                           "spl_db": None,
                           "heard_offset_db": (None if off is None

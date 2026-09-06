@@ -898,3 +898,29 @@ def test_a_rungs_loss_does_not_move_when_the_knob_does():
     assert read(0.95) == 4.0
     # and nothing about the rungs themselves changed between those
     assert rungs[1][1] == 2.5
+
+
+def test_the_base_rung_has_to_be_heard_itself():
+    """Everything is read against the base, so the base's own noise
+    enters every reading. On a walk whose base stood 1.4 dB over the
+    noise at 50 Hz the loss at the top read 4.89 dB; against a base
+    standing 21.5 dB over it the same rung read 3.92. Nearly a decibel
+    of the answer was the reference's hiss.
+
+    It happens when the search settles low -- a sensitive microphone
+    reaches the capture ceiling at a lower knob -- and the map then
+    starts twelve decibels under that, in the noise. Choosing the base
+    by AUDIBILITY costs nothing, the rungs are already walked."""
+    def pick(rungs):
+        """The law: the quietest rung that is itself heard over a
+        quarter of the band."""
+        for level, heard_fraction in rungs[:-1]:
+            if heard_fraction >= 0.25:
+                return level
+        return rungs[0][0]
+
+    # a walk whose two quietest rungs are in the noise
+    assert pick([(0.30, 0.02), (0.33, 0.10), (0.35, 0.60),
+                 (0.38, 0.90)]) == 0.35
+    # and one that is audible from the start keeps its first rung
+    assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41

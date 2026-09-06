@@ -778,14 +778,62 @@ class EqWindow(Adw.ApplicationWindow):
         lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
         n = max(len(r["mag_db"]) for rungs in maps for r in rungs)
         freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
-        gate = 2.0 * self._spread(ppo, n)
+        # THE MAP CARRIES ITS OWN SCATTER, measured by playing its
+        # base rung twice, in the same conditions as the loss it
+        # gates. Older maps have none and fall back to the takes,
+        # which is where this number used to come from -- and which
+        # tied a map to a measurement it has nothing to do with.
+        own = None
+        for rungs in maps:
+            sc = rungs[0].get("scatter_db")
+            if sc:
+                a = np.array([np.nan if x is None else float(x)
+                              for x in sc], float)
+                own = a if own is None else np.fmax(own, a[:len(own)])
+        if own is not None and len(own) >= n:
+            w = max(3, int(round(ppo / 3.0)))
+            sm = np.full(n, 1.0)
+            for k in range(n):
+                seg = own[max(0, k - w // 2):k + w // 2 + 1]
+                seg = seg[np.isfinite(seg)]
+                if seg.size:
+                    sm[k] = float(np.median(seg))
+            gate = 2.0 * sm
+        else:
+            gate = 2.0 * self._spread(ppo, n)
         prepared = []
         for rungs in maps:
+            # THE BASE IS THE QUIETEST RUNG THAT IS ITSELF HEARD, not
+            # simply the quietest. Everything is read against it, so
+            # its own noise enters every reading: on a walk whose base
+            # stood 1.4 dB over the noise at 50 Hz the loss at the top
+            # read 4.89 dB, and against a base standing 21.5 dB over
+            # it the same rung read 3.92. Nearly a decibel of the
+            # answer was the reference's hiss.
+            #
+            # It happens when the search settles low -- a sensitive
+            # microphone reaches the capture ceiling at a lower knob
+            # -- and the map then starts twelve decibels under that,
+            # in the noise. Choosing the base by AUDIBILITY costs
+            # nothing: the rungs are already walked.
             base = rungs[0]
+            for cand in rungs[:-1]:
+                off = cand.get("heard_offset_db")
+                if off is None:
+                    continue
+                cm = np.array([np.nan if x is None else float(x)
+                               for x in cand["mag_db"]], float)
+                with np.errstate(all="ignore"):
+                    heard = cm - off
+                    ok = np.isfinite(heard) & (
+                        heard > level_run.HEARD_OVER_NOISE_DB)
+                if ok.sum() >= 0.25 * len(cm):
+                    base = cand
+                    break
             bm = np.array([np.nan if x is None else float(x)
                            for x in base["mag_db"]], float)
             steps = []
-            for r in rungs[1:]:
+            for r in rungs[rungs.index(base) + 1:]:
                 rise = level_run.asked_db(
                     (base["level"], base.get("peak_dbfs")),
                     (r["level"], r.get("peak_dbfs")))

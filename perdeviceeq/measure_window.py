@@ -4375,16 +4375,38 @@ class MeasureWindow(Adw.Window):
         matching.
         """
         store = getattr(self.parent, "store", None)
-        pid = self.edit_pid
-        if store is None or not pid:
-            # a fresh measurement has no profile to write into yet --
-            # its map rides into the profile the session builds
+        if store is None:
+            return
+        # A WALK IS ONE OF THE MOMENTS THAT NEEDS A PROFILE TO EXIST,
+        # alongside a committed take and the plain close. It was not
+        # on that list, so running only the search left the map
+        # nowhere to go and dropped it without a word -- which is how
+        # a profile came back carrying nothing but two empty band
+        # lists after a full walk of the rig.
+        try:
+            pid = self._ensure_pid()
+        except Exception:
+            return
+        if not pid:
             return
         prof = store.get(pid)
-        if not prof or not (prof.get("measurement") or {}).get("sessions"):
+        if not prof:
             return
+
+        # A MAP IS NOT A BY-PRODUCT OF A MEASUREMENT. It is a property
+        # of the rig, walked with sweeps the correction never touches,
+        # and it used to be thrown away whenever the profile had no
+        # session yet -- so a hand that ran only the search got
+        # nothing, silently. Somewhere to put it is made if there is
+        # none.
         prof = copy.deepcopy(prof)
-        sess = prof["measurement"]["sessions"]
+        m = prof.setdefault("measurement", {})
+        sess = m.setdefault("sessions", {})
+        if not sess:
+            sess["headroom"] = {}
+            m.setdefault("grid", {"f_lo": mc.GRID_F_LO,
+                                  "f_hi": mc.GRID_F_HI,
+                                  "ppo": mc.GRID_PPO})
         sid = sorted(sess)[-1]
         blk = sess[sid]
         hr = dict(blk.get("headroom") or {})

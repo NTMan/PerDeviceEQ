@@ -730,3 +730,71 @@ def test_the_map_begins_below_the_search_not_at_it():
     top = start * 10.0 ** (level_run.MAP_STEP_DB
                            * (level_run.MAP_MAX_RUNGS - 1) / 60.0)
     assert top > 0.66
+
+
+def test_the_map_measures_its_own_scatter():
+    """A loss has to clear the disagreement between two sweeps to be
+    worth believing, and that number used to come from the profile's
+    TAKES -- which tied a map to a measurement it has nothing to do
+    with, and threw the map away when a hand ran only the search.
+
+    A map is a property of the rig. It plays its base rung twice and
+    measures the scatter itself, in the same conditions as the loss it
+    gates: 0.05 dB on a quiet chain here, 0.37 on a noisy one."""
+    freqs = np.asarray(mc.log_grid())
+    rng = np.random.default_rng(3)
+
+    class Got:
+        def __init__(self, mag):
+            self.mag_db = mag
+            self.noise_dbfs = -80.0
+            self.signal_dbfs = -40.0
+
+    def rig(noise):
+        def play(back, name, sink, source, wav, duration, channels,
+                 sweep, fr, analyze, v, play_map):
+            db = 60.0 * math.log10(v / 0.4)
+            mag = np.full(len(freqs), db) + rng.normal(0, noise,
+                                                       len(freqs))
+            return None, -25.0 + db, False, Got(mag)
+        return play
+
+    class Back:
+        def moratorium_begin(self, *a, **k):
+            pass
+
+        def moratorium_end(self, *a, **k):
+            pass
+
+    real_backend = level_run.pw_backend.backend
+    real_rung = level_run._play_rung
+    level_run.pw_backend.backend = lambda: Back()
+    try:
+        level_run._play_rung = rig(0.05)
+        quiet = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
+                                       0.4, sink_name="x", freqs=freqs,
+                                       max_rungs=4)
+        level_run._play_rung = rig(0.4)
+        noisy = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
+                                       0.4, sink_name="x", freqs=freqs,
+                                       max_rungs=4)
+    finally:
+        level_run._play_rung = real_rung
+        level_run.pw_backend.backend = real_backend
+
+    def median(rungs):
+        a = np.array([np.nan if x is None else float(x)
+                      for x in rungs[0]["scatter_db"]], float)
+        return float(np.nanmedian(a))
+
+    assert median(quiet) < median(noisy)
+    # and only the base carries it -- the others are read against it
+    assert all(r.get("scatter_db") is None for r in quiet[1:])
+    # WHERE A RIG MAKES NO SOUND the two sweeps compare two noises,
+    # and the difference is whatever the room felt like: his iLoud
+    # read 0.06 dB across the band and 33.95 at the edges of the grid.
+    # The gate is closed there anyway, but a number that size sitting
+    # in a profile is a trap for whoever takes its maximum.
+    a = np.array([np.nan if x is None else float(x)
+                  for x in quiet[0]["scatter_db"]], float)
+    assert np.nanmax(a) < 2.0
