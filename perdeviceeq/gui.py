@@ -604,21 +604,20 @@ class EqWindow(Adw.ApplicationWindow):
         m = (p.get("measurement") or {})
         grid = m.get("grid") or {}
         top, why = None, None
-        for blk in (m.get("sessions") or {}).values():
-            for rungs in ((blk or {}).get("headroom") or {}).values():
-                if not rungs:
-                    continue
-                last = max(rungs, key=lambda r: r["level"])
-                if top is None or last["level"] < top:
-                    top, why = last["level"], last.get("stopped_by")
+        for rungs in level_run.maps_of(p).values():
+            if not rungs:
+                continue
+            last = max(rungs, key=lambda r: r["level"])
+            if top is None or last["level"] < top:
+                top, why = last["level"], last.get("stopped_by")
         if top is None or not grid or why == "rungs":
             return None
         # the map speaks in what the rig RECEIVES; the strip speaks in
         # knob, so undo the correction at its most generous frequency
         lo, ppo = float(grid["f_lo"]), float(grid["ppo"])
         n = 0
-        for blk in (m.get("sessions") or {}).values():
-            for rungs in ((blk or {}).get("headroom") or {}).values():
+        for rungs in level_run.maps_of(p).values():
+            if rungs:
                 n = max(n, max(len(r["mag_db"]) for r in rungs))
         freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
         with np.errstate(all="ignore"):
@@ -768,10 +767,9 @@ class EqWindow(Adw.ApplicationWindow):
         m = (p.get("measurement") or {})
         grid = m.get("grid") or {}
         maps = []
-        for blk in (m.get("sessions") or {}).values():
-            for rungs in ((blk or {}).get("headroom") or {}).values():
-                if len(rungs or []) >= 2:
-                    maps.append(sorted(rungs, key=lambda r: r["level"]))
+        for rungs in level_run.maps_of(p).values():
+            if len(rungs or []) >= 2:
+                maps.append(sorted(rungs, key=lambda r: r["level"]))
         if not maps or not grid:
             self._loss_cache = ()
             return self._loss_cache

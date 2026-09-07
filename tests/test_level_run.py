@@ -798,3 +798,54 @@ def test_the_map_measures_its_own_scatter():
     a = np.array([np.nan if x is None else float(x)
                   for x in quiet[0]["scatter_db"]], float)
     assert np.nanmax(a) < 2.0
+
+
+# --- a map outlives the takes it was walked beside --------------------
+
+def _rung(level, n=4):
+    return {"level": level, "mag_db": [0.0] * n, "stopped_by": None}
+
+
+def test_a_map_in_its_own_home_is_read():
+    prof = {"passport": {"FL": {"rungs": [_rung(0.3), _rung(0.5)]}}}
+    got = level_run.maps_of(prof)
+    assert list(got) == ["FL"] and len(got["FL"]) == 2
+
+
+def test_a_map_in_an_old_session_block_is_still_read():
+    """Profiles written before the move must not go blind."""
+    prof = {"measurement": {"sessions": {
+        "s1": {"headroom": {"FR": [_rung(0.4)]}}}}}
+    assert list(level_run.maps_of(prof)) == ["FR"]
+
+
+def test_the_pseudo_session_is_read_too():
+    """An earlier cut had nowhere to put a map when the profile had no
+    session, so it keyed one 'headroom' -- and the window's reader has
+    stepped over it ever since, because it looks for a block WITH a
+    headroom key rather than a block that IS one."""
+    prof = {"measurement": {"sessions": {
+        "headroom": {"FL": [_rung(0.2), _rung(0.6)]}}}}
+    assert len(level_run.maps_of(prof)["FL"]) == 2
+
+
+def test_the_new_home_wins_over_an_old_block():
+    prof = {"passport": {"FL": {"rungs": [_rung(0.9)]}},
+            "measurement": {"sessions": {
+                "s1": {"headroom": {"FL": [_rung(0.1), _rung(0.2)]}}}}}
+    got = level_run.maps_of(prof)["FL"]
+    assert len(got) == 1 and got[0]["level"] == 0.9
+
+
+def test_a_passport_survives_what_kills_a_session():
+    """The reason for the move, in one court. remove_takes prunes any
+    session with no takes left, so a map stored inside one died the
+    moment its takes were deleted -- and one was lost exactly so."""
+    prof = {"passport": {"FL": {"rungs": [_rung(0.5)]}},
+            "measurement": {"takes": [], "sessions": {}}}
+    assert level_run.maps_of(prof)["FL"]
+
+
+def test_a_profile_with_no_map_reads_as_none():
+    assert level_run.maps_of({"measurement": {"sessions": {}}}) == {}
+    assert level_run.maps_of({}) == {}

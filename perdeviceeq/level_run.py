@@ -351,6 +351,60 @@ MAP_MAX_RUNGS = 12
 MAP_BELOW_DB = 12.0
 
 
+PASSPORT = "passport"    # where a map lives in a profile, one record
+                         # per channel, OUTSIDE measurement
+
+
+def passport_of(prof):
+    """The maps a profile carries, {channel: record}.
+
+    A MAP IS ITS OWN UNIT OF MEASUREMENT and outlives everything else
+    in the profile. It used to live inside a session block, and a
+    session block is pruned the moment its last take is deleted -- so
+    remeasuring a rig threw away the walk that described it, silently,
+    and one was lost exactly that way. It also reached disk only when
+    a session already existed, which an earlier cut worked around by
+    keying a pseudo session 'headroom' whose block the readers then
+    stepped straight over.
+
+    Neither is a home. A map describes what the rig can follow; takes
+    describe its response. They are answers to different questions and
+    they die on different days.
+    """
+    got = prof.get(PASSPORT)
+    return dict(got) if isinstance(got, dict) else {}
+
+
+def maps_of(prof):
+    """{channel: rungs} from wherever this profile keeps them.
+
+    New home first, then the session blocks, so a profile written
+    before the move still draws. The pseudo session is read too: it
+    holds a real walk and nothing has ever looked at it.
+    """
+    out = {}
+    m = prof.get("measurement") or {}
+    for sid, blk in sorted((m.get("sessions") or {}).items()):
+        blk = blk or {}
+        hr = blk.get("headroom")
+        if isinstance(hr, dict):
+            for ch, rungs in hr.items():
+                if rungs:
+                    out[str(ch)] = rungs
+        elif sid == PASSPORT_LEGACY_SID and isinstance(blk, dict):
+            for ch, rungs in blk.items():
+                if rungs and isinstance(rungs, list):
+                    out[str(ch)] = rungs
+    for ch, rec in passport_of(prof).items():
+        rungs = (rec or {}).get("rungs")
+        if rungs:
+            out[str(ch)] = rungs
+    return out
+
+
+PASSPORT_LEGACY_SID = "headroom"
+
+
 def headroom_map(sink, source, channels, start_volume, sink_name=None,
                  analyze=0, sweep=None, freqs=None,
                  pre_silence=None, post_silence=None, play_map=None,

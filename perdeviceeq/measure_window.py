@@ -4422,21 +4422,33 @@ class MeasureWindow(Adw.Window):
         # none.
         prof = copy.deepcopy(prof)
         m = prof.setdefault("measurement", {})
-        sess = m.setdefault("sessions", {})
-        if not sess:
-            sess["headroom"] = {}
-            m.setdefault("grid", {"f_lo": mc.GRID_F_LO,
-                                  "f_hi": mc.GRID_F_HI,
-                                  "ppo": mc.GRID_PPO})
-        sid = sorted(sess)[-1]
-        blk = sess[sid]
-        hr = dict(blk.get("headroom") or {})
-        hr[str(ch_key)] = list(rungs)
-        blk["headroom"] = hr
-        blk["headroom_walked"] = {
-            "utc": datetime.now(timezone.utc).isoformat(
+        m.setdefault("grid", {"f_lo": mc.GRID_F_LO,
+                              "f_hi": mc.GRID_F_HI,
+                              "ppo": mc.GRID_PPO})
+        book = dict(prof.get(level_run.PASSPORT) or {})
+        src = self.session.source_ident or {}
+        book[str(ch_key)] = {
+            "rungs": list(rungs),
+            "walked_utc": datetime.now(timezone.utc).isoformat(
                 timespec="seconds").replace("+00:00", "Z"),
-            "sink": self.session.sink_ident.get("name")}
+            # CONDITIONS, WRITTEN LIKE A TAKE'S. What can be read back
+            # later is here to be COMPARED; what cannot is here to be
+            # SHOWN. The analogue preamp inside a UMIK-2 is the second
+            # kind today and is deliberately absent rather than
+            # guessed: it answers only on the vendor HID interface,
+            # two of these microphones report the same empty serial,
+            # and a passport that claimed to know it would be lying.
+            # It moves into the compared half by itself once a driver
+            # publishes it.
+            "conditions": {
+                "sink": self.session.sink_ident.get("name"),
+                "source": src.get("name"),
+                "route": src.get("route"),
+                "capture_gain": getattr(self.session, "_gain_now", None),
+                "capture_channel": self.mic_col,
+            },
+        }
+        prof[level_run.PASSPORT] = book
         try:
             store.save_user(prof)
         except OSError:
