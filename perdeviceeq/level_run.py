@@ -427,11 +427,28 @@ def linear_top(rungs, ppo=None):
         return None
     ppo = float(ppo or 96.0)
     top = got[0]["level"]
-    for prev, cur in zip(got, got[1:]):
-        ask = asked_db((prev["level"], prev.get("peak_dbfs")),
+    # A STEP THE KNOB TOOK AND THE DEVICE DID NOT IS NOT A FAILURE.
+    # Liberty 5 answers Bluetooth's own scale in jumps: ten rungs
+    # arrived at -24.1, -20.0, -20.1, -16.0, -16.0, -11.9, -7.9, -7.9,
+    # -5.0, -2.9 dBFS, so every other rung landed where the one below
+    # it already was. Judged pair by pair, the second of each such
+    # pair delivers nothing and reads as the rig giving out -- which
+    # is how a rig that followed to the top of its walk came back with
+    # a working level of 41% instead of 75%, and every take after it
+    # would have been made twenty decibels too quiet.
+    #
+    # So the comparison is against the last rung far enough BELOW to
+    # be worth comparing with. Under MIN_READABLE_STEP nothing is
+    # asked, nothing can be answered, and the reference stays put
+    # until the asking adds up.
+    ref = got[0]
+    for cur in got[1:]:
+        ask = asked_db((ref["level"], ref.get("peak_dbfs")),
                        (cur["level"], cur.get("peak_dbfs")))
-        if ask <= 0:
-            break
+        if ask < MIN_READABLE_STEP:
+            top = cur["level"]
+            continue
+        prev = ref
         off = cur.get("heard_offset_db")
         mag = np.asarray([np.nan if v is None else v
                           for v in cur.get("mag_db") or []], float)
@@ -445,7 +462,7 @@ def linear_top(rungs, ppo=None):
         short, ok = shortfall(pmag[:n], mag[:n], heard, ask, None, ppo)
         if not ok.any() or short.any():
             break
-        top = cur["level"]
+        top, ref = cur["level"], cur
     return top
 
 

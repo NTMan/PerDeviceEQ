@@ -1167,3 +1167,32 @@ def test_the_step_is_read_from_the_capture_peak_not_the_knob():
     for r in got:                       # the knob lies, the peak does not
         r["level"] = 0.10 + 0.001 * got.index(r)
     assert level_run.linear_top(got) == got[-1]["level"]
+
+
+def test_a_step_the_device_did_not_take_is_not_a_failure():
+    """His Liberty 5 answers Bluetooth's own scale in jumps: rungs
+    arrived at -24.1, -20.0, -20.1, -16.0, -16.0 dBFS, so every other
+    one landed where the rung below it already was. Judged pair by
+    pair the second of each such pair delivers nothing and reads as
+    the rig giving out, and a rig that followed to the top of its walk
+    came back with a working level of 41% instead of 75%."""
+    peaks = [-24.06, -19.96, -20.10, -15.97, -16.01, -11.90,
+             -7.92, -7.94, -4.97, -2.89]
+    lv = [0.3786, 0.4088, 0.4414, 0.4766, 0.5146, 0.5557, 0.6,
+          0.6479, 0.6995, 0.7554]
+    got = []
+    for j, (v, pk) in enumerate(zip(lv, peaks)):
+        got.append({"level": v, "peak_dbfs": pk,
+                    "heard_offset_db": -40.0,
+                    "mag_db": [pk - peaks[0]] * 96,
+                    "stopped_by": "capture" if j == len(lv) - 1 else None})
+    assert level_run.linear_top(got) == 0.7554
+
+
+def test_the_reference_stays_put_until_the_asking_adds_up():
+    """Under MIN_READABLE_STEP nothing is asked, so nothing can be
+    answered: the rung is carried and the comparison waits."""
+    got = _rungs([0.10, 0.11, 0.16, 0.25])
+    for r, pk in zip(got, (-40.0, -39.9, -36.0, -32.0)):
+        r["peak_dbfs"] = pk
+    assert level_run.linear_top(got) == 0.25
