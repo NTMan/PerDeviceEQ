@@ -1,6 +1,7 @@
 """The level search: its policy, and the field runs that shaped it."""
 
 import math
+import random
 
 import numpy as np
 import pytest
@@ -849,3 +850,77 @@ def test_a_passport_survives_what_kills_a_session():
 def test_a_profile_with_no_map_reads_as_none():
     assert level_run.maps_of({"measurement": {"sessions": {}}}) == {}
     assert level_run.maps_of({}) == {}
+
+
+# --- which rung does not belong with the rest -------------------------
+
+def _ladder(k=11, n=200, drive=2.0):
+    """A rig that follows its knob, with a little noise."""
+    rng = random.Random(4)
+    out = []
+    for j in range(k):
+        out.append({"level": 0.3 * 1.06 ** j,
+                    "mag_db": [j * drive + rng.gauss(0, 0.02)
+                               for _ in range(n)]})
+    return out
+
+
+def test_a_clean_ladder_has_no_odd_rung():
+    res, floor = level_run.odd_rung_out(_ladder())
+    assert floor < 0.1
+    for row in res:
+        v = [x for x in row if x is not None]
+        assert (sum(x * x for x in v) / len(v)) ** 0.5 < 0.1
+
+
+def test_one_spoiled_rung_lights_one_rung_and_not_its_neighbours():
+    """Against NEIGHBOURS a fault lights three -- the culprit at
+    weight one and each neighbour at a half -- and which of the three
+    did it cannot be read off the picture. Against the trend of all,
+    it lights one."""
+    got = _ladder()
+    for i in range(40, 90):                       # a bark, one rung
+        got[5]["mag_db"][i] += 2.0
+    res, floor = level_run.odd_rung_out(got)
+    def rms(k):
+        v = [x for x in res[k] if x is not None]
+        return (sum(x * x for x in v) / len(v)) ** 0.5
+    assert rms(5) > 20 * floor
+    for k in (3, 4, 6, 7):
+        assert rms(k) < 4 * floor
+
+
+def test_three_spoiled_rungs_are_named_separately():
+    got = _ladder()
+    for i in range(10, 30):
+        got[2]["mag_db"][i] += 3.0
+    for i in range(60, 120):
+        got[5]["mag_db"][i] += 2.0
+    for i in range(150, 190):
+        got[8]["mag_db"][i] -= 2.5
+    res, floor = level_run.odd_rung_out(got)
+    def rms(k):
+        v = [x for x in res[k] if x is not None]
+        return (sum(x * x for x in v) / len(v)) ** 0.5
+    hot = [k for k in range(len(res)) if rms(k) > 4 * floor]
+    assert hot == [2, 5, 8]
+
+
+def test_a_rig_that_compresses_smoothly_is_not_odd():
+    """Everything a rig does to the step it does gradually, because
+    every mechanism here is monotone in level. Only what is NOT the
+    rig should stand out."""
+    got = _ladder()
+    for j, r in enumerate(got):
+        for i in range(0, 60):                    # bass giving way
+            r["mag_db"][i] -= 0.35 * j * j / 10.0
+    res, floor = level_run.odd_rung_out(got)
+    for row in res:
+        v = [x for x in row if x is not None]
+        assert (sum(x * x for x in v) / len(v)) ** 0.5 < 8 * max(floor,
+                                                                0.02)
+
+
+def test_too_few_rungs_says_nothing():
+    res, floor = level_run.odd_rung_out(_ladder(k=4))
+    assert res == [] and floor == 0.0

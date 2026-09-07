@@ -70,6 +70,8 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 # harmonics fifty decibels below it, and that needs room
 FACE_H, ROW_H = 300, 200
 MAP_H = 230          # the level map's own canvas
+MAP_ODD_FLOOR_DB = 0.15  # under this a rung is not odd
+                     # however quiet the walk was
 MAP_MUTE_DB = 1.0    # a base disagreeing with itself by
                      # more than this is not a reference
 
@@ -415,6 +417,32 @@ class MeasureWindow(Adw.Window):
             ["The level map of this channel: one line per rung, each "
              "against the quietest"])
         self.map_area.set_draw_func(self._draw_map)
+        # TWO QUESTIONS, TWO PICTURES. The fan answers "how much
+        # louder was each rung and did the rig follow"; the shelves
+        # answer "did anything happen during one of these sweeps".
+        # The second is the one a hand needs while a walk is running,
+        # because the sweeps cannot be heard and a bark, a click or a
+        # gut rumble leaves no other trace.
+        # BESIDE THE BUTTON THAT MAKES THE MAP, not under the canvas
+        # in a row of its own. The two act on the same thing -- one
+        # walks the rig, the other reads what the walk left -- and the
+        # pult's grammar for that is a flat circular icon button in
+        # the fader's row. Hung below the drawing it read as a caption
+        # to the picture rather than as a control of the card.
+        self.map_view = Gtk.ToggleButton()
+        self.map_view.set_child(
+            Gtk.Image.new_from_icon_name("pde-map-check-symbolic"))
+        self.map_view.add_css_class("flat")
+        self.map_view.add_css_class("circular")
+        self.map_view.set_valign(Gtk.Align.CENTER)
+        self.map_view.set_halign(Gtk.Align.CENTER)
+        self.map_view.set_tooltip_text(
+            "Show each rung against the trend of all the others: a "
+            "rung that disagrees with its own family caught something "
+            "that is not the rig")
+        self.map_view.connect(
+            "toggled", lambda *_: self.map_area.queue_draw())
+        vbox.append(self.map_view)
         host = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         host.append(vbox)
         host.append(self.map_area)
@@ -701,6 +729,9 @@ class MeasureWindow(Adw.Window):
         pw_ = max(1, w - ml - mr)
         ph = max(1, h - mt - mb)
         rungs = self._map_rungs()
+        btn = getattr(self, "map_view", None)
+        if btn is not None and btn.get_active():
+            return self._draw_check(cr, w, h, ml, mr, mt, mb, rungs)
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
         cr.rectangle(ml, mt, pw_, ph)
         cr.fill()
@@ -824,6 +855,100 @@ class MeasureWindow(Adw.Window):
                 said.append(gy)
                 cr.move_to(ml + pw_ + 3, gy + 3)
                 cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
+
+    def _draw_check(self, cr, w, h, ml, mr, mt, mb, rungs):
+        """Every rung on a shelf of its own, drawn against the trend
+        of all the others.
+
+        THE SHELVES ARE OURS, not the rig's. Spacing the rungs by the
+        decibels they delivered is what the fan does, and it collapses
+        exactly where a rig stops following -- twelve rungs of an
+        iLoud walk fell into seven decibels at 60 Hz and two of them
+        met. Here the spacing is a number this window picks, so two
+        rungs can never land on each other and a fault always has an
+        address.
+
+        The bar is the walk's OWN median residual, ODD_K times over.
+        A decibel figure would be nonsense: the same reading floors at
+        0.05 dB on a coupler and 1.3 dB in a room with a speaker.
+        """
+        pw_ = max(1, w - ml - mr)
+        ph = max(1, h - mt - mb)
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.08)
+        cr.rectangle(ml, mt, pw_, ph)
+        cr.fill()
+        cr.set_font_size(10)
+        res, floor = level_run.odd_rung_out(rungs)
+        if not res:
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
+            cr.move_to(ml + 8, mt + ph / 2)
+            cr.show_text("too few rungs to tell one from the others")
+            return
+        grid = ((self.parent.store.get(self.edit_pid) or {})
+                .get("measurement", {}).get("grid") or {}) \
+            if self.edit_pid else {}
+        g_lo = float(grid.get("f_lo") or FMIN_PLOT)
+        ppo = float(grid.get("ppo") or 96.0)
+        lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
+        flat = sorted(abs(x) for row in res for x in row if x is not None)
+        span = max(0.2, flat[int(0.995 * (len(flat) - 1))]) if flat else 1.0
+        shelf = ph / max(1, len(res))
+        bar = max(MAP_ODD_FLOOR_DB, level_run.ODD_K * floor)
+        for fhz in (100, 1000, 10000):
+            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.28)
+            cr.move_to(gx, mt)
+            cr.line_to(gx, mt + ph)
+            cr.stroke()
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
+            cr.move_to(gx + 2, h - 4)
+            cr.show_text("%dk" % (fhz // 1000) if fhz >= 1000
+                         else str(fhz))
+        for k, row in enumerate(res):
+            y = mt + ph - (k + 0.5) * shelf
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.30)
+            cr.set_line_width(0.7)
+            cr.move_to(ml, y)
+            cr.line_to(ml + pw_, y)
+            cr.stroke()
+            got = [x for x in row if x is not None]
+            v = ((sum(x * x for x in got) / len(got)) ** 0.5
+                 if got else 0.0)
+            odd = v > bar
+            if odd:
+                cr.set_source_rgb(0.90, 0.25, 0.15)
+                cr.set_line_width(1.5)
+            else:
+                cr.set_source_rgba(0.32, 0.42, 0.72, 0.85)
+                cr.set_line_width(0.9)
+            pen = False
+            for i, x in enumerate(row):
+                if x is None:
+                    pen = False
+                    continue
+                f = g_lo * 2.0 ** (i / ppo)
+                gx = (ml + (math.log10(max(f, 1e-6)) - lo)
+                      / (hi - lo) * pw_)
+                gy = y - max(-1.0, min(1.0, x / span)) * shelf * 0.46
+                if pen:
+                    cr.line_to(gx, gy)
+                else:
+                    cr.move_to(gx, gy)
+                pen = True
+            cr.stroke()
+            cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
+            cr.move_to(2, y + 3)
+            cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
+            # ON EVERY SHELF, not only the odd ones. A number that
+            # appears only when something is wrong answers "is this
+            # rung bad" and leaves "how close to bad is it" unasked --
+            # and the bar moves with the walk's own noise, so the
+            # distance to it is the only thing that says whether a
+            # quiet reading is comfortable or lucky.
+            cr.set_source_rgb(*((0.90, 0.25, 0.15) if odd
+                                else (0.55, 0.55, 0.55)))
+            cr.move_to(ml + pw_ + 3, y + 3)
+            cr.show_text("%.2f" % v)
 
     def _map_mask(self, base):
         """True where the base rung disagreed with itself by more than

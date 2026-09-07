@@ -355,6 +355,77 @@ PASSPORT = "passport"    # where a map lives in a profile, one record
                          # per channel, OUTSIDE measurement
 
 
+def odd_rung_out(rungs, deg=2):
+    """(residuals, floor): which rung does not belong with the rest.
+
+    A ladder is a SMOOTH FAMILY. Each rung is the one below it plus a
+    step, and whatever the rig does to that step -- following it,
+    swallowing it, compressing -- it does gradually, because every
+    mechanism here is monotone in level. So at any one frequency the
+    rungs lie on a smooth curve against rung number, and a rung that
+    does not is not the rig: it is a bark, a click, a gut rumble, a
+    sweep that was played while the earphone was being pushed back in.
+
+    That is the whole point of the reading. What it looks for is not a
+    shape but a rung that disagrees with its own family, because the
+    sweeps cannot be heard while they play and something that lasted
+    three seconds leaves no other trace.
+
+    NOT AGAINST NEIGHBOURS, which was the first cut of this and was
+    wrong. A rung minus the half-sum of the two beside it gives the
+    culprit a weight of one and each neighbour a weight of a half, so
+    ONE fault lights THREE rungs and three faults light nine -- and
+    which of the three did it cannot be read off the picture. Against
+    a smooth fit over ALL the rungs, with the single worst point left
+    out of the fit, one fault lights one rung: measured on a real
+    ladder with three faults injected, the three read 0.51, 1.46 and
+    1.13 dB while the other eight stayed between 0.01 and 0.08.
+
+    The floor returned with it is the MEDIAN residual, which is this
+    walk's own noise and the only honest bar: on a coupler it came out
+    0.05 dB, in a room with a speaker 1.3 dB, and a threshold picked
+    for one would be nonsense for the other.
+
+    What it does NOT catch cleanly is a seal that shifts and stays.
+    That is not an outlier, it is a different rig from there upward,
+    and a smooth fit spreads it over half the ladder rather than
+    naming a rung.
+    """
+    rungs = sorted(rungs or [], key=lambda r: r["level"])
+    if len(rungs) < deg + 3:
+        return [], 0.0
+    cols = [r.get("mag_db") or [] for r in rungs]
+    n = min(len(c) for c in cols)
+    ks = list(range(len(rungs)))
+    res = [[None] * n for _ in rungs]
+    for i in range(n):
+        y = [c[i] for c in cols]
+        good = [k for k in ks if y[k] is not None]
+        if len(good) < deg + 3:
+            continue
+        c = np.polyfit([float(k) for k in good],
+                       [float(y[k]) for k in good], deg)
+        r = {k: float(y[k]) - float(np.polyval(c, k)) for k in good}
+        drop = max(good, key=lambda k: abs(r[k]))
+        keep = [k for k in good if k != drop]
+        c = np.polyfit([float(k) for k in keep],
+                       [float(y[k]) for k in keep], deg)
+        for k in good:
+            res[k][i] = float(y[k]) - float(np.polyval(c, k))
+    out = []
+    for row in res:
+        v = [x for x in row if x is not None]
+        out.append((sum(x * x for x in v) / len(v)) ** 0.5 if v else 0.0)
+    floor = sorted(out)[len(out) // 2] if out else 0.0
+    return res, floor
+
+
+ODD_K = 4.0              # times the walk's own median residual before
+                         # a rung is called odd. Not a decibel figure:
+                         # the noise is 0.05 dB on a coupler and 1.3
+                         # in a room, and one number cannot serve both
+
+
 def passport_of(prof):
     """The maps a profile carries, {channel: record}.
 
