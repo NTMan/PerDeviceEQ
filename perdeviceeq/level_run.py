@@ -371,6 +371,113 @@ SEATING_K = 3.0          # how many times its own scatter a rung may
                          # be missed by and still be the same seating
 
 
+# What ended a walk, and whether the map it left is finished. The
+# walk itself records only one word on its loudest rung.
+FINISHED = ("capture", "knob", "rungs")
+
+
+def map_state(rungs):
+    """(finished, what) for a stored map.
+
+    A MAP IS NOT A THING YOU CAN LOOK AT AND TELL. Eleven rungs of a
+    walk that ran out of capture and eleven of a walk somebody stopped
+    look exactly alike -- same shape, same spacing, same everything --
+    and only the second one is missing the rungs that would have
+    answered the question it exists for.
+
+    The word is on the loudest rung and the walk puts it there:
+    "capture" when the microphone ran out of room, "knob" when the
+    volume reached its top, "rungs" when the budget of sweeps ran out,
+    "asked" when a hand said stop. The first three are the walk ending
+    on its own terms. The fourth is not an end, it is an interruption,
+    and a map that carries it is unfinished however many rungs it has.
+
+    A map with no word at all predates the walk recording one, and is
+    reported the same way as an interruption: what is not known is not
+    claimed.
+    """
+    got = sorted(rungs or [], key=lambda r: r["level"])
+    if not got:
+        return False, None
+    what = got[-1].get("stopped_by")
+    return (what in FINISHED), what
+
+
+def linear_top(rungs, ppo=None):
+    """The loudest rung this channel still followed, or None.
+
+    A rung "followed" when it delivered the step it was asked for
+    everywhere it could be heard. shortfall() already answers that,
+    per frequency, against the rung below -- with the answer read as
+    the median of a third of an octave, because a rig runs out over a
+    region and one bin below the line is the spread between sweeps,
+    and only where the rung stood clear of its own noise, because
+    otherwise the difference of two rungs is the difference of two
+    noises.
+
+    THE STEP IS TAKEN FROM THE CAPTURE PEAK, not the knob. A knob
+    decibel is not a decibel: his JBL answered 8 and 11 dB to a 4 dB
+    ask, and a fictitious ask makes a fictitious verdict.
+
+    Returned as the LEVEL, because the level is what a fader is set
+    to and what both channels share.
+    """
+    got = sorted(rungs or [], key=lambda r: r["level"])
+    if len(got) < 2:
+        return None
+    ppo = float(ppo or 96.0)
+    top = got[0]["level"]
+    for prev, cur in zip(got, got[1:]):
+        ask = asked_db((prev["level"], prev.get("peak_dbfs")),
+                       (cur["level"], cur.get("peak_dbfs")))
+        if ask <= 0:
+            break
+        off = cur.get("heard_offset_db")
+        mag = np.asarray([np.nan if v is None else v
+                          for v in cur.get("mag_db") or []], float)
+        pmag = np.asarray([np.nan if v is None else v
+                           for v in prev.get("mag_db") or []], float)
+        n = min(len(mag), len(pmag))
+        if n == 0:
+            break
+        heard = (mag[:n] - float(off)) if off is not None \
+            else np.full(n, np.inf)
+        short, ok = shortfall(pmag[:n], mag[:n], heard, ask, None, ppo)
+        if not ok.any() or short.any():
+            break
+        top = cur["level"]
+    return top
+
+
+def working_level(maps, ppo=None):
+    """The loudest level EVERY channel still follows. (level, why)
+
+    This is what a passport is for. The takes of one canvas share one
+    level -- one sink, one knob -- so the level that may be used is
+    the quietest of the tops, and a rig whose channels differ decides
+    it by its weaker side. His Origin answers 1.1 dB louder on one
+    side than the other, and that is the ordinary case rather than a
+    corner one.
+
+    `why` names the channel that set it, because a number with no
+    author is the kind this project has spent a day removing.
+
+    None when no channel has a map worth reading: a level nobody
+    measured must not arrive wearing the authority of one.
+    """
+    best, who = None, None
+    for ch, rungs in sorted((maps or {}).items()):
+        done, _what = map_state(rungs)
+        if not done:
+            continue
+        top = linear_top(rungs, ppo=ppo)
+        if top is None:
+            continue
+        if best is None or top < best:
+            best, who = top, ch
+    return best, who
+
+
 def rolled_back(rungs, keep):
     """The map truncated to its lowest `keep` rungs.
 

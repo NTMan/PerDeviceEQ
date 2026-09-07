@@ -724,6 +724,50 @@ class MeasureWindow(Adw.Window):
             self._on_relevel)
         self.relevel_btn.set_halign(Gtk.Align.CENTER)
 
+    def _sync_level_fader(self):
+        """The level fader's sensitivity, which is the sink's business
+        and nothing else's yet.
+
+        THIS IS WHAT THE PASSPORT WAS FOR. The takes of one canvas
+        share one level -- one sink, one knob -- so the level that may
+        be used is the loudest one EVERY channel still follows, and a
+        rig whose sides differ is decided by its weaker one. His
+        Origin answers 1.1 dB louder on one side than the other, which
+        is the ordinary case rather than a corner of it.
+
+        Two earlier cuts locked the fader without computing anything,
+        and the second locked it on whatever the pair's memory
+        happened to hold -- one per cent, on his machine. A lock whose
+        caption claims the map chose the number while the number came
+        from somewhere else is worse than no lock at all: it takes the
+        control away AND leaves nobody able to say what will play.
+
+        With no map worth reading it stays the operator's, because a
+        level nobody measured must not arrive wearing the authority
+        of one.
+        """
+        gone = getattr(self, "_sink_gone", False)
+        prof = ((self.parent.store.get(self.edit_pid) or {})
+                if self.edit_pid and getattr(self.parent, "store", None)
+                else {})
+        ppo = ((prof.get("measurement") or {}).get("grid") or {}).get("ppo")
+        v, who = level_run.working_level(level_run.maps_of(prof), ppo)
+        if v is None:
+            self.vol_spin.set_sensitive(not gone)
+            self.vol_spin.set_tooltip_text(
+                "Sweep playback level (%). Auto-level sets it; drag "
+                "to override if it misses.")
+            return
+        self._set_volume_display(v)
+        if self.session is not None:
+            self.session.set_level(v)
+        self.vol_spin.set_sensitive(False)
+        self.vol_spin.set_tooltip_text(
+            "Sweep playback level (%%). The loudest level every "
+            "channel still follows, read from the maps: %s sets it, "
+            "being the weaker side. Walk the maps again to change it."
+            % who)
+
     def _map_band(self, y):
         """Which rung the pointer is over, by BAND rather than by
         distance to a line.
@@ -899,6 +943,7 @@ class MeasureWindow(Adw.Window):
         def py(v):
             return mt + ph - (v - y0) / max(1e-9, y1 - y0) * ph
 
+        self._map_state_line(cr, ml, mt, pw_, rungs)
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.35)
         cr.set_line_width(1)
         for fhz in (100, 1000, 10000):
@@ -1047,6 +1092,7 @@ class MeasureWindow(Adw.Window):
         span = max(0.2, flat[int(0.995 * (len(flat) - 1))]) if flat else 1.0
         shelf = ph / max(1, len(res))
         bar = max(MAP_ODD_FLOOR_DB, level_run.ODD_K * floor)
+        self._map_state_line(cr, ml, mt, pw_, rungs)
         for fhz in (100, 1000, 10000):
             gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.28)
@@ -1127,6 +1173,36 @@ class MeasureWindow(Adw.Window):
                                 0.25 if gone else 1.0)
             cr.move_to(ml + pw_ + 3, y + 3)
             cr.show_text("%.2f" % v)
+
+    _MAP_ENDS = {
+        "capture": "complete: the capture ran out of room",
+        "knob": "complete: the volume reached its top",
+        "rungs": "complete: the walk spent its rungs",
+        "asked": "UNFINISHED: stopped by hand",
+    }
+
+    def _map_state_line(self, cr, ml, mt, pw_, rungs):
+        """Say whether this map is finished, in the corner of the
+        plot.
+
+        Eleven rungs of a walk that ran out of capture and eleven of a
+        walk somebody stopped look exactly alike on the picture, and
+        only the second is missing the rungs that would have answered
+        the question the map exists for. Nothing else in the window
+        can tell them apart either.
+        """
+        done, what = level_run.map_state(rungs)
+        if what is None and not rungs:
+            return
+        cr.save()
+        cr.set_font_size(10)
+        cr.set_source_rgb(*((0.45, 0.45, 0.45) if done
+                            else (0.85, 0.45, 0.10)))
+        cr.move_to(ml + 4, mt + 11)
+        cr.show_text(self._MAP_ENDS.get(
+            what, "UNFINISHED: this map predates the walk saying why "
+                  "it stopped"))
+        cr.restore()
 
     def _map_mask(self, base):
         """True where the base rung disagreed with itself by more than
@@ -1891,6 +1967,7 @@ class MeasureWindow(Adw.Window):
             debug.mic_trace("refresh mem_v=%r src=%r"
                             % (v, src))
         self._set_volume_display(v if v is not None else 0.0)
+        self._sync_level_fader()
 
     def _on_relevel(self, _btn):
         """Measure the level here and now: forget the remembered value
@@ -2713,7 +2790,7 @@ class MeasureWindow(Adw.Window):
         if gone == self._sink_gone:
             return
         self._sink_gone = gone
-        self.vol_spin.set_sensitive(not gone)
+        self._sync_level_fader()
         self._update_pult()
         # field verdict: the banner names the state and the
         # insensitivity shows where it bites -- no homebrew
@@ -4084,6 +4161,7 @@ class MeasureWindow(Adw.Window):
         self._map_pick = None
         self._rebuild_ack = False
         self._sync_relevel()
+        self._sync_level_fader()
         # the capture row, its calibration AND its gain belong to the
         # tab in view, so they are redrawn with it -- and so does the
         # level map, which is per channel too. A DrawingArea repaints
@@ -5002,6 +5080,7 @@ class MeasureWindow(Adw.Window):
         if area is not None:
             # a DrawingArea repaints only when something queues it
             GLib.idle_add(area.queue_draw)
+        GLib.idle_add(self._sync_level_fader)
 
     def _measure_worker(self, ch):
         """One take on a worker thread, or one level search.

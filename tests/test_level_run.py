@@ -1057,3 +1057,113 @@ def test_the_odd_rung_reading_is_the_same_fit_column_by_column():
     for k in range(len(got)):
         for i in range(len(cols[0])):
             assert abs(res[k][i] - slow[k][i]) < 1e-6
+
+
+# --- finished or interrupted ------------------------------------------
+
+def test_a_walk_that_ended_on_its_own_terms_is_finished():
+    """Eleven rungs of a walk that ran out of capture and eleven of a
+    walk somebody stopped look exactly alike on the picture, and only
+    the second is missing the rungs that would have answered the
+    question the map exists for."""
+    for what in ("capture", "knob", "rungs"):
+        got = [{"level": 0.2}, {"level": 0.4, "stopped_by": what}]
+        assert level_run.map_state(got) == (True, what)
+
+
+def test_a_walk_somebody_stopped_is_not():
+    got = [{"level": 0.2}, {"level": 0.4, "stopped_by": "asked"}]
+    assert level_run.map_state(got) == (False, "asked")
+
+
+def test_the_word_is_read_off_the_loudest_rung():
+    """Order on disk is not guaranteed, and the walk puts the word on
+    the rung it stopped at, which is the loudest one."""
+    a = [{"level": 0.4, "stopped_by": "capture"}, {"level": 0.2}]
+    b = [{"level": 0.2}, {"level": 0.4, "stopped_by": "capture"}]
+    assert level_run.map_state(a) == level_run.map_state(b) == \
+        (True, "capture")
+    # a word on a quieter rung is not the end of the walk
+    c = [{"level": 0.2, "stopped_by": "capture"}, {"level": 0.4}]
+    assert level_run.map_state(c) == (False, None)
+
+
+def test_a_map_with_no_word_claims_nothing():
+    """Maps walked before the reason was recorded carry none. What is
+    not known is not claimed, so they read as unfinished."""
+    assert level_run.map_state([{"level": 0.2}, {"level": 0.4}]) == \
+        (False, None)
+    assert level_run.map_state([]) == (False, None)
+    assert level_run.map_state(None) == (False, None)
+
+
+def test_a_walk_records_why_it_stopped(monkeypatch):
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played, head_db=6.0))
+    got = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                 sink_name="x", freqs=freqs,
+                                 max_rungs=8)
+    done, what = level_run.map_state(got)
+    assert done and what == "capture"
+
+
+# --- the level every channel still follows -----------------------------
+
+def _rungs(levels, loss_from=None, n=96, ppo=96):
+    """A ladder whose steps arrive in full, or fall short from a
+    given rung upward."""
+    out = []
+    for j, lv in enumerate(levels):
+        mag = [j * 4.0] * n
+        if loss_from is not None and j >= loss_from:
+            for i in range(n // 3):        # the bottom third gives way
+                mag[i] -= 3.0 * (j - loss_from + 1)
+        out.append({"level": lv, "peak_dbfs": -40.0 + j * 4.0,
+                    "heard_offset_db": -40.0, "mag_db": mag,
+                    "stopped_by": "capture" if j == len(levels) - 1
+                    else None})
+    return out
+
+
+def test_a_rig_that_follows_all_the_way_tops_out_at_its_last_rung():
+    got = _rungs([0.10, 0.16, 0.25, 0.40])
+    assert level_run.linear_top(got) == 0.40
+
+
+def test_a_rig_that_gives_way_tops_out_below_it():
+    """The step it did not deliver is where following stopped."""
+    got = _rungs([0.10, 0.16, 0.25, 0.40], loss_from=2)
+    assert level_run.linear_top(got) == 0.16
+
+
+def test_the_working_level_is_set_by_the_weaker_channel():
+    """One sink, one knob, so the takes of one canvas share a level:
+    it is the quietest of the tops, and a rig whose sides differ is
+    decided by its weaker one."""
+    maps = {"FL": _rungs([0.10, 0.16, 0.25, 0.40]),
+            "FR": _rungs([0.10, 0.16, 0.25, 0.40], loss_from=2)}
+    v, who = level_run.working_level(maps)
+    assert (v, who) == (0.16, "FR")
+
+
+def test_an_unfinished_map_does_not_set_a_level():
+    """A walk somebody stopped is missing the rungs that would have
+    said where following ends."""
+    got = _rungs([0.10, 0.16, 0.25, 0.40])
+    got[-1]["stopped_by"] = "asked"
+    assert level_run.working_level({"FL": got}) == (None, None)
+
+
+def test_no_map_names_no_level():
+    assert level_run.working_level({}) == (None, None)
+    assert level_run.working_level(None) == (None, None)
+
+
+def test_the_step_is_read_from_the_capture_peak_not_the_knob():
+    """A knob decibel is not a decibel: his JBL answered 8 and 11 dB
+    to a 4 dB ask, and a fictitious ask makes a fictitious verdict."""
+    got = _rungs([0.10, 0.16, 0.25, 0.40])
+    for r in got:                       # the knob lies, the peak does not
+        r["level"] = 0.10 + 0.001 * got.index(r)
+    assert level_run.linear_top(got) == got[-1]["level"]
