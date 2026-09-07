@@ -30,6 +30,8 @@ import os
 import sys
 
 W, H = 900, 520
+MUTE_DB = 1.0        # base disagreeing with itself by more than
+                     # this is not a reference, it is noise
 PAD_L, PAD_R, PAD_T, PAD_B = 64, 78, 22, 44
 
 
@@ -62,21 +64,65 @@ def _maps(prof):
     return out
 
 
-def _fan(rungs, freqs):
-    """Every rung against the quietest one, in decibels."""
+def _smooth(vals, freqs, oct_frac=3.0):
+    """A running median a third of an octave wide.
+
+    One bin of a 1/96-octave grid deciding whether a whole frequency
+    is trustworthy is the same mistake the distortion strip made and
+    had to unlearn: a lone bin that happens to agree, sitting inside a
+    stretch that does not, is luck rather than evidence.
+    """
+    if not vals:
+        return vals
+    n = len(vals)
+    ppo = (n - 1) / math.log(freqs[-1] / freqs[0], 2.0) if n > 1 else 1
+    w = max(1, int(round(ppo / oct_frac)) | 1)
+    out = []
+    for i in range(n):
+        lo = max(0, i - w // 2)
+        win = [v for v in vals[lo:i + w // 2 + 1] if v is not None]
+        out.append(sorted(win)[len(win) // 2] if win else None)
+    return out
+
+
+def _fan(rungs, freqs, mute_db=None):
+    """Every rung against the quietest one, in decibels.
+
+    EVERYTHING HERE IS A DIFFERENCE, which is what makes the picture
+    worth having and also what makes it lie in one place. Whatever the
+    base rung does not hear, every other rung is divided by, so a null
+    in the reference lifts the whole fan at that frequency and a rig
+    that was never driven there appears to gain. On an iLoud walk the
+    top rung reads +7.7 dB at 60 Hz -- real compression, the speaker
+    swallowing what it was given -- and +19.7 dB at 35 Hz, which is
+    not the speaker rising but the reference falling away.
+
+    `mute_db` is the base rung's own scatter, its two sweeps against
+    each other, stored per frequency since the map learned to play the
+    base twice. Where that disagreement is large the reference is
+    noise: the same level compared with itself should agree, so
+    anything it does not agree about is not the rig. Those points are
+    dropped rather than drawn faint, because a faint line is still a
+    line and this one would be read as bass.
+    """
     rungs = sorted(rungs, key=lambda r: r["level"])
     base = rungs[0]["mag_db"]
+    mute_db = _smooth(mute_db, freqs)
     lines = []
     for r in rungs:
         row = []
         for i, x in enumerate(r["mag_db"]):
             b = base[i] if i < len(base) else None
-            row.append(None if x is None or b is None else x - b)
+            bad = (mute_db is not None and i < len(mute_db)
+                   and mute_db[i] is not None
+                   and mute_db[i] > MUTE_DB)
+            row.append(None if x is None or b is None or bad
+                       else x - b)
         lines.append((r["level"], row, r.get("stopped_by")))
     return lines
 
 
-def _svg(lines, freqs, title, path):
+def _svg(lines, freqs, title, path, scatter=None):
     xs = [math.log10(f) for f in freqs]
     x0, x1 = xs[0], xs[-1]
     vals = [v for _, row, _ in lines for v in row if v is not None]
@@ -118,6 +164,30 @@ def _svg(lines, freqs, title, path):
                  'font-size="10" fill="#888" text-anchor="end">'
                  '%+d</text>' % (PAD_L - 6, y + 3, v))
         v += step
+    if scatter is not None:
+        # THE SAME LEVEL AGAINST ITSELF, drawn so the fan can be read
+        # against something. Anything the two base sweeps disagree
+        # about is the floor of the whole picture: a comb standing
+        # above this line is the rig, a comb below it is the walk.
+        d, pen = [], False
+        for i, v in enumerate(scatter):
+            if v is None or i >= len(xs):
+                pen = False
+                continue
+            d.append("%s%.1f %.1f" % ("L" if pen else "M",
+                                      px(xs[i]),
+                                      py(max(y0, min(y1, float(v))))))
+            pen = True
+        if d:
+            p.append('<path d="%s" fill="none" stroke="#9a9a9a" '
+                     'stroke-width="1" stroke-dasharray="3 3" '
+                     'opacity="0.8"/>' % " ".join(d))
+            p.append('<text x="%d" y="%.1f" font-family="sans-serif" '
+                     'font-size="9" fill="#9a9a9a">base vs '
+                     'itself</text>'
+                     % (W - PAD_R + 5, py(max(y0, min(
+                         y1, float(next((v for v in reversed(scatter)
+                                         if v is not None), 0.0)))))))
     n = max(1, len(lines) - 1)
     for k, (level, row, stopped) in enumerate(lines):
         t = k / n
@@ -154,6 +224,12 @@ def main(argv=None):
     ap.add_argument("-o", "--out", default=None)
     ap.add_argument("--channel", default=None,
                     help="only this channel; default is every map found")
+    ap.add_argument("--no-mask", action="store_true",
+                    help="draw the frequencies where the base rung was "
+                         "not heard; they are noise, and this is for "
+                         "looking at the noise")
+    ap.add_argument("--no-witness", action="store_true",
+                    help="leave out the base-against-itself line")
     args = ap.parse_args(argv)
 
     with open(args.profile) as fh:
@@ -173,7 +249,14 @@ def main(argv=None):
         if args.channel and ch != args.channel:
             continue
         n = max(len(r["mag_db"]) for r in rungs)
-        lines = _fan(rungs, _grid_freqs(grid, n))
+        base = sorted(rungs, key=lambda r: r["level"])[0]
+        sc = base.get("scatter_db")
+        if sc is None and not args.no_mask:
+            print("  %s: the base carries no scatter of its own -- this "
+                  "map predates the second base sweep, so nothing can "
+                  "be masked and the low end will read as noise" % ch)
+        lines = _fan(rungs, _grid_freqs(grid, n),
+                     mute_db=None if args.no_mask else sc)
         out = args.out or ("map-fan-%s.svg" % ch)
         if args.out and len([c for c, _, _ in found
                              if not args.channel or c == args.channel]) > 1:
@@ -181,7 +264,8 @@ def main(argv=None):
             out = "%s-%s%s" % (root, ch, ext or ".svg")
         _svg(lines, _grid_freqs(grid, n),
              "%s -- %s, %d rungs, every rung against the quietest"
-             % (prof.get("name", "?"), ch, len(rungs)), out)
+             % (prof.get("name", "?"), ch, len(rungs)), out,
+             scatter=None if args.no_witness else sc)
         print("%s: %d rungs %.0f%%..%.0f%% -> %s"
               % (ch, len(rungs), 100 * min(r["level"] for r in rungs),
                  100 * max(r["level"] for r in rungs), out))
