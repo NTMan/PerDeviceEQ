@@ -924,3 +924,136 @@ def test_a_rig_that_compresses_smoothly_is_not_odd():
 def test_too_few_rungs_says_nothing():
     res, floor = level_run.odd_rung_out(_ladder(k=4))
     assert res == [] and floor == 0.0
+
+
+# --- rebuilding from a chosen rung ------------------------------------
+
+def test_rolling_back_drops_everything_above():
+    """A map is a STACK. Each rung is read against the ones below it
+    and the step to the next comes from the last pair, so a rung
+    pulled from the middle leaves a hole that can only be refilled at
+    a level nobody recorded, in a seating nobody checked."""
+    got = [{"level": 0.1}, {"level": 0.2}, {"level": 0.3},
+           {"level": 0.4}]
+    assert [r["level"] for r in level_run.rolled_back(got, 2)] == \
+        [0.1, 0.2]
+    assert level_run.rolled_back(got, 0) == []
+    assert len(level_run.rolled_back(got, 99)) == 4
+    assert level_run.rolled_back(None, 3) == []
+
+
+def test_rolling_back_sorts_by_level_not_by_arrival():
+    got = [{"level": 0.3}, {"level": 0.1}, {"level": 0.2}]
+    assert [r["level"] for r in level_run.rolled_back(got, 2)] == \
+        [0.1, 0.2]
+
+
+class _Got:
+    def __init__(self, mag):
+        self.mag_db = mag
+        self.noise_dbfs = -80.0
+        self.signal_dbfs = 0.0
+
+
+def _rig(played, head_db=30.0, start=0.4, bump=0.0):
+    def play(back, name, sink, source, wav, duration, channels,
+             sweep, fr, analyze, v, play_map):
+        played.append(round(float(v), 4))
+        db = 60.0 * math.log10(v / start)
+        return None, -head_db + db, False, _Got(
+            np.full(len(fr), db + bump))
+    return play
+
+
+def _fake_backend(monkeypatch, play):
+    class Back:
+        def moratorium_begin(self, *a, **k):
+            pass
+
+        def moratorium_end(self, *a, **k):
+            pass
+    monkeypatch.setattr(level_run.pw_backend, "backend", lambda: Back())
+    monkeypatch.setattr(level_run, "_play_rung", play)
+
+
+def test_a_rebuild_keeps_what_was_below_and_climbs_from_it(monkeypatch):
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played))
+    first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=4)
+    kept = level_run.rolled_back(first, 2)
+    played.clear()
+    got = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                 sink_name="x", freqs=freqs,
+                                 max_rungs=4, have=kept)
+    assert [r["level"] for r in got[:2]] == [r["level"] for r in kept]
+    assert len(got) > len(kept)
+    assert min(played) >= min(r["level"] for r in kept)
+
+
+def test_a_rig_that_moved_refuses_to_be_built_on(monkeypatch):
+    """Rungs from two seatings look exactly like a rig that gave out,
+    and a map's rungs are never repeated, so nothing downstream could
+    notice. The kept top is played again and has to agree."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played))
+    first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=3)
+    assert first[0]["scatter_db"] is not None
+    _fake_backend(monkeypatch, _rig(played, bump=9.0))
+    with pytest.raises(level_run.SeatingChanged):
+        level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                               sink_name="x", freqs=freqs,
+                               max_rungs=6,
+                               have=level_run.rolled_back(first, 1))
+
+
+def test_a_kept_rung_with_no_scatter_is_built_on_without_a_check(
+        monkeypatch):
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played))
+    first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=3)
+    old = [dict(r, scatter_db=None) for r in first[:1]]
+    _fake_backend(monkeypatch, _rig(played, bump=9.0))
+    got = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                 sink_name="x", freqs=freqs,
+                                 max_rungs=6, have=old)
+    assert len(got) > len(old)
+
+
+def test_the_odd_rung_reading_is_the_same_fit_column_by_column():
+    """It fits every frequency at once now, from one Vandermonde,
+    because one fit per bin cost 224 ms on an eleven rung walk and
+    the pointer asks for a repaint on every motion event. The answer
+    has to be the answer the slow way gave."""
+    got = _ladder(k=9, n=60)
+    for i in range(10, 25):
+        got[4]["mag_db"][i] += 2.0
+    res, floor = level_run.odd_rung_out(got)
+
+    # the same thing, one column at a time
+    import numpy as _np
+    cols = [r["mag_db"] for r in got]
+    ks = _np.arange(len(got), dtype=float)
+    slow = []
+    for k in range(len(got)):
+        slow.append([None] * len(cols[0]))
+    for i in range(len(cols[0])):
+        y = _np.array([c[i] for c in cols], float)
+        c = _np.polyfit(ks, y, 2)
+        drop = int(_np.argmax(_np.abs(y - _np.polyval(c, ks))))
+        m = _np.ones(len(got), bool)
+        m[drop] = False
+        c = _np.polyfit(ks[m], y[m], 2)
+        for k in range(len(got)):
+            slow[k][i] = float(y[k] - _np.polyval(c, k))
+    for k in range(len(got)):
+        for i in range(len(cols[0])):
+            assert abs(res[k][i] - slow[k][i]) < 1e-6

@@ -355,6 +355,76 @@ PASSPORT = "passport"    # where a map lives in a profile, one record
                          # per channel, OUTSIDE measurement
 
 
+class SeatingChanged(Exception):
+    """The rig is not sitting where the kept rungs were measured.
+
+    Raised when a walk is asked to rebuild from a chosen rung and the
+    one below it, played again, no longer answers as it did. Rungs
+    from two seatings look exactly like a rig that gave out, and a
+    map's rungs are never repeated -- so the spread that catches this
+    between takes does not exist here and nothing downstream could
+    notice.
+    """
+
+
+SEATING_K = 3.0          # how many times its own scatter a rung may
+                         # be missed by and still be the same seating
+
+
+def rolled_back(rungs, keep):
+    """The map truncated to its lowest `keep` rungs.
+
+    A MAP IS A STACK. Each rung is read against the ones below it and
+    the step to the next is computed from the last pair, so a rung
+    taken later than its neighbours was taken in conditions they know
+    nothing about. Pulling one out of the middle would leave a hole
+    that can only be refilled at a level nobody recorded, in a seating
+    nobody checked. So a rung is dropped by dropping everything above
+    it, and the walk goes on from the new top.
+    """
+    keep = max(0, int(keep))
+    return sorted(rungs or [], key=lambda r: r["level"])[:keep]
+
+
+def _check_seating(base, again, k=SEATING_K):
+    """Raise SeatingChanged if the kept top rung no longer answers as
+    it did. Compared only where it was heard and only against its own
+    scatter -- a threshold of ours would be a number nobody measured.
+
+    By MEDIANS rather than a count of offending points: a count needs
+    a fraction to compare against, any fraction here would be
+    invented, and a median is scale-free and ignores the spikes one
+    sweep always has.
+
+    A rung with no scatter of its own predates the second base sweep.
+    Nothing can be checked then and nothing is claimed.
+    """
+    old = base.get("mag_db") or []
+    sc = base.get("scatter_db")
+    if not old or not sc:
+        return
+    new_mag = np.asarray(getattr(again, "mag_db", again), float)
+    n = min(len(old), len(sc), len(new_mag))
+    miss, spread = [], []
+    for i in range(n):
+        a, w = old[i], sc[i]
+        if a is None or w is None or not math.isfinite(new_mag[i]):
+            continue
+        miss.append(abs(new_mag[i] - a))
+        spread.append(float(w))
+    if not miss:
+        return
+    got = sorted(miss)[len(miss) // 2]
+    own = sorted(spread)[len(spread) // 2]
+    bar = max(MIN_READABLE_STEP, k * own)
+    if got > bar:
+        raise SeatingChanged(
+            "the kept rungs answer %.1f dB differently now, against "
+            "%.1f dB of their own scatter: the rig is not sitting "
+            "where they were measured, so nothing may be built on "
+            "top of them" % (got, bar))
+
+
 def odd_rung_out(rungs, deg=2):
     """(residuals, floor): which rung does not belong with the rest.
 
@@ -396,26 +466,53 @@ def odd_rung_out(rungs, deg=2):
         return [], 0.0
     cols = [r.get("mag_db") or [] for r in rungs]
     n = min(len(c) for c in cols)
-    ks = list(range(len(rungs)))
-    res = [[None] * n for _ in rungs]
-    for i in range(n):
-        y = [c[i] for c in cols]
-        good = [k for k in ks if y[k] is not None]
-        if len(good) < deg + 3:
-            continue
-        c = np.polyfit([float(k) for k in good],
-                       [float(y[k]) for k in good], deg)
-        r = {k: float(y[k]) - float(np.polyval(c, k)) for k in good}
-        drop = max(good, key=lambda k: abs(r[k]))
-        keep = [k for k in good if k != drop]
-        c = np.polyfit([float(k) for k in keep],
-                       [float(y[k]) for k in keep], deg)
-        for k in good:
-            res[k][i] = float(y[k]) - float(np.polyval(c, k))
+    if n == 0:
+        return [], 0.0
+    K = len(rungs)
+    # ALL THE FREQUENCIES AT ONCE. Fitting them one at a time took
+    # 224 ms on an eleven rung walk of 958 bins, which is four
+    # repaints a second -- and the pointer asks for a repaint on
+    # every motion event, so hovering over this view crawled while
+    # the fan beside it was instant. numpy fits a column per bin from
+    # one Vandermonde, and the whole thing lands in single figures.
+    Y = np.array([[np.nan if v is None else float(v) for v in c[:n]]
+                  for c in cols], dtype=float)
+    ks = np.arange(K, dtype=float)
+    V = np.vander(ks, deg + 1)
+    good = ~np.isnan(Y)
+    Z = np.where(good, Y, 0.0)
+
+    def fit(mask):
+        """Weighted least squares, one column per bin, missing rungs
+        weighted to nothing. Solved from the normal equations because
+        the mask differs per bin and lstsq takes only one."""
+        W = mask.astype(float)                       # K x n
+        A = np.einsum("kj,ka,kb->jab", W, V, V)      # n x m x m
+        b = np.einsum("kj,ka,kj->ja", W, V, Z)       # n x m
+        A = A + np.eye(deg + 1) * 1e-9
+        try:
+            c = np.linalg.solve(A, b[..., None])[..., 0]
+        except np.linalg.LinAlgError:
+            return np.full_like(Y, np.nan)
+        return (V @ c.T)                             # K x n
+
+    enough = good.sum(axis=0) >= deg + 3
+    pred = fit(good)
+    resid = np.where(good, Y - pred, np.nan)
+    # the single worst rung of each bin is left OUT of the fit that
+    # judges it, so one bad sweep cannot drag the trend it is being
+    # measured against
+    worst = np.nanargmax(np.abs(np.where(good, resid, -np.inf)), axis=0)
+    keep = good.copy()
+    keep[worst, np.arange(n)] = False
+    pred = fit(keep)
+    resid = np.where(good & enough, Y - pred, np.nan)
+    res = [[None if np.isnan(x) else float(x) for x in row]
+           for row in resid]
     out = []
-    for row in res:
-        v = [x for x in row if x is not None]
-        out.append((sum(x * x for x in v) / len(v)) ** 0.5 if v else 0.0)
+    for row in resid:
+        v = row[~np.isnan(row)]
+        out.append(float(np.sqrt(np.mean(v * v))) if v.size else 0.0)
     floor = sorted(out)[len(out) // 2] if out else 0.0
     return res, floor
 
@@ -481,7 +578,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                  pre_silence=None, post_silence=None, play_map=None,
                  on_level=None, should_stop=None, on_rung=None,
                  stop_peak_dbfs=AUTO_PEAK_CEIL, step_db=MAP_STEP_DB,
-                 max_rungs=MAP_MAX_RUNGS):
+                 max_rungs=MAP_MAX_RUNGS, have=None):
     """Climb from the level the search settled at, keeping what each
     rung bought -- the map of where this rig stops answering.
 
@@ -521,11 +618,33 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
     duration = pre + sweep.duration_s + post
     back = pw_backend.backend()
 
-    rungs = []
-    exact = []              # (level, peak) unrounded, for the decisions
+    rungs = list(have or [])
+    # (level, peak) unrounded, for the decisions. Seeded from the
+    # rungs being kept, because the step is chosen from the ratio
+    # between the last two and a rebuild must not rediscover it.
+    exact = [(float(r["level"]), float(r["peak_dbfs"])) for r in rungs
+             if r.get("peak_dbfs") is not None]
     scatter = None          # the base rung against a repeat of itself
     v = _clamp(start_volume)
     step = float(step_db)
+    if rungs:
+        # REBUILDING FROM A CHOSEN RUNG. Everything at or above it was
+        # dropped by the caller; the walk climbs on from the highest
+        # one kept. It costs ONE extra sweep, and that sweep is not
+        # optional: the kept top rung is played again and has to
+        # agree with itself, or the new rungs and the old ones are
+        # about two different rigs.
+        top = max(rungs, key=lambda r: r["level"])
+        v = _clamp(float(top["level"]))
+        try:
+            again = _play_rung(back, name, sink, source, wav, duration,
+                               channels, sweep, freqs, analyze,
+                               float(top["level"]), play_map)[3]
+        except Exception:
+            again = None
+        if again is not None:
+            _check_seating(top, again)
+        max_rungs = max(0, int(max_rungs) - len(rungs))
     # WHAT STOPPED THE WALK. It never stops because the rig gave out
     # -- a map does not bracket, it climbs past a ceiling on purpose,
     # since the rungs above one are where the loss grows. So the
@@ -567,7 +686,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # to do with. A map is a property of the rig; the takes
             # are an answer about its response. One sweep more, and
             # the two come apart.
-            if i == 0:
+            if i == 0 and not have:
                 again = _play_rung(back, name, sink, source, wav,
                                    duration, channels, sweep, freqs,
                                    analyze, v, play_map)[3]
@@ -617,7 +736,12 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                               [None if not math.isfinite(x)
                                else round(float(x), 3)
                                for x in scatter]
-                              if i == 0 else None),
+                              # only a FRESH base carries it: a
+                              # rebuild adds rungs above one that
+                              # already has a scatter, and a second
+                              # one halfway up would put two floors
+                              # in one map
+                              if i == 0 and not have else None),
                           "peak_dbfs": round(peak_db, 2),
                           "spl_db": None,
                           "heard_offset_db": (None if off is None

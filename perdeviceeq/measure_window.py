@@ -220,6 +220,11 @@ class MeasureWindow(Adw.Window):
         # never depend on some other job having run first.
         self._stop_asked = False
         self._loud_ack = False
+        # the loud warning is answered ONCE for the window: headphones
+        # come off and stay off. The rebuild warning is answered for
+        # EVERY walk that carries a choice, because what it destroys
+        # is different each time
+        self._rebuild_ack = False
         self._canvas_ids = {}       # (ch, live rec.id) -> canvas id
         self._canvas_session = None  # one session entry per sitting
         self._mic_gone = False      # selected rig left the graph
@@ -417,6 +422,31 @@ class MeasureWindow(Adw.Window):
             ["The level map of this channel: one line per rung, each "
              "against the quietest"])
         self.map_area.set_draw_func(self._draw_map)
+        # PICKING WORKS ON BOTH VIEWS. It was the check view alone at
+        # first, on the ground that the fan's lines collapse where a
+        # walk goes wrong and a click there would be a guess -- but
+        # that only argued against aiming at a LINE. Aiming at a
+        # BAND works the same on either picture, and shutting the
+        # gesture out of the view a hand starts on meant the way to
+        # rebuild part of a ladder could only be found by knowing
+        # about it already.
+        self._map_pick = None
+        # NOTHING SAID THE LINES COULD BE CLICKED. A gesture with no
+        # hover is a gesture nobody finds: it can only be discovered
+        # by clicking somewhere at random and noticing that something
+        # happened. The legend in this same window learned that once
+        # already -- hover lights a name, a click pins it -- and the
+        # rungs follow it now.
+        self._map_hover = None
+        self._map_odd = None
+        pick = Gtk.GestureClick()
+        pick.set_button(1)
+        pick.connect("released", self._on_map_pick)
+        self.map_area.add_controller(pick)
+        move = Gtk.EventControllerMotion()
+        move.connect("motion", self._on_map_motion)
+        move.connect("leave", self._on_map_leave)
+        self.map_area.add_controller(move)
         # TWO QUESTIONS, TWO PICTURES. The fan answers "how much
         # louder was each rung and did the rig follow"; the shelves
         # answer "did anything happen during one of these sweeps".
@@ -439,7 +469,8 @@ class MeasureWindow(Adw.Window):
         self.map_view.set_tooltip_text(
             "Show each rung against the trend of all the others: a "
             "rung that disagrees with its own family caught something "
-            "that is not the rig")
+            "that is not the rig. Either view can be clicked to "
+            "choose the rung to rebuild from")
         self.map_view.connect(
             "toggled", lambda *_: self.map_area.queue_draw())
         vbox.append(self.map_view)
@@ -693,6 +724,89 @@ class MeasureWindow(Adw.Window):
             self._on_relevel)
         self.relevel_btn.set_halign(Gtk.Align.CENTER)
 
+    def _map_band(self, y):
+        """Which rung the pointer is over, by BAND rather than by
+        distance to a line.
+
+        The bands are equal and ordered, so the arithmetic is the same
+        on both views -- and on the fan it has to be, because there
+        the lines are spaced by what the rig delivered and collapse
+        exactly where a walk goes wrong: twelve rungs of an iLoud walk
+        fell into seven decibels at 60 Hz with two of them meeting.
+        Aiming at a line there would be aiming at a coin toss; aiming
+        at the n-th band always lands on the n-th rung.
+        """
+        rungs = self._map_rungs()
+        if len(rungs) < 2:
+            return None
+        h = self.map_area.get_height() or MAP_H
+        mt, mb = 8, 16
+        ph = max(1, h - mt - mb)
+        k = int((mt + ph - y) // (ph / len(rungs)))
+        return k if 0 <= k < len(rungs) else None
+
+    def _on_map_motion(self, _ctrl, _x, y):
+        k = None if self._busy else self._map_band(y)
+        if k != self._map_hover:
+            self._map_hover = k
+            self.map_area.set_cursor_from_name(
+                "pointer" if k is not None else None)
+            self.map_area.queue_draw()
+
+    def _on_map_leave(self, _ctrl):
+        if self._map_hover is not None:
+            self._map_hover = None
+            self.map_area.set_cursor_from_name(None)
+            self.map_area.queue_draw()
+
+    def _on_map_pick(self, _g, _n, _x, y):
+        """Choose the rung to rebuild from, or let it go.
+
+        Clicking the one already chosen clears it, so the gesture is
+        its own undo and there is no second control to find.
+        """
+        if self._busy:
+            return
+        k = self._map_band(y)
+        if k is None:
+            return
+        self._map_pick = None if self._map_pick == k else k
+        # a different choice destroys different rungs, so it has to be
+        # answered for again
+        self._rebuild_ack = False
+        self.map_area.queue_draw()
+        self._sync_relevel()
+
+    def _sync_relevel(self):
+        """The button says which of the two things it will do.
+
+        A control that does one thing on Tuesday and another on
+        Wednesday without saying so is the kind of surprise this
+        window has been cured of twice today. With no rung chosen it
+        walks the whole map; with one chosen it keeps everything below
+        and rebuilds from there, and the icon and the words change
+        together.
+        """
+        btn = getattr(self, "relevel_btn", None)
+        if btn is None:
+            return
+        k = self._map_pick
+        img = btn.get_child()
+        if k is None:
+            if isinstance(img, Gtk.Image):
+                img.set_from_icon_name("pde-level-symbolic")
+            btn.set_tooltip_text(
+                "Measure the playback level now (probe sweeps only)")
+            return
+        if isinstance(img, Gtk.Image):
+            img.set_from_icon_name("pde-map-rebuild-symbolic")
+        got = self._map_rungs()
+        btn.set_tooltip_text(
+            "Rebuild the map from the rung at %d%%: the %d rung(s) "
+            "below it are kept, that one and everything above it are "
+            "measured again"
+            % (round(100.0 * got[k]["level"]) if k < len(got) else 0, k))
+
     def _map_rungs(self):
         """This channel's rungs, quietest first, as they stand on
         disk."""
@@ -820,6 +934,21 @@ class MeasureWindow(Adw.Window):
             cr.move_to(2, gy + 3)
             cr.show_text("%+d" % int(round(v)))
             v += step
+        # THE CHOICE IS SHOWN ON BOTH PICTURES. It cannot be MADE on
+        # this one -- the shelves here are spaced by what the rig
+        # delivered and collapse where a walk goes wrong -- but a
+        # choice that changes what the button does and is invisible
+        # on the view a hand happens to be looking at is a haunting,
+        # and this project has a rule against those. So the chosen
+        # rung is red here as well and everything above it is faded:
+        # that is what will be measured again.
+        pick = self._map_pick
+        hover = self._map_hover
+        if hover is not None and 0 <= hover < len(rows):
+            band = ph / len(rows)
+            cr.set_source_rgba(0.35, 0.45, 0.75, 0.10)
+            cr.rectangle(ml, mt + ph - (hover + 1) * band, pw_, band)
+            cr.fill()
         last = max(1, len(rows) - 1)
         # a label per rung piles them on top of each other the moment
         # a rig follows its knob, which is the ordinary case: eleven
@@ -827,9 +956,21 @@ class MeasureWindow(Adw.Window):
         said = []
         for k, row in enumerate(rows):
             t = k / last
-            cr.set_source_rgb(0.16 + 0.76 * t, 0.35 - 0.15 * t,
-                              0.78 - 0.62 * t)
-            cr.set_line_width(1.4 if k == last else 1.0)
+            if pick is not None and k == pick:
+                cr.set_source_rgb(0.90, 0.25, 0.15)
+                cr.set_line_width(1.8)
+            elif k == hover:
+                cr.set_source_rgb(0.16 + 0.76 * t, 0.35 - 0.15 * t,
+                                  0.78 - 0.62 * t)
+                cr.set_line_width(2.0)
+            elif pick is not None and k > pick:
+                cr.set_source_rgba(0.16 + 0.76 * t, 0.35 - 0.15 * t,
+                                   0.78 - 0.62 * t, 0.22)
+                cr.set_line_width(1.0)
+            else:
+                cr.set_source_rgb(0.16 + 0.76 * t, 0.35 - 0.15 * t,
+                                  0.78 - 0.62 * t)
+                cr.set_line_width(1.4 if k == last else 1.0)
             pen = False
             for i in range(n):
                 val = row[i] if i < len(row) else None
@@ -878,7 +1019,19 @@ class MeasureWindow(Adw.Window):
         cr.rectangle(ml, mt, pw_, ph)
         cr.fill()
         cr.set_font_size(10)
-        res, floor = level_run.odd_rung_out(rungs)
+        # KEPT BETWEEN REPAINTS. The pointer asks for one on every
+        # motion event, and the reading behind this view is arithmetic
+        # over every bin of every rung: recomputing it per frame is
+        # what made hovering here crawl while the fan beside it was
+        # instant. The key is the levels themselves, so it goes stale
+        # exactly when the map changes and never otherwise.
+        key = (self._selected_ch,
+               tuple(r["level"] for r in rungs))
+        got = getattr(self, "_map_odd", None)
+        if got is None or got[0] != key:
+            got = (key,) + level_run.odd_rung_out(rungs)
+            self._map_odd = got
+        res, floor = got[1], got[2]
         if not res:
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
             cr.move_to(ml + 8, mt + ph / 2)
@@ -906,6 +1059,11 @@ class MeasureWindow(Adw.Window):
                          else str(fhz))
         for k, row in enumerate(res):
             y = mt + ph - (k + 0.5) * shelf
+            if k == self._map_hover and k != self._map_pick:
+                # the band under the pointer, drawn before the line
+                cr.set_source_rgba(0.35, 0.45, 0.75, 0.10)
+                cr.rectangle(ml, y - shelf * 0.5, pw_, shelf)
+                cr.fill()
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.30)
             cr.set_line_width(0.7)
             cr.move_to(ml, y)
@@ -915,9 +1073,28 @@ class MeasureWindow(Adw.Window):
             v = ((sum(x * x for x in got) / len(got)) ** 0.5
                  if got else 0.0)
             odd = v > bar
-            if odd:
+            # ONE GRAMMAR ON BOTH VIEWS: the chosen rung is red and
+            # bold, and everything above it fades, because that is
+            # what the button will throw away. A wash over the doomed
+            # region was tried here first and read as a second kind of
+            # highlight beside the fan's, which is one kind too many
+            # for the same fact.
+            pick = self._map_pick
+            gone = pick is not None and k > pick
+            if k == pick:
+                cr.set_source_rgb(0.90, 0.25, 0.15)
+                cr.set_line_width(1.8)
+            elif gone:
+                cr.set_source_rgba(*((0.90, 0.25, 0.15)
+                                     if odd else (0.32, 0.42, 0.72)),
+                                   0.22)
+                cr.set_line_width(1.0)
+            elif odd:
                 cr.set_source_rgb(0.90, 0.25, 0.15)
                 cr.set_line_width(1.5)
+            elif k == self._map_hover:
+                cr.set_source_rgb(0.32, 0.42, 0.72)
+                cr.set_line_width(2.0)
             else:
                 cr.set_source_rgba(0.32, 0.42, 0.72, 0.85)
                 cr.set_line_width(0.9)
@@ -936,7 +1113,7 @@ class MeasureWindow(Adw.Window):
                     cr.move_to(gx, gy)
                 pen = True
             cr.stroke()
-            cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
+            cr.set_source_rgba(0.4, 0.4, 0.4, 0.25 if gone else 0.9)
             cr.move_to(2, y + 3)
             cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
             # ON EVERY SHELF, not only the odd ones. A number that
@@ -945,8 +1122,9 @@ class MeasureWindow(Adw.Window):
             # and the bar moves with the walk's own noise, so the
             # distance to it is the only thing that says whether a
             # quiet reading is comfortable or lucky.
-            cr.set_source_rgb(*((0.90, 0.25, 0.15) if odd
-                                else (0.55, 0.55, 0.55)))
+            cr.set_source_rgba(*((0.90, 0.25, 0.15) if odd
+                                 else (0.55, 0.55, 0.55)),
+                                0.25 if gone else 1.0)
             cr.move_to(ml + pw_ + 3, y + 3)
             cr.show_text("%.2f" % v)
 
@@ -3899,6 +4077,13 @@ class MeasureWindow(Adw.Window):
         self._selected_ch = ch
         if self.tabs is not None and 0 <= ch < len(self.ch_keys):
             self.tabs.select(self.ch_keys[ch])
+        # AND THE CHOICE GOES WITH THE OLD TAB. It is an index into
+        # one channel's rungs; carried across it would point at a
+        # different rung of a different map, and the button would
+        # rebuild from somewhere nobody chose.
+        self._map_pick = None
+        self._rebuild_ack = False
+        self._sync_relevel()
         # the capture row, its calibration AND its gain belong to the
         # tab in view, so they are redrawn with it -- and so does the
         # level map, which is per channel too. A DrawingArea repaints
@@ -4566,10 +4751,20 @@ class MeasureWindow(Adw.Window):
     def _start_measure(self, ch, level_only=False):
         if self._busy:
             return
-        if not self._loud_ack:
+        # A WALK REPLACES THE MAP, PICK OR NO PICK. With a rung chosen
+        # it replaces the rungs above it; with none chosen it replaces
+        # all of them, which is the bigger loss of the two and was the
+        # one nobody was told about.
+        eats_map = level_only and bool(self._map_rungs())
+        if not self._loud_ack or (eats_map and not self._rebuild_ack):
             self._confirm_loud(
-                lambda: self._start_measure(ch, level_only))
+                lambda: self._start_measure(ch, level_only),
+                level_only=level_only)
             return
+        # spent on the way past: a walk that is stopped or fails must
+        # ask again, and by here the re-entrant call has already
+        # cleared the gate
+        self._rebuild_ack = False
         # A LEVEL OF ZERO IS NOT A REQUEST TO GUESS. It used to start
         # a hunt, which was my invention and nobody asked for it -- and
         # it punched a hole in the fader law this window is built on:
@@ -4691,6 +4886,10 @@ class MeasureWindow(Adw.Window):
             return None, None
         if not self._stop_asked:
             try:
+                keep = self._map_pick
+                have = (level_run.rolled_back(
+                            self._map_rungs(), keep)
+                        if keep else None)
                 rungs = level_run.headroom_map(
                     self.session.sink, self.session.source,
                     self.session.cfg.channels,
@@ -4702,7 +4901,14 @@ class MeasureWindow(Adw.Window):
                     post_silence=self.session.cfg.post_silence,
                     play_map=self.session._channel_map(ch),
                     on_level=lambda v, i: about_to(v, i),
+                    have=have,
                     should_stop=lambda: self._stop_asked)
+            except level_run.SeatingChanged as e:
+                # NOT a failure and not a map: the rig moved between
+                # the kept rungs and now, so old and new would be
+                # about two different rigs. Say so and change nothing.
+                GLib.idle_add(self._say, str(e))
+                rungs = None
             except (RuntimeError, ValueError, OSError):
                 # a profile without a map is a profile that cannot say
                 # where the rig runs out; nothing else about it changes
@@ -4710,6 +4916,9 @@ class MeasureWindow(Adw.Window):
             if rungs:
                 self.session.set_headroom(self.ch_keys[ch], rungs)
                 self._store_headroom(self.ch_keys[ch], rungs)
+                # the choice is spent: what it named has been measured
+                self._map_pick = None
+                GLib.idle_add(self._sync_relevel)
         return vol, level_run.summary(vol, probes)
 
     def _store_headroom(self, ch_key, rungs):
@@ -5151,14 +5360,46 @@ class MeasureWindow(Adw.Window):
         return True
 
     # ---- dialogs / teardown -----------------------------------------------
-    def _confirm_loud(self, on_ok):
+    def _confirm_loud(self, on_ok, level_only=False):
+        """The last gate before minutes and data are spent.
+
+        IT HAS TO NAME BOTH COSTS. The volume was the only one it knew
+        about, and that was enough while every walk started from
+        nothing. With a rung chosen, pressing through this dialog also
+        THROWS AWAY the rungs above it, and a dialog that mentions the
+        noise and not the deletion is worse than none: it is read as
+        the whole warning.
+
+        The mark itself is harmless -- it changes nothing until this
+        button is pressed -- which is exactly why the warning belongs
+        here rather than at the moment of marking.
+        """
+        body = ("A measurement sweep will now play on this device at the "
+                "measurement level. Take your headphones off your head if "
+                "they are not on the rig.")
+        go = "Play sweep"
+        got = self._map_rungs() if level_only else []
+        k = getattr(self, "_map_pick", None)
+        if got and k is not None and len(got) - k > 0:
+            body += (
+                "\n\nThe level map of this channel will also be "
+                "rebuilt from the rung at %d%%: its %d loudest "
+                "rung(s) are discarded and measured again, and the "
+                "%d below are kept."
+                % (round(100.0 * got[k]["level"]), len(got) - k, k))
+            go = "Play and rebuild"
+        elif got:
+            body += (
+                "\n\nThe level map of this channel will also be "
+                "measured again from the bottom: all %d of its rungs "
+                "are discarded. To keep the quiet ones, choose the "
+                "rung to rebuild from first." % len(got))
+            go = "Play and replace the map"
         dlg = Adw.AlertDialog(
             heading="This will play loudly",
-            body="A measurement sweep will now play on this device at the "
-                 "measurement level. Take your headphones off your head if "
-                 "they are not on the rig.")
+            body=body)
         dlg.add_response("cancel", "Cancel")
-        dlg.add_response("go", "Play sweep")
+        dlg.add_response("go", go)
         dlg.set_response_appearance("go", Adw.ResponseAppearance.SUGGESTED)
         dlg.set_default_response("go")
         dlg.set_close_response("cancel")
@@ -5166,6 +5407,7 @@ class MeasureWindow(Adw.Window):
         def on_resp(_d, resp):
             if resp == "go":
                 self._loud_ack = True
+                self._rebuild_ack = True
                 on_ok()
         dlg.connect("response", on_resp)
         dlg.present(self)

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+  <!-- two rungs kept and an arrow going up from them: rebuild the
+       level map from the chosen rung upward (CC0, drawn for this
+       app).
+
+       It lives on the same button as pde-level and swaps with it when
+       a rung is picked, so the two have to be told apart in a glance.
+       pde-level is a loudspeaker beside a rising ladder, four things
+       across the glyph; this one is two bars and one arrow, and the
+       arrow is what the eye lands on.
+
+       The dropped rungs are drawn as NOTHING rather than as faint
+       bars. A faint bar reads as disabled, and these are not
+       disabled, they are gone.
+
+       Every bar edge is on a whole pixel. A draft with halves
+       rendered each bar as one dark row and one grey.
+
+       A first draft put the arrow beside the stack and it came out
+       as a cross at sixteen pixels: the head and the shaft were the
+       same width. The head is now four pixels wider than the shaft,
+       which is the least that reads.
+
+       Note for anyone editing this file: an XML comment may not
+       contain two hyphens in a row, so the house dash cannot be used
+       here. -->
+  <path fill="#2e3436" d="M8 0 L13 6 H10 V10 H6 V6 H3 Z"/>
+  <path fill="#2e3436" d="M1 11 H15 V13 H1 Z"/>
+  <path fill="#2e3436" d="M1 14 H15 V16 H1 Z"/>
+</svg>
