@@ -4272,10 +4272,22 @@ class MeasureWindow(Adw.Window):
         self._take_level = self.vol_spin.get_value() / 100.0
         # the input gain rides the SAME door, read here on the main
         # thread: baking it into the session let a stale number from
-        # window-open time pull the slider back mid-sweep
-        self._take_gain = (self.gain_spin.get_value() / 100.0
-                           if getattr(self, "_gain_ok", False)
-                           else None)
+        # window-open time pull the slider back mid-sweep.
+        #
+        # NOT gated on _gain_ok, and that gate was the whole bug. The
+        # slider is the card's gain whichever kind the fader is; where
+        # it is disabled it stands pinned at full, and writing THAT is
+        # the point, because it takes any trim out of the path. Gated,
+        # the pin only ever reached the widget: measure_window drew
+        # 100% while a UMIK-2 sat at 15%, put there from outside by
+        # tools/knee_probe.py, and the next take would have come in
+        # fifty decibels quiet with the screen saying the input was
+        # open. measure_session already documents the other half of
+        # this contract -- "the window sets it before calling in, and
+        # the session only witnesses" -- and _write_gain's docstring
+        # already lists a pre-flight before a sweep among its callers.
+        # Only the caller was missing.
+        self._take_gain = self.gain_spin.get_value() / 100.0
         self._stop_asked = False
         self._busy = True
         self._set_row_sensitive(False)
