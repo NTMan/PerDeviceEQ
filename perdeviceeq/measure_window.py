@@ -69,6 +69,9 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 # vertical -- one axis has to carry the response AND its
 # harmonics fifty decibels below it, and that needs room
 FACE_H, ROW_H = 300, 200
+MAP_H = 230          # the level map's own canvas
+MAP_MUTE_DB = 1.0    # a base disagreeing with itself by
+                     # more than this is not a reference
 
 
 def _ctrl_down(gesture):
@@ -396,7 +399,26 @@ class MeasureWindow(Adw.Window):
         vbox.set_margin_bottom(6)
         vbox.append(self.vol_spin)
         vbox.append(self.relevel_btn)
-        b.get_object("vol_host").set_child(vbox)
+        # THE PASSPORT, DRAWN. It has been stored whole since the day
+        # it was written -- every rung keeps its response across the
+        # grid rather than a verdict -- and it has only ever reached a
+        # hand as one number, the percentage where the walk stopped.
+        # That number says the rig gave out at 89% and cannot say HOW,
+        # and the difference is the whole question: rungs spreading
+        # apart evenly are compression, rungs parting in one place are
+        # a port, a resonance or a limiter.
+        self.map_area = Gtk.DrawingArea()
+        self.map_area.set_content_height(MAP_H)
+        self.map_area.set_hexpand(True)
+        self.map_area.update_property(
+            [Gtk.AccessibleProperty.LABEL],
+            ["The level map of this channel: one line per rung, each "
+             "against the quietest"])
+        self.map_area.set_draw_func(self._draw_map)
+        host = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        host.append(vbox)
+        host.append(self.map_area)
+        b.get_object("vol_host").set_child(host)
         # THE FADER IS NOT HERE. A capture column is a wire with its
         # own gain -- the hardware says so, a CM106 declaring cvolume
         # and taking 60% and 80% independently -- so the control that
@@ -642,6 +664,185 @@ class MeasureWindow(Adw.Window):
             "Measure the playback level now (probe sweeps only)",
             self._on_relevel)
         self.relevel_btn.set_halign(Gtk.Align.CENTER)
+
+    def _map_rungs(self):
+        """This channel's rungs, quietest first, as they stand on
+        disk."""
+        store = getattr(self.parent, "store", None)
+        prof = (store.get(self.edit_pid)
+                if store is not None and self.edit_pid else None)
+        keys = self.ch_keys or []
+        if not (0 <= self._selected_ch < len(keys)):
+            return []
+        got = level_run.maps_of(prof or {}).get(keys[self._selected_ch])
+        return sorted(got or [], key=lambda r: r["level"])
+
+    def _draw_map(self, _area, cr, w, h, *_):
+        """One line per rung, each against the QUIETEST, which is what
+        the map itself reads everything against. A rig that follows
+        its knob draws flat lines stacked by the level asked for, and
+        every departure from flat is the rig not following.
+
+        NOTHING IS DRAWN WHERE THE BASE WAS NOT HEARD. Every line here
+        is a difference, so whatever the base did not hear divides
+        every other rung: a null in the reference lifts the whole fan
+        and a rig that was never driven there appears to gain. On an
+        iLoud walk the top rung read +7.7 dB at 60 Hz -- the speaker
+        swallowing what it was given -- and +19.7 at 35 Hz, which was
+        the reference falling away. Read off a picture the two look
+        alike, one a dip and one a peak, both dramatic.
+
+        The base's own scatter decides: the same level compared with
+        itself should agree, so anything it does not agree about is
+        not the rig. Dropped rather than drawn faint, because a faint
+        line is still a line and this one reads as bass.
+        """
+        ml, mr, mt, mb = 34, 40, 8, 16
+        pw_ = max(1, w - ml - mr)
+        ph = max(1, h - mt - mb)
+        rungs = self._map_rungs()
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
+        cr.rectangle(ml, mt, pw_, ph)
+        cr.fill()
+        cr.set_font_size(10)
+        if len(rungs) < 2:
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
+            cr.move_to(ml + 8, mt + ph / 2)
+            cr.show_text("no level map for this channel yet"
+                         if not rungs else
+                         "one rung: a map needs a second to say "
+                         "anything")
+            return
+        base = rungs[0]
+        mute = self._map_mask(base)
+        rows = []
+        for r in rungs:
+            row = []
+            for i, x in enumerate(r.get("mag_db") or []):
+                b = (base.get("mag_db") or [None] * (i + 1))
+                b = b[i] if i < len(b) else None
+                row.append(None if x is None or b is None
+                           or (i < len(mute) and mute[i]) else x - b)
+            rows.append(row)
+        vals = [v for row in rows for v in row if v is not None]
+        if not vals:
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
+            cr.move_to(ml + 8, mt + ph / 2)
+            cr.show_text("the base rung was not heard anywhere")
+            return
+        # THE EDGES OF THE GRID ARE NOT THE PICTURE. A single bin at
+        # 20 kHz, where the response is falling off a cliff and the
+        # capture is noise, stretched the axis by five decibels and
+        # squeezed eleven rungs into the bottom two thirds of it. The
+        # range is taken from the bulk instead, and a line that leaves
+        # it is simply drawn past the edge.
+        srt = sorted(vals)
+        y0 = srt[int(0.01 * (len(srt) - 1))] - 1.0
+        y1 = srt[int(0.99 * (len(srt) - 1))] + 1.0
+        lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
+        n = max(len(row) for row in rows)
+        grid = ((self.parent.store.get(self.edit_pid) or {})
+                .get("measurement", {}).get("grid") or {}) \
+            if self.edit_pid else {}
+        g_lo = float(grid.get("f_lo") or FMIN_PLOT)
+        ppo = float(grid.get("ppo") or 96.0)
+
+        def px(i):
+            f = g_lo * 2.0 ** (i / ppo)
+            return ml + (math.log10(max(f, 1e-6)) - lo) / (hi - lo) * pw_
+
+        def py(v):
+            return mt + ph - (v - y0) / max(1e-9, y1 - y0) * ph
+
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.35)
+        cr.set_line_width(1)
+        for fhz in (100, 1000, 10000):
+            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
+            cr.move_to(gx, mt)
+            cr.line_to(gx, mt + ph)
+            cr.stroke()
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
+        for fhz, txt in ((100, "100"), (1000, "1k"), (10000, "10k")):
+            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
+            cr.move_to(gx + 2, h - 4)
+            cr.show_text(txt)
+        # A THRESHOLD ON THE SPAN puts a cliff in the middle of the
+        # ordinary case: one channel spanning 24.0 dB drew a line
+        # every 2 dB and its twin spanning 25.1 drew one every 5, on
+        # the same rig, from the same walk. The step is chosen for a
+        # READABLE COUNT of lines instead, off the 1-2-5 ladder, so
+        # two channels of one pair come out looking alike.
+        step = 1.0
+        for cand in (1.0, 2.0, 5.0, 10.0, 20.0, 50.0):
+            step = cand
+            if (y1 - y0) / cand <= 8:
+                break
+        v = math.ceil(y0 / step) * step
+        while v <= y1:
+            gy = py(v)
+            cr.set_source_rgba(0.5, 0.5, 0.5,
+                               0.45 if abs(v) < 1e-9 else 0.18)
+            cr.move_to(ml, gy)
+            cr.line_to(ml + pw_, gy)
+            cr.stroke()
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
+            cr.move_to(2, gy + 3)
+            cr.show_text("%+d" % int(round(v)))
+            v += step
+        last = max(1, len(rows) - 1)
+        # a label per rung piles them on top of each other the moment
+        # a rig follows its knob, which is the ordinary case: eleven
+        # lines over twenty decibels leave nine pixels each
+        said = []
+        for k, row in enumerate(rows):
+            t = k / last
+            cr.set_source_rgb(0.16 + 0.76 * t, 0.35 - 0.15 * t,
+                              0.78 - 0.62 * t)
+            cr.set_line_width(1.4 if k == last else 1.0)
+            pen = False
+            for i in range(n):
+                val = row[i] if i < len(row) else None
+                if val is None:
+                    pen = False
+                    continue
+                x, y = px(i), py(val)
+                if pen:
+                    cr.line_to(x, y)
+                else:
+                    cr.move_to(x, y)
+                pen = True
+            cr.stroke()
+            # NAMED WHERE THE LINE SITS, not where it ends. The last
+            # bin of a walk is at 20 kHz, where an earphone is falling
+            # away and the tail moves several decibels between rungs
+            # -- labels hung on it float away from their own lines.
+            live = [v for v in row if v is not None]
+            if not live:
+                continue
+            gy = py(sorted(live)[len(live) // 2])
+            if k in (0, last) or all(abs(gy - y) >= 11 for y in said):
+                said.append(gy)
+                cr.move_to(ml + pw_ + 3, gy + 3)
+                cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
+
+    def _map_mask(self, base):
+        """True where the base rung disagreed with itself by more than
+        MAP_MUTE_DB, judged over a third of an octave: one bin of a
+        1/96-octave grid that happens to agree, inside a stretch that
+        does not, is luck rather than evidence -- the same mistake the
+        distortion strip made and had to unlearn."""
+        sc = base.get("scatter_db")
+        mag = base.get("mag_db") or []
+        if not sc:
+            return [False] * len(mag)
+        w = 33
+        out = []
+        for i in range(len(sc)):
+            win = [x for x in sc[max(0, i - w // 2):i + w // 2 + 1]
+                   if x is not None]
+            med = sorted(win)[len(win) // 2] if win else None
+            out.append(med is None or med > MAP_MUTE_DB)
+        return out
 
     def _pult_btn(self, icon, tip, cb):
         b = Gtk.Button()
@@ -3404,6 +3605,7 @@ class MeasureWindow(Adw.Window):
                                 else None)
         if got in keys:
             self._selected_ch = keys.index(got)
+        # the passport is per channel, so the row follows the tabs
 
     def _dress_add_button(self):
         """Offer every target for every free output. The first level is
@@ -3573,7 +3775,14 @@ class MeasureWindow(Adw.Window):
         if self.tabs is not None and 0 <= ch < len(self.ch_keys):
             self.tabs.select(self.ch_keys[ch])
         # the capture row, its calibration AND its gain belong to the
-        # tab in view, so they are redrawn with it
+        # tab in view, so they are redrawn with it -- and so does the
+        # level map, which is per channel too. A DrawingArea repaints
+        # only when something queues it, and the level card is not
+        # rebuilt by a tab pick, so the canvas would have gone on
+        # showing the channel that was open when the window did.
+        area = getattr(self, "map_area", None)
+        if area is not None:
+            area.queue_draw()
         self._rebuild_map_slots()
         self._refresh_gain()
         self._rebuild_page()
@@ -4455,6 +4664,10 @@ class MeasureWindow(Adw.Window):
             return
         if hasattr(self.parent, "_canvas_refresh"):
             GLib.idle_add(self.parent._canvas_refresh)
+        area = getattr(self, "map_area", None)
+        if area is not None:
+            # a DrawingArea repaints only when something queues it
+            GLib.idle_add(area.queue_draw)
 
     def _measure_worker(self, ch):
         """One take on a worker thread, or one level search.
