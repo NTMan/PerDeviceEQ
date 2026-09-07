@@ -107,7 +107,14 @@ SCHEMA_VERSION = 6      # profile body schema. 6 adds what a take
 #                         living alongside whole ones.
 # the optional v3 blocks the store/GUI carry verbatim through save /
 # import / export; producers own their shape (see perdeviceeq/profiles.py)
-V3_BLOCKS = ("provenance", "device", "fit", "measurement")
+# "passport" is the level map, one record per channel. It is here
+# rather than beside the named fields below because it is a BLOCK the
+# store must carry without understanding: its shape belongs to
+# level_run, and _body is a whitelist -- a field it does not name is
+# dropped on save, silently, which is exactly what happened when the
+# passport was first moved out of measurement. It reached memory,
+# save_user ran, and nothing arrived on disk.
+V3_BLOCKS = ("provenance", "device", "fit", "measurement", "passport")
 CLEAN_ID = "clean"
 
 

@@ -41,7 +41,21 @@ def _blocks():
             "sessions": {"m1": {"created_utc":
                                 "2026-07-14T08:55:02+00:00"}},
             "takes": [{"id": "t1", "session": "m1", "channel": "FL",
-                       "mag_db_uncal": [0.0, 1.5, -2.25]}]}}
+                       "mag_db_uncal": [0.0, 1.5, -2.25]}]},
+        # the level map, ONE RECORD PER CHANNEL and outside
+        # measurement, because it outlives everything in there: a
+        # session block is pruned with its last take, and a map stored
+        # inside one died the day the takes were deleted
+        "passport": {"FL": {"rungs": [{"level": 0.42,
+                                       "mag_db": [0.0, -0.5],
+                                       "stopped_by": "capture"}],
+                            "walked_utc": "2026-09-07T04:00:00Z",
+                            "conditions": {"sink": "bluez_output.x",
+                                           "source": "miniDSP EARS",
+                                           "route": "Microphone",
+                                           "capture_gain": [1.0, None],
+                                           "capture_channel": 0}}},
+    }
 
 
 def _store(tmp_path, monkeypatch):

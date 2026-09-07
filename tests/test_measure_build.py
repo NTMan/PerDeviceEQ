@@ -744,3 +744,61 @@ def test_a_map_carries_when_and_through_what_it_was_walked():
     # that updates a profile in place adds it, because only it knows
     # the walk happened now rather than when the takes were made
     assert "headroom_walked" not in blk
+
+
+# --- a passport has to survive the store, not just the dict ----------
+#
+# ProfileStore._body is a WHITELIST: it builds a fresh body out of the
+# keys it names, so a field it does not name is dropped on save
+# without a word. The passport was moved out of measurement and
+# straight into that hole -- it reached memory, save_user ran, and
+# nothing arrived on disk. Every court for it read a dict; none went
+# through the store, which is why nothing caught it.
+
+def _passport(level=0.42):
+    return {"FL": {"rungs": [{"level": level, "mag_db": [0.0, 0.0],
+                              "stopped_by": None}],
+                   "walked_utc": "2026-09-07T04:00:00Z",
+                   "conditions": {"sink": "s", "source": "m",
+                                  "route": "Microphone",
+                                  "capture_gain": [1.0, "hardware"],
+                                  "capture_channel": 0}}}
+
+
+def test_a_passport_reaches_the_disk(store, tmp_path):
+    pid = store.save_user({"id": "p1", "name": "p1", "ch_keys": ["FL"],
+                           "channels": {"FL": {"bands": []}},
+                           "passport": _passport()})
+    fresh = ProfileStore()
+    got = fresh.get(pid)
+    assert got is not None
+    assert "passport" in got, "the store dropped it on save"
+    assert got["passport"]["FL"]["rungs"][0]["level"] == 0.42
+
+
+def test_a_passport_keeps_its_conditions_through_the_store(store):
+    pid = store.save_user({"id": "p2", "name": "p2", "ch_keys": ["FL"],
+                           "channels": {"FL": {"bands": []}},
+                           "passport": _passport()})
+    cond = ProfileStore().get(pid)["passport"]["FL"]["conditions"]
+    assert cond["sink"] == "s" and cond["route"] == "Microphone"
+    assert cond["capture_gain"] == [1.0, "hardware"]
+
+
+def test_a_profile_without_a_passport_saves_and_loads(store):
+    """It stays OPTIONAL: a map says where the rig runs out, and a
+    profile with none is a profile that cannot say that. Nothing else
+    about it changes, so nothing may start requiring it."""
+    pid = store.save_user({"id": "p3", "name": "p3", "ch_keys": ["FL"],
+                           "channels": {"FL": {"bands": []}}})
+    got = ProfileStore().get(pid)
+    assert got is not None and not got.get("passport")
+
+
+def test_the_reader_finds_a_passport_that_came_off_the_disk(store):
+    from perdeviceeq import level_run
+    pid = store.save_user({"id": "p4", "name": "p4", "ch_keys": ["FL"],
+                           "channels": {"FL": {"bands": []}},
+                           "passport": _passport(0.7)})
+    got = level_run.maps_of(ProfileStore().get(pid))
+    assert got["FL"][0]["level"] == 0.7
