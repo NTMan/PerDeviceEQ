@@ -1064,8 +1064,8 @@ class MeasureWindow(Adw.Window):
         for k, row in enumerate(rows):
             t = k / last
             if pick is not None and k == pick:
-                cr.set_source_rgb(0.90, 0.25, 0.15)
-                cr.set_line_width(1.8)
+                cr.set_source_rgb(0.16, 0.40, 0.85)
+                cr.set_line_width(2.2)
             elif k == hover:
                 cr.set_source_rgb(0.16 + 0.76 * t, 0.35 - 0.15 * t,
                                   0.78 - 0.62 * t)
@@ -1194,9 +1194,17 @@ class MeasureWindow(Adw.Window):
             # for the same fact.
             pick = self._map_pick
             gone = pick is not None and k > pick
+            # TWO DIFFERENT THINGS, TWO COLOURS. Red says this rung
+            # disagrees with its own family -- a finding. The chosen
+            # rung is a hand's decision, and drawing both in red left
+            # a picture with two red lines meaning opposite things:
+            # one to be measured again because it is wrong, one to be
+            # measured again because he said so. The choice takes the
+            # selection blue the hover already uses, and red is left
+            # to the reading.
             if k == pick:
-                cr.set_source_rgb(0.90, 0.25, 0.15)
-                cr.set_line_width(1.8)
+                cr.set_source_rgb(0.16, 0.40, 0.85)
+                cr.set_line_width(2.2)
             elif gone:
                 cr.set_source_rgba(*((0.90, 0.25, 0.15)
                                      if odd else (0.32, 0.42, 0.72)),
@@ -1235,7 +1243,11 @@ class MeasureWindow(Adw.Window):
             # and the bar moves with the walk's own noise, so the
             # distance to it is the only thing that says whether a
             # quiet reading is comfortable or lucky.
+            # the number stays RED when the rung is odd, even where
+            # the line is blue for being chosen: the finding does not
+            # stop being a finding because a hand agreed with it
             cr.set_source_rgba(*((0.90, 0.25, 0.15) if odd
+                                 else (0.16, 0.40, 0.85) if k == pick
                                  else (0.55, 0.55, 0.55)),
                                 0.25 if gone else 1.0)
             cr.move_to(ml + pw_ + 3, y + 3)
