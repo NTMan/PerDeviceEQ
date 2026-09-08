@@ -219,6 +219,13 @@ class MeasureWindow(Adw.Window):
         # job clears it as it starts. Born here because a reader must
         # never depend on some other job having run first.
         self._stop_asked = False
+        # WHY THE MAP WALK PRODUCED NOTHING, in the walk's own words.
+        # It is two frames below the worker that reports, and a
+        # refusal there is the one thing the hand has to be told, so
+        # it is left here rather than threaded back through a return
+        # shape two callers share. Written by _walk_map, read by
+        # _measure_worker, cleared where a run is armed.
+        self._walk_why = None
         self._loud_ack = False
         # the loud warning is answered ONCE for the window: headphones
         # come off and stay off. The rebuild warning is answered for
@@ -5056,6 +5063,7 @@ class MeasureWindow(Adw.Window):
         # Only the caller was missing.
         self._take_gain = self.gain_spin.get_value() / 100.0
         self._stop_asked = False
+        self._walk_why = None
         self._busy = True
         self._set_row_sensitive(False)
         self._update_pult()
@@ -5193,11 +5201,24 @@ class MeasureWindow(Adw.Window):
             # NOT a failure and not a map: the rig moved between
             # the kept rungs and now, so old and new would be
             # about two different rigs. Say so and change nothing.
-            GLib.idle_add(self._say, str(e))
+            # THROUGH THE RUN'S REPORT, not straight at the line: said
+            # here it was posted one idle callback before
+            # _measure_done's own "Ready" and never survived to a
+            # frame.
+            self._walk_why = str(e)
             rungs = None
-        except (RuntimeError, ValueError, OSError):
+        except (RuntimeError, ValueError, OSError) as e:
             # a profile without a map is a profile that cannot say
-            # where the rig runs out; nothing else about it changes
+            # where the rig runs out; nothing else about it changes.
+            # BUT IT MAY NOT GO WITHOUT A WORD. Swallowed whole, this
+            # branch is indistinguishable from a button that did
+            # nothing -- and the console learns nothing either, since
+            # the exception never reaches the worker's own handler
+            # where debug.crashed lives. That is how a rebuild that
+            # played its seating sweep and then stopped left no trace
+            # anywhere to read.
+            debug.crashed("the level map", e, expected=EXPECTED_FAILURES)
+            self._walk_why = "the level map could not be walked: %s" % e
             rungs = None
         if rungs:
             self.session.set_headroom(self.ch_keys[ch], rungs)
@@ -5311,21 +5332,29 @@ class MeasureWindow(Adw.Window):
         the status line and the control learns the answer at the end.
         """
         result = {"error": None, "outcome": None, "level": None,
-                  "found": None}
+                  "found": None, "word": None}
         try:
             self._assert_entry_route()
             self._assert_capture_gain()
             if self._level_only:
                 result["level"], result["found"] = self._hunt_level(ch)
+                # IT TRAVELS WITH THE RESULT, and does not go through
+                # _post_status. That channel is for progress, which is
+                # meant to be overwritten -- including by the "Ready"
+                # _measure_done posts a callback later, which is what
+                # erased every closing sentence this window ever said.
                 if result["level"] is None:
-                    self._post_status("%s: search stopped -- the level "
-                                      "is unchanged"
-                                      % self.ch_keys[ch])
+                    said = ("%s: search stopped -- the level "
+                            "is unchanged" % self.ch_keys[ch])
                 else:
-                    self._post_status(
-                        "%s: level %d%%"
-                        % (self.ch_keys[ch],
-                           round(100 * result["level"])))
+                    said = ("%s: level %d%%"
+                            % (self.ch_keys[ch],
+                               round(100 * result["level"])))
+                # and the map's own reason, when it left one: a walk
+                # can refuse while the level stands, and it can be the
+                # whole reason there is no level at all
+                result["word"] = (said if not self._walk_why
+                                  else "%s  (%s)" % (said, self._walk_why))
             else:
                 self.session.set_level(self._take_level)
                 result["outcome"] = self.session.take(
@@ -5342,7 +5371,14 @@ class MeasureWindow(Adw.Window):
         self._busy = False
         self._set_row_sensitive(True)
         self._update_pult()
-        self._say("Ready")
+        # THE RUN'S REPORT, NOT THE PULT'S STATE. "Ready" describes the
+        # buttons, and it was also the last thing posted on every run:
+        # it arrived through the same idle queue as whatever the worker
+        # had just said, one callback later, so the report was drawn
+        # and wiped inside one turn of the main loop. Ordering the two
+        # by hand is a rule the next caller breaks; the report having
+        # one owner is not.
+        self._say(result.get("word") or "Ready")
         err = result["error"]
         if isinstance(err, sweep_io.MeasureCancelled):
             self._refresh_all()              # Stop: quiet, nothing stored
