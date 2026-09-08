@@ -1489,3 +1489,34 @@ def test_guessing_the_boundary_from_the_kept_top_does_not_keep_it(
     # of the ground, so the map stops far below where the rig does
     assert (max(r["level"] for r in guessed)
             < 0.7 * max(r["level"] for r in first))
+
+
+def test_every_sweep_of_a_walk_is_announced_first(monkeypatch):
+    """A level is worth knowing while it can still be refused, so the
+    announcement comes BEFORE the sound. The seating sweep of a
+    rebuild went out silent, and the base's second sweep with it: a
+    hand watching saw a sweep begin with no level and no step."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played, said = [], []
+
+    def rig(back, name, sink, source, wav, duration, channels,
+            sweep, fr, analyze, v, play_map):
+        # every sweep must have been announced before it plays
+        assert len(said) >= len(played) + 1, \
+            "sweep %d played unannounced" % (len(played) + 1)
+        played.append(round(float(v), 4))
+        db = 60.0 * math.log10(v / 0.4)
+        return None, -30.0 + db, False, _Got(np.full(len(fr), db))
+    _fake_backend(monkeypatch, rig)
+    first = level_run.headroom_map(
+        {"name": "x"}, {"name": "y"}, 2, 0.4, sink_name="x",
+        freqs=freqs, max_rungs=4,
+        on_level=lambda v, i: said.append((round(v, 4), i)))
+    said.clear()
+    played.clear()
+    level_run.headroom_map(
+        {"name": "x"}, {"name": "y"}, 2, 0.4, sink_name="x",
+        freqs=freqs, max_rungs=4,
+        have=level_run.rolled_back(first, 2),
+        on_level=lambda v, i: said.append((round(v, 4), i)))
+    assert said, "a rebuild announced nothing at all"

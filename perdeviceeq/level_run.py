@@ -908,6 +908,15 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         # about two different rigs.
         top = max(rungs, key=lambda r: r["level"])
         v = _clamp(float(top["level"]))
+        # BEFORE THE SOUND, like every other sweep here. This one is
+        # played to check the seating, and it went out silent: a hand
+        # watching a rebuild saw a sweep begin with no level and no
+        # step on the line. The rule that puts the announcement first
+        # exists because a level is worth knowing while it can still
+        # be refused, and a sweep nobody announced is the one case it
+        # was written against.
+        if on_level is not None:
+            on_level(v, len(rungs))
         try:
             again = _play_rung(back, name, sink, source, wav, duration,
                                channels, sweep, freqs, analyze,
@@ -968,6 +977,8 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # are an answer about its response. One sweep more, and
             # the two come apart.
             if i == 0 and not have:
+                if on_level is not None:
+                    on_level(v, i + 1)
                 again = _play_rung(back, name, sink, source, wav,
                                    duration, channels, sweep, freqs,
                                    analyze, v, play_map)[3]
@@ -991,8 +1002,6 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                     if lift > 0:
                         got, a = again, b
                     b = a
-                    if on_level is not None:
-                        on_level(v, i)
                 scatter = np.abs(a - b)
                 # KEPT EVERYWHERE, including where the rung was not
                 # heard. It used to be blanked there, on the ground
