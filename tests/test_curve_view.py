@@ -928,20 +928,23 @@ def test_the_base_rung_has_to_be_heard_itself():
     assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41
 
 
-def test_every_map_view_draws_without_gtk():
-    """A call to a method that was never written passes pyflakes and
-    every court here, and fails the moment a canvas repaints: a rename
-    left _draw_map calling a _draw_fan that did not exist, and the
-    window died on the first redraw. Nothing exercised the drawing at
-    all.
+MAP_METHODS = ("_map_rungs", "_wrapped", "_map_state_line", "_map_ref",
+               "_map_mask", "_draw_map", "_draw_fan", "_draw_check",
+               "_map_band", "_map_at")
 
-    This does: it runs each view on a plain cairo surface, with the
-    rungs a walk actually produces.
+
+def map_fake():
+    """The window's map methods, lifted out of the class so a canvas
+    can be judged without gi.
+
+    A call to a method that was never written passes pyflakes and
+    every court here, and fails the moment a canvas repaints: a
+    rename left _draw_map calling a _draw_fan that did not exist, and
+    the window died on the first redraw. Nothing exercised the
+    drawing at all.
     """
     import math
     import re
-    import types
-    import cairo
     import numpy as np
     from perdeviceeq import level_run
 
@@ -959,14 +962,115 @@ def test_every_map_view_draws_without_gtk():
     ns = {"math": math, "np": np, "level_run": level_run,
           "FMIN_PLOT": 20.0, "FMAX_PLOT": 20000.0,
           "MAP_MUTE_DB": 1.0, "MAP_ODD_FLOOR_DB": 0.15, "MAP_H": 230}
-    body = "".join(grab(n) for n in (
-        "_map_rungs", "_wrapped", "_map_state_line", "_map_ref",
-        "_map_mask", "_draw_map", "_draw_fan", "_draw_check"))
+    body = "".join(grab(n) for n in MAP_METHODS)
     body += ("\n    _MAP_ENDS = " +
              re.search(r"_MAP_ENDS = (\{.*?\})", src, re.S).group(1) +
              "\n    REF_HEARD = 0.9\n")
     exec("class Fake:\n" + body, ns)
+    return ns["Fake"]
 
+
+def map_rungs(steps):
+    """A walk whose rungs climb by `steps` decibels, one per step.
+
+    The grid is the real one -- 958 bins of 96 per octave from 20 Hz
+    -- so a pointer anywhere in the plot stands on a bin that was
+    drawn, as it does in the field.
+    """
+    n = 958
+    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
+    rungs, up = [], 0.0
+    for j, d in enumerate([0.0] + list(steps)):
+        up += d
+        r = {"level": 0.12 * 10.0 ** (up / 60.0),
+             "peak_dbfs": -30.0 + up,
+             "heard_offset_db": -40.0,
+             "mag_db": [up + s for s in slope],
+             "stopped_by": "capture" if j == len(steps) else None}
+        if j == 0:
+            r["scatter_db"] = [0.1] * n
+        rungs.append(r)
+    return rungs
+
+
+def map_window(rungs, on=False, partial=None, pick=2, hover=1):
+    import types
+    prof = {"passport": {"FL": {"rungs": rungs}},
+            "measurement": {"grid": {"f_lo": 20.0, "ppo": 96}}}
+    f = map_fake()()
+    f.ch_keys = ["FL"]
+    f._selected_ch = 0
+    f.edit_pid = "p"
+    f._map_pick = pick
+    f._map_hover = hover
+    f._map_odd = None
+    f._busy = False
+    f._fan_geom = None
+    f._map_partial = rungs[:partial] if partial is not None else []
+    f.map_area = types.SimpleNamespace(get_height=lambda: 230)
+    f.map_view = types.SimpleNamespace(get_active=lambda: on)
+    f.parent = types.SimpleNamespace(
+        store=types.SimpleNamespace(get=lambda _p: prof))
+    return f
+
+
+def test_the_fan_picks_the_line_the_pointer_is_on():
+    """His field report, in one sentence: aiming at the second line
+    and getting the third. The ladder steps 6, 6, 2, 2, 2, 2, so the
+    lines are not evenly spaced and the even band grid the hit test
+    used points somewhere else than the eye does.
+    """
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    f = map_window(rungs, on=False)
+    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
+    f._draw_map(None, cr, 700, 230)
+
+    rows, bin_at, py = f._fan_geom
+    x = 350.0
+    i = bin_at(x)
+    for k in range(len(rungs)):
+        assert f._map_at(x, py(rows[k][i])) == k
+
+    # AND THE LADDER IS ADVERSARIAL, or this court has no teeth: the
+    # band arithmetic must answer otherwise on at least one line, and
+    # on this one it answers 2 where the eye is on 1
+    band = [f._map_band(py(rows[k][i])) for k in range(len(rungs))]
+    assert band != list(range(len(rungs)))
+    assert band[1] == 2
+
+
+def test_the_shelves_keep_their_bands():
+    """The even spacing there is this window's own, so a band IS a
+    rung and there is no line to aim at."""
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    f = map_window(rungs, on=True)
+    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
+    f._draw_map(None, cr, 700, 230)
+    assert f._fan_geom is None
+    for y in (30.0, 90.0, 150.0, 200.0):
+        assert f._map_at(350.0, y) == f._map_band(y)
+
+
+def test_nothing_is_under_the_pointer_where_no_line_was_drawn():
+    """A fan too short to draw leaves no geometry, and a view that
+    cannot be aimed at must not answer at random."""
+    import cairo
+    f = map_window(map_rungs([])[:1], on=False)
+    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
+    f._draw_map(None, cr, 700, 230)
+    assert f._fan_geom is None
+    assert f._map_at(350.0, 120.0) is None
+
+
+def test_every_map_view_draws_without_gtk():
+    """Each view on a plain cairo surface, with the rungs a walk
+    actually produces."""
+    import types
+    import cairo
+
+    Fake = map_fake()
     n = 200
     slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
     rungs = []
@@ -984,7 +1088,7 @@ def test_every_map_view_draws_without_gtk():
 
     for on in (False, True):
         for k in (0, 3, 7):
-            f = ns["Fake"]()
+            f = Fake()
             f.ch_keys = ["FL"]
             f._selected_ch = 0
             f.edit_pid = "p"
@@ -992,7 +1096,9 @@ def test_every_map_view_draws_without_gtk():
             f._map_hover = 1
             f._map_odd = None
             f._busy = False
+            f._fan_geom = None
             f._map_partial = rungs[:k]
+            f.map_area = types.SimpleNamespace(get_height=lambda: 230)
             f.map_view = types.SimpleNamespace(get_active=lambda: on)
             f.parent = types.SimpleNamespace(
                 store=types.SimpleNamespace(get=lambda _p: prof))

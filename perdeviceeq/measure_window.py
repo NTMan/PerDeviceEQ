@@ -445,6 +445,13 @@ class MeasureWindow(Adw.Window):
         # already -- hover lights a name, a click pins it -- and the
         # rungs follow it now.
         self._map_hover = None
+        # WHERE THE FAN PUT ITS LINES, left by the drawing for the
+        # pointer to read. A hit test that re-derives this geometry
+        # is a second copy of it and the two drift apart; what the
+        # hand aims at is what was drawn, so the drawing answers.
+        # None means the shelves are showing, which need no record:
+        # their spacing is this window's own and even.
+        self._fan_geom = None
         self._map_odd = None
         self._map_partial = []
         pick = Gtk.GestureClick()
@@ -777,16 +784,12 @@ class MeasureWindow(Adw.Window):
             % who)
 
     def _map_band(self, y):
-        """Which rung the pointer is over, by BAND rather than by
-        distance to a line.
+        """Which rung the pointer is over ON THE SHELVES, by band.
 
-        The bands are equal and ordered, so the arithmetic is the same
-        on both views -- and on the fan it has to be, because there
-        the lines are spaced by what the rig delivered and collapse
-        exactly where a walk goes wrong: twelve rungs of an iLoud walk
-        fell into seven decibels at 60 Hz with two of them meeting.
-        Aiming at a line there would be aiming at a coin toss; aiming
-        at the n-th band always lands on the n-th rung.
+        The shelves are this window's own even spacing -- the whole
+        reason that view exists is that two rungs can never land on
+        each other there -- so the n-th band IS the n-th rung and no
+        line has to be aimed at.
         """
         rungs = self._map_rungs()
         if len(rungs) < 2:
@@ -797,8 +800,46 @@ class MeasureWindow(Adw.Window):
         k = int((mt + ph - y) // (ph / len(rungs)))
         return k if 0 <= k < len(rungs) else None
 
-    def _on_map_motion(self, _ctrl, _x, y):
-        k = None if self._busy else self._map_band(y)
+    def _map_at(self, x, y):
+        """Which rung the pointer is over, on whichever view is drawn.
+
+        ON THE FAN IT IS THE LINE, at the pointer's own x. The lines
+        there sit where the RIG put them, and the even band grid this
+        replaces pointed somewhere else than the eye did: his ladder
+        steps 6, 6, 2, 2, 2, 2, so the second line stands a third of
+        the way up a picture whose second band is a seventh of it --
+        aim at the second line, take the third. Reported from the
+        field in exactly those words.
+
+        Where two lines meet the answer is whichever is nearer, and
+        that is the honest one: they are in the same place, so no
+        rule can read an intention that the picture does not carry.
+        What makes it navigable is that the hover marks the line the
+        click will take, so an ambiguity is visible and one pixel of
+        movement settles it.
+
+        Nothing is under the pointer where no line was drawn -- a
+        masked corridor, or a fan that gave up and printed a sentence
+        instead. A view that cannot be aimed at says so with its
+        cursor rather than answering at random.
+        """
+        geom = self._fan_geom
+        if geom is None:
+            return self._map_band(y)
+        rows, bin_at, py = geom
+        i = bin_at(x)
+        near, at = None, None
+        for k, row in enumerate(rows):
+            v = row[i] if 0 <= i < len(row) else None
+            if v is None:
+                continue
+            d = abs(py(v) - y)
+            if near is None or d < near:
+                near, at = d, k
+        return at
+
+    def _on_map_motion(self, _ctrl, x, y):
+        k = None if self._busy else self._map_at(x, y)
         if k != self._map_hover:
             self._map_hover = k
             self.map_area.set_cursor_from_name(
@@ -811,15 +852,19 @@ class MeasureWindow(Adw.Window):
             self.map_area.set_cursor_from_name(None)
             self.map_area.queue_draw()
 
-    def _on_map_pick(self, _g, _n, _x, y):
+    def _on_map_pick(self, _g, _n, x, y):
         """Choose the rung to rebuild from, or let it go.
 
         Clicking the one already chosen clears it, so the gesture is
         its own undo and there is no second control to find.
+
+        THE SAME QUESTION THE HOVER ASKED, through the same function:
+        a highlight that promises one rung and a click that takes
+        another is worse than no highlight at all.
         """
         if self._busy:
             return
-        k = self._map_band(y)
+        k = self._map_at(x, y)
         if k is None:
             return
         self._map_pick = None if self._map_pick == k else k
@@ -933,6 +978,7 @@ class MeasureWindow(Adw.Window):
         cr.rectangle(ml, mt, pw_, ph)
         cr.fill()
         cr.set_font_size(10)
+        self._fan_geom = None
         if len(rungs) < 2:
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
             cr.move_to(ml + 8, mt + ph / 2)
@@ -1003,9 +1049,17 @@ class MeasureWindow(Adw.Window):
             f = g_lo * 2.0 ** (i / ppo)
             return ml + (math.log10(max(f, 1e-6)) - lo) / (hi - lo) * pw_
 
+        def bin_at(x):
+            """px inverted. Beside it on purpose: the pointer walks
+            this mapping backwards and two copies of one formula in
+            two places is one of them going stale."""
+            f = 10.0 ** (lo + (x - ml) / max(1.0, pw_) * (hi - lo))
+            return int(round(ppo * math.log2(max(f, 1e-9) / g_lo)))
+
         def py(v):
             return mt + ph - (v - y0) / max(1e-9, y1 - y0) * ph
 
+        self._fan_geom = (rows, bin_at, py)
         self._map_state_line(cr, ml, mt, pw_, rungs)
         # WHERE THE MASK TOOK THE BAND, shaded. Without it the lines
         # come back in pieces and the eye reads a broken renderer
@@ -1068,11 +1122,11 @@ class MeasureWindow(Adw.Window):
         # that is what will be measured again.
         pick = self._map_pick
         hover = self._map_hover
-        if hover is not None and 0 <= hover < len(rows):
-            band = ph / len(rows)
-            cr.set_source_rgba(0.35, 0.45, 0.75, 0.10)
-            cr.rectangle(ml, mt + ph - (hover + 1) * band, pw_, band)
-            cr.fill()
+        # NO BAND UNDER THE POINTER HERE. A strip on an even grid is
+        # what the hit test used to be, and drawing it made the eye
+        # trust it: the strip lay over the second line while the
+        # third was what a click took. The hovered LINE is the
+        # highlight now, and it is the same line _map_at returns.
         last = max(1, len(rows) - 1)
         # a label per rung piles them on top of each other the moment
         # a rig follows its knob, which is the ordinary case: eleven
@@ -1116,7 +1170,15 @@ class MeasureWindow(Adw.Window):
             if not live:
                 continue
             gy = py(sorted(live)[len(live) // 2])
-            if k in (0, last) or all(abs(gy - y) >= 11 for y in said):
+            # THE ONE UNDER THE POINTER IS ALWAYS NAMED, whatever the
+            # crowding rule says: hovering is how a hand asks which
+            # rung this is, and an unnamed highlight answers a
+            # different question.
+            if k in (hover, pick):
+                cr.move_to(ml + pw_ + 3, gy + 3)
+                cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
+                said.append(gy)
+            elif k in (0, last) or all(abs(gy - y) >= 11 for y in said):
                 said.append(gy)
                 cr.move_to(ml + pw_ + 3, gy + 3)
                 cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
@@ -1156,6 +1218,7 @@ class MeasureWindow(Adw.Window):
             got = (key,) + level_run.odd_rung_out(rungs)
             self._map_odd = got
         res, floor = got[1], got[2]
+        self._fan_geom = None
         if not res:
             # NOT AN EMPTY BOX WHILE A WALK IS RUNNING. This view
             # reads each rung against the trend of the others, so
