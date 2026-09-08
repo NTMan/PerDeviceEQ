@@ -5075,14 +5075,26 @@ class MeasureWindow(Adw.Window):
         number; nothing it does is a take, so nothing has to be
         discarded afterwards to pretend it was not one.
         """
+        WHY = {"scatter": "measuring the scatter at the same level",
+               "seating": "checking the rig still sits where the kept "
+                          "rungs were measured"}
+
         def about_to(v, step):
             """BEFORE the sweep, because after it the level has
             already been in someone's ears. His near miss: a walk at
             80% with the wrong earphone in the coupler, stopped only
-            because he read the line in time."""
+            because he read the line in time.
+
+            `step` is a number for a rung of the ladder and a WORD for
+            the sweeps that are not rungs -- the base's repeat and a
+            rebuild's seating check. Announced as bare numbers they
+            read as a stutter, or as one step played twice at two
+            different volumes, which is what he saw.
+            """
             self._post_status(
-                "%s: about to sweep at %d%%  (step %d)"
-                % (self.ch_keys[ch], round(100 * v), step))
+                "%s: about to sweep at %d%%  (%s)"
+                % (self.ch_keys[ch], round(100 * v),
+                   WHY.get(step, "step %s" % step)))
 
         def said(p):
             thd = ("n/a" if p.thd_pct is None else
@@ -5118,6 +5130,13 @@ class MeasureWindow(Adw.Window):
                 # top, one read from the map -- and both were answering
                 # a question that a count does not raise.
                 keep_top = max(r["level"] for r in got)
+                # SPENT WHEN IT IS USED, not when the walk ends. It
+                # has done its work the moment the rungs above it were
+                # dropped, and leaving it set fades those rungs on
+                # every repaint for the length of the walk -- against
+                # a ladder that no longer has them.
+                self._map_pick = None
+                GLib.idle_add(self._sync_relevel)
                 return self._walk_map(ch, about_to, keep_top, got)
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,

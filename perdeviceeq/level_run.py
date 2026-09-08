@@ -931,7 +931,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         # be refused, and a sweep nobody announced is the one case it
         # was written against.
         if on_level is not None:
-            on_level(v, len(rungs))
+            on_level(v, "seating")
         try:
             again = _play_rung(back, name, sink, source, wav, duration,
                                channels, sweep, freqs, analyze,
@@ -976,6 +976,16 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             if should_stop is not None and should_stop():
                 stopped = "asked"
                 break
+            # WHAT THIS SWEEP IS FOR, not only where it is played.
+            # Two sweeps announced identically say nothing about why
+            # the second one is sounding, and there are two of them
+            # for two different reasons: a fresh walk plays its base
+            # twice at ONE level to measure the scatter every later
+            # reading is judged against, and a rebuild replays the
+            # kept top at ITS level to check the rig still sits where
+            # it did. Read off a line that says only "step 1" twice,
+            # the first looks like a stutter and the second like a
+            # step played at the wrong volume.
             if on_level is not None:
                 on_level(v, i + 1)
             chan, peak_db, clipped, got = _play_rung(
@@ -993,7 +1003,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # the two come apart.
             if i == 0 and not have:
                 if on_level is not None:
-                    on_level(v, i + 1)
+                    on_level(v, "scatter")
                 again = _play_rung(back, name, sink, source, wav,
                                    duration, channels, sweep, freqs,
                                    analyze, v, play_map)[3]

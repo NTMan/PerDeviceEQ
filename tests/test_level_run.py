@@ -1534,3 +1534,34 @@ def test_every_sweep_of_a_walk_is_announced_first(monkeypatch):
         have=level_run.rolled_back(first, 2),
         on_level=lambda v, i: said.append((round(v, 4), i)))
     assert said, "a rebuild announced nothing at all"
+
+
+def test_a_sweep_that_is_not_a_rung_says_what_it_is(monkeypatch):
+    """Two sweeps announced identically say nothing about why the
+    second one is sounding, and there are two of them for two
+    different reasons: a fresh walk plays its base twice at ONE level
+    to measure the scatter, and a rebuild replays the kept top at ITS
+    level to check the seating. Announced as bare numbers, the first
+    reads as a stutter and the second as one step at two volumes."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played, said = [], []
+    _fake_backend(monkeypatch, _rig(played))
+    first = level_run.headroom_map(
+        {"name": "x"}, {"name": "y"}, 2, 0.4, sink_name="x",
+        freqs=freqs, max_rungs=4,
+        on_level=lambda v, i: said.append((round(v, 4), i)))
+    # the base is played twice at ONE level, and the second says why
+    assert said[0][0] == said[1][0]
+    assert said[0][1] == 1 and said[1][1] == "scatter"
+    assert all(isinstance(i, int) for _v, i in said[2:])
+
+    said.clear()
+    played.clear()
+    level_run.headroom_map(
+        {"name": "x"}, {"name": "y"}, 2, 0.4, sink_name="x",
+        freqs=freqs, max_rungs=4,
+        have=level_run.rolled_back(first, 2),
+        on_level=lambda v, i: said.append((round(v, 4), i)))
+    # the seating sweep names itself and does not take a step number
+    assert said[0][1] == "seating"
+    assert said[1][0] > said[0][0] and said[1][1] == 1
