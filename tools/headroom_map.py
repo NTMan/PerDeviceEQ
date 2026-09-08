@@ -90,8 +90,9 @@ def current_volume(sink):
 
 def losses(rungs, freqs, ppo):
     """Loss per rung against the quietest one, in dB, NaN where the
-    rung was not heard."""
+    reading is not worth its own noise."""
     base = rungs[0]
+    model = level_run.scatter_model(base)
     bm = np.array([np.nan if x is None else float(x)
                    for x in base["mag_db"]], float)
     out = []
@@ -101,12 +102,13 @@ def losses(rungs, freqs, ppo):
         cm = np.array([np.nan if x is None else float(x)
                        for x in r["mag_db"]], float)
         off = r.get("heard_offset_db")
-        if off is None:
+        if off is None or model is None:
             out.append((r, rise, np.full(len(cm), np.nan)))
             continue
         with np.errstate(all="ignore"):
-            d = level_run.shortfall_db(bm, cm, cm - off, rise,
-                                       freqs, ppo)
+            d = level_run.shortfall_db(
+                bm, cm, cm - off, rise, freqs, ppo,
+                level_run.expected_scatter(model, cm - off))
         out.append((r, rise, d))
     return out
 

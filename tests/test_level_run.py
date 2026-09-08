@@ -409,21 +409,24 @@ def test_the_shortfall_is_also_a_quantity():
     prev = np.zeros(len(freqs))
     heard = np.full(len(freqs), 30.0)
     # took the whole 4 dB step everywhere
+    quietly = np.full(len(freqs), 0.1)      # a coupler's own floor
     full = level_run.shortfall_db(prev, prev + 4.0, heard, 4.0,
-                                  freqs, mc.GRID_PPO)
+                                  freqs, mc.GRID_PPO, quietly)
     assert np.nanmax(full) == 0.0
     # took none of it
     none = level_run.shortfall_db(prev, prev, heard, 4.0,
-                                  freqs, mc.GRID_PPO)
+                                  freqs, mc.GRID_PPO, quietly)
     assert abs(float(np.nanmax(none)) - 4.0) < 1e-9
     # took half
     half = level_run.shortfall_db(prev, prev + 2.0, heard, 4.0,
-                                  freqs, mc.GRID_PPO)
+                                  freqs, mc.GRID_PPO, quietly)
     assert abs(float(np.nanmax(half)) - 2.0) < 1e-9
-    # and a frequency the rig does not reproduce is absent, not short
+    # and a bin whose two sweeps would land further apart than the
+    # shortfall being looked for is absent, not short
     quiet = np.full(len(freqs), 0.0)
     out = level_run.shortfall_db(prev, prev, quiet, 4.0,
-                                 freqs, mc.GRID_PPO)
+                                 freqs, mc.GRID_PPO,
+                                 np.full(len(freqs), 9.0))
     assert not np.isfinite(out).any()
 
 
@@ -1110,19 +1113,29 @@ def test_a_walk_records_why_it_stopped(monkeypatch):
 
 # --- the level every channel still follows -----------------------------
 
-def _rungs(levels, loss_from=None, n=96, ppo=96):
-    """A ladder whose steps arrive in full, or fall short from a
-    given rung upward."""
+def _rungs(levels, loss_from=None, n=200, ppo=96, A=0.05, floor=0.1):
+    """A ladder whose steps arrive in full, or fall short from a given
+    rung upward.
+
+    Its base carries a scatter, because that is what a map is read
+    against now: the response slopes across the band so the base's own
+    SNR spans it, which is what lets one rung fit the model.
+    """
     out = []
+    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
     for j, lv in enumerate(levels):
-        mag = [j * 4.0] * n
+        mag = [j * 4.0 + sl for sl in slope]
         if loss_from is not None and j >= loss_from:
             for i in range(n // 3):        # the bottom third gives way
                 mag[i] -= 3.0 * (j - loss_from + 1)
-        out.append({"level": lv, "peak_dbfs": -40.0 + j * 4.0,
-                    "heard_offset_db": -40.0, "mag_db": mag,
-                    "stopped_by": "capture" if j == len(levels) - 1
-                    else None})
+        r = {"level": lv, "peak_dbfs": -40.0 + j * 4.0,
+             "heard_offset_db": -40.0, "mag_db": mag,
+             "stopped_by": "capture" if j == len(levels) - 1 else None}
+        if j == 0:
+            r["scatter_db"] = [
+                math.sqrt((A * 10.0 ** (-(m + 40.0) / 20.0)) ** 2
+                          + floor ** 2) for m in mag]
+        out.append(r)
     return out
 
 
@@ -1182,10 +1195,16 @@ def test_a_step_the_device_did_not_take_is_not_a_failure():
           0.6479, 0.6995, 0.7554]
     got = []
     for j, (v, pk) in enumerate(zip(lv, peaks)):
-        got.append({"level": v, "peak_dbfs": pk,
-                    "heard_offset_db": -40.0,
-                    "mag_db": [pk - peaks[0]] * 96,
-                    "stopped_by": "capture" if j == len(lv) - 1 else None})
+        n = 200
+        slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
+        r = {"level": v, "peak_dbfs": pk, "heard_offset_db": -40.0,
+             "mag_db": [pk - peaks[0] + sl for sl in slope],
+             "stopped_by": "capture" if j == len(lv) - 1 else None}
+        if j == 0:
+            r["scatter_db"] = [
+                math.sqrt((0.05 * 10.0 ** (-(m + 40.0) / 20.0)) ** 2
+                          + 0.1 ** 2) for m in r["mag_db"]]
+        got.append(r)
     assert level_run.linear_top(got) == 0.7554
 
 
@@ -1263,3 +1282,102 @@ def test_two_agreeing_base_sweeps_are_left_alone(monkeypatch):
                                    max_rungs=3)
     assert rungs[0]["scatter_db"] is not None
     assert max(rungs[0]["scatter_db"]) < 0.001
+
+
+# --- what a bin's reading is worth, measured rather than assumed ------
+
+def _scatter_rung(A, floor, n=400, lo_snr=-15.0, hi_snr=60.0, seed=5):
+    """A rung whose two sweeps disagree the way the model says."""
+    rng = random.Random(seed)
+    snr = [lo_snr + (hi_snr - lo_snr) * i / (n - 1) for i in range(n)]
+    off = -70.0
+    return {"heard_offset_db": off,
+            "mag_db": [off + s for s in snr],
+            "scatter_db": [
+                math.sqrt((A * 10.0 ** (-s / 20.0)) ** 2 + floor ** 2)
+                * math.exp(rng.gauss(0, 0.15)) for s in snr]}
+
+
+def test_the_model_is_recovered_from_one_rung():
+    """One rung is enough because its own SNR spans sixty decibels
+    across frequency; the base of a walk is the quietest there is,
+    which is why it is the one played twice."""
+    A, F = level_run.scatter_model(_scatter_rung(7.0, 0.10))
+    assert 4.0 < A < 12.0
+    assert 0.05 < F < 0.20
+
+
+def test_a_coupler_fits_almost_no_noise_term():
+    """On a coupler the error of a rung-to-rung difference does not
+    grow down to an SNR of minus fifteen: a deconvolution spreads
+    stationary noise and concentrates the sweep."""
+    A, F = level_run.scatter_model(_scatter_rung(0.05, 0.10))
+    assert A < 1.0
+
+
+def test_a_rung_that_never_saw_a_low_snr_gets_no_model():
+    """A is what the scatter does as the signal falls away, so a curve
+    that never goes there cannot constrain it -- and an unconstrained
+    A near zero throws the gate wide open."""
+    assert level_run.scatter_model(
+        _scatter_rung(7.0, 0.10, lo_snr=25.0)) is None
+
+
+def test_an_old_profile_keeps_the_rule_it_was_walked_under():
+    """Scatter used to be kept only where the base was heard, so those
+    profiles have no quiet end by construction."""
+    r = _scatter_rung(7.0, 0.10)
+    r["scatter_db"] = [None if s < 10 else v
+                       for s, v in zip(
+                           [m - r["heard_offset_db"] for m in r["mag_db"]],
+                           r["scatter_db"])]
+    assert level_run.scatter_model(r) is None
+
+
+def test_the_gate_follows_the_scatter_not_the_ratio():
+    """Same bins, same SNR, two different evenings: the coupler's are
+    worth reading and the room's are not."""
+    n = 60
+    prev = np.zeros(n)
+    cur = np.full(n, 4.0)
+    heard = np.full(n, 2.0)               # two decibels over the noise
+    quiet = level_run.expected_scatter((0.05, 0.10), heard)
+    loud = level_run.expected_scatter((7.0, 0.10), heard)
+    _s1, ok1 = level_run.shortfall(prev, cur, heard, 4.0, None, 96.0,
+                                   scatter=quiet)
+    _s2, ok2 = level_run.shortfall(prev, cur, heard, 4.0, None, 96.0,
+                                   scatter=loud)
+    assert ok1.all() and not ok2.any()
+
+
+def test_the_descent_is_coarse_and_the_climb_is_fine(monkeypatch):
+    """The rungs below the search's level are there to reach where a
+    listener plays and to give the reading a quiet reference; neither
+    wants resolution. Thinning his own two ladders from 2 dB to 6
+    below that level left every channel on the level it had."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.2))
+    level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.2,
+                           sink_name="x", freqs=freqs, max_rungs=8,
+                           fine_from=0.4)
+    pairs = [(a, round(60 * math.log10(b / a), 1))
+             for a, b in zip(played, played[1:]) if b > a]
+    below = [d for a, d in pairs if a < 0.4]
+    above = [d for a, d in pairs if a >= 0.4]
+    assert below and all(d >= level_run.MAP_DOWN_STEP_DB - 0.1
+                         for d in below)
+    assert above and all(d <= level_run.MAP_STEP_DB + 0.1
+                         for d in above)
+
+
+def test_without_a_mark_every_step_is_the_fine_one(monkeypatch):
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.2))
+    level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.2,
+                           sink_name="x", freqs=freqs, max_rungs=6)
+    steps = [round(60 * math.log10(b / a), 1)
+             for a, b in zip(played, played[1:]) if b > a]
+    assert steps and all(d <= level_run.MAP_STEP_DB + 0.1
+                         for d in steps)

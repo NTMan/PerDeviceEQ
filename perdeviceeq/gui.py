@@ -830,6 +830,11 @@ class EqWindow(Adw.ApplicationWindow):
                     break
             bm = np.array([np.nan if x is None else float(x)
                            for x in base["mag_db"]], float)
+            # what a bin of THIS walk is worth, fitted from the rung
+            # that was played twice. A map with none cannot be read.
+            model = level_run.scatter_model(rungs[0])
+            if model is None:
+                continue
             steps = []
             for r in rungs[rungs.index(base) + 1:]:
                 rise = level_run.asked_db(
@@ -841,8 +846,9 @@ class EqWindow(Adw.ApplicationWindow):
                 cm = np.array([np.nan if x is None else float(x)
                                for x in r["mag_db"]], float)
                 with np.errstate(all="ignore"):
-                    d = level_run.shortfall_db(bm, cm, cm - off, rise,
-                                               freqs, ppo)
+                    d = level_run.shortfall_db(
+                        bm, cm, cm - off, rise, freqs, ppo,
+                        level_run.expected_scatter(model, cm - off))
                     d = np.where(d > gate, d, 0.0)
                 steps.append((float(r["level"]), np.nan_to_num(d)))
             if steps:

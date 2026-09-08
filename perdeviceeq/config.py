@@ -95,16 +95,36 @@ TYPE_TO_LABEL = {"PK": "bq_peaking", "LSC": "bq_lowshelf",
                  # hand -- they never join TYPE_NAMES below
                  "HP": "bq_highpass", "LP": "bq_lowpass"}
 TYPE_NAMES = ["PK", "LSC", "HSC"]
-SCHEMA_VERSION = 6      # profile body schema. 6 adds what a take
-#                         returned that the sweep never asked for --
-#                         another confession recorded while the sweep
-#                         played, and like the harmonics of epoch 5 no
-#                         converter can materialize one. So pre-6
-#                         profiles are deprecated and there are no
-#                         converters -- re-measure with the current
-#                         core. His words on why it is not optional:
-#                         he does not want half-complete profiles
-#                         living alongside whole ones.
+SCHEMA_VERSION = 7      # profile body schema. 7 is the level map: a
+#                         profile now takes its measurement level from
+#                         its own passport, and the passport is read
+#                         against the disagreement of its own sweeps.
+#                         A map walked before that carries a scatter
+#                         only where its base was heard -- ten bins of
+#                         958 on a Bluetooth walk -- and cannot be
+#                         read by the new rule at all.
+#
+#                         The alternative was a second reading rule
+#                         kept alive for old maps, and his objection
+#                         to that is the same one that decided epochs
+#                         5 and 6: it divides profiles into ones where
+#                         the level is named, the fader is held and a
+#                         rung can be rebuilt, and ones where none of
+#                         that works. Two classes and a compatibility
+#                         branch to serve the worse one. A map is
+#                         three minutes a channel and a coupler
+#                         disturbs nobody.
+#
+#                         6 added what a take returned that the sweep
+#                         never asked for -- another confession
+#                         recorded while the sweep played, and like
+#                         the harmonics of epoch 5 no converter can
+#                         materialize one. So pre-7 profiles are
+#                         deprecated and there are no converters --
+#                         re-measure with the current core. His words
+#                         on why it is not optional: he does not want
+#                         half-complete profiles living alongside
+#                         whole ones.
 # the optional v3 blocks the store/GUI carry verbatim through save /
 # import / export; producers own their shape (see perdeviceeq/profiles.py)
 # "passport" is the level map, one record per channel. It is here

@@ -5114,6 +5114,7 @@ class MeasureWindow(Adw.Window):
                     on_level=lambda v, i: about_to(v, i),
                     on_step=self._map_live,
                     have=have,
+                    fine_from=vol,
                     should_stop=lambda: self._stop_asked)
             except level_run.SeatingChanged as e:
                 # NOT a failure and not a map: the rig moved between

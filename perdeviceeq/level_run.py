@@ -349,6 +349,7 @@ MAP_MAX_RUNGS = 12
 # Twelve decibels reaches down to a third of the search's level, which
 # on his rigs covers where he listens and leaves room under it.
 MAP_BELOW_DB = 12.0
+MAP_DOWN_STEP_DB = 6.0   # the descent's step, three times the climb's
 
 
 PASSPORT = "passport"    # where a map lives in a profile, one record
@@ -403,6 +404,96 @@ def map_state(rungs):
     return (what in FINISHED), what
 
 
+MODEL_LOW_SNR = 6.0      # the fit must reach at least this
+                         # far down to constrain A
+
+
+def scatter_model(rung):
+    """(A, floor) for this walk, fitted from one rung, or None.
+
+    A rung's two sweeps disagree by an amount that follows its SIGNAL
+    TO NOISE RATIO plus a constant floor, and the whole point is that
+    A is not a property of the world but of THIS EVENING: measured, it
+    is six to seven decibels in a room and near nothing on a coupler,
+    where the error of a rung-to-rung difference does not grow at all
+    down to an SNR of minus fifteen. A swept-sine deconvolution
+    spreads uncorrelated noise and concentrates the sweep, so a
+    stationary hiss never reaches the answer -- but a room is not
+    stationary, and rumble arrives whole.
+
+    ONE RUNG IS ENOUGH because its own SNR spans sixty or seventy
+    decibels across frequency: on a room walk each of the quiet rungs
+    fitted within a third of the answer that all of them together
+    gave. The loud ones cannot -- they never see a low SNR -- and the
+    base of a walk is the quietest rung there is, which is why it is
+    the one played twice.
+
+    Two runs of the same room, deliberately made four decibels apart
+    in noise floor, fitted A = 6.38 and 7.22 with floors of 0.100 and
+    0.107: thirteen per cent apart and seven, which is what makes the
+    model worth carrying at all.
+    """
+    sc = rung.get("scatter_db")
+    mag = rung.get("mag_db")
+    off = rung.get("heard_offset_db")
+    if not sc or not mag or off is None:
+        return None
+    n = min(len(sc), len(mag))
+    snr, val = [], []
+    for i in range(n):
+        if sc[i] is None or mag[i] is None:
+            continue
+        s = float(mag[i]) - float(off)
+        v = float(sc[i])
+        if math.isfinite(s) and math.isfinite(v) and v > 0:
+            snr.append(s)
+            val.append(v)
+    if len(snr) < 40:
+        return None
+    snr = np.asarray(snr)
+    val = np.asarray(val)
+    xs, ys = [], []
+    for a in np.arange(np.floor(snr.min()), snr.max(), 3.0):
+        k = (snr >= a) & (snr < a + 3.0)
+        if k.sum() >= 6:
+            xs.append(a + 1.5)
+            ys.append(float(np.median(val[k])))
+    if len(xs) < 4:
+        return None
+    # AND THE FIT HAS TO HAVE SEEN THE QUIET END. A is what the
+    # scatter does as the signal falls away, so a curve that never
+    # goes there cannot constrain it: on a room walk the loudest rung,
+    # whose SNR started at 22 dB, fitted A = 16.7 where every quiet
+    # rung and all of them together said 5 to 8. An unconstrained A
+    # can come out near zero and throw the gate wide open, which is
+    # exactly the failure this replaced.
+    #
+    # An old profile, whose scatter was kept only where the base was
+    # heard, has no quiet end by construction and therefore gets no
+    # model -- it keeps the rule it was walked under.
+    if min(xs) > MODEL_LOW_SNR:
+        return None
+    xs = np.asarray(xs)
+    ys = np.asarray(ys)
+    # a coarse search rather than an optimiser: two parameters over a
+    # decade each, and nothing here needs three digits
+    best = None
+    for A in np.geomspace(0.02, 60.0, 60):
+        for F in np.geomspace(0.01, 3.0, 40):
+            pred = np.sqrt((A * 10.0 ** (-xs / 20.0)) ** 2 + F ** 2)
+            err = float(np.sum(np.abs(np.log(pred / ys))))
+            if best is None or err < best[0]:
+                best = (err, A, F)
+    return (float(best[1]), float(best[2])) if best else None
+
+
+def expected_scatter(model, snr):
+    """What two sweeps of a rung at this SNR would disagree by."""
+    A, F = model
+    s = np.asarray(snr, float)
+    return np.sqrt((A * 10.0 ** (-s / 20.0)) ** 2 + F ** 2)
+
+
 def linear_top(rungs, ppo=None):
     """The loudest rung this channel still followed, or None.
 
@@ -426,6 +517,12 @@ def linear_top(rungs, ppo=None):
     if len(got) < 2:
         return None
     ppo = float(ppo or 96.0)
+    # NO MODEL, NO READING. The scatter of this walk's own sweeps is
+    # what says whether a bin can be read at all, and a map that
+    # cannot supply it is not a map this code knows how to read.
+    model = scatter_model(got[0])
+    if model is None:
+        return None
     top = got[0]["level"]
     # A STEP THE KNOB TOOK AND THE DEVICE DID NOT IS NOT A FAILURE.
     # Liberty 5 answers Bluetooth's own scale in jumps: ten rungs
@@ -459,7 +556,8 @@ def linear_top(rungs, ppo=None):
             break
         heard = (mag[:n] - float(off)) if off is not None \
             else np.full(n, np.inf)
-        short, ok = shortfall(pmag[:n], mag[:n], heard, ask, None, ppo)
+        short, ok = shortfall(pmag[:n], mag[:n], heard, ask, None, ppo,
+                              expected_scatter(model, heard))
         if not ok.any() or short.any():
             break
         top, ref = cur["level"], cur
@@ -703,7 +801,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                  on_level=None, should_stop=None, on_rung=None,
                  on_step=None,
                  stop_peak_dbfs=AUTO_PEAK_CEIL, step_db=MAP_STEP_DB,
-                 max_rungs=MAP_MAX_RUNGS, have=None):
+                 max_rungs=MAP_MAX_RUNGS, have=None, fine_from=None):
     """Climb from the level the search settled at, keeping what each
     rung bought -- the map of where this rig stops answering.
 
@@ -838,20 +936,20 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                     if on_level is not None:
                         on_level(v, i)
                 scatter = np.abs(a - b)
-                # ONLY WHERE THE RUNG WAS HEARD. Where a rig makes no
-                # sound the two sweeps compare two noises, and the
-                # difference is whatever the room felt like: his iLoud
-                # read 0.06 dB across the band and 33.95 at the edges
-                # of the grid. The gate is closed there anyway, so
-                # nothing was wrong -- but a number that size sitting
-                # in a profile is a trap for whoever takes its
-                # maximum.
-                off0 = (float(got.noise_dbfs) - float(got.signal_dbfs)
-                        if got.noise_dbfs is not None
-                        and got.signal_dbfs is not None else None)
-                if off0 is not None:
-                    scatter = np.where(a - off0 > HEARD_OVER_NOISE_DB,
-                                       scatter, np.nan)
+                # KEPT EVERYWHERE, including where the rung was not
+                # heard. It used to be blanked there, on the ground
+                # that two noises compared give whatever the room felt
+                # like -- true, and it was harmless while nothing read
+                # it. Now the scatter is what DECIDES whether a bin
+                # can be read at all, and blanking it exactly where
+                # the question is hardest leaves the decision with
+                # nothing to go on: on a Bluetooth walk it survived at
+                # ten bins of 958.
+                #
+                # A large number here is not a trap, it is the answer:
+                # 33.95 dB at the edges of an iLoud walk says the
+                # reference is worthless there, which is precisely
+                # what a reader needs to be told.
 
             # A CALLER MAY WANT THE CAPTURE ITSELF. Keeping the wav is
             # not the package's business -- but a walk that disturbs a
@@ -920,7 +1018,27 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # With an even step the border is located to that step
             # anyway, and the climb continues past it. Nothing is
             # given up.
+            # COARSE UNTIL THE INTERESTING PART. The rungs below the
+            # level the search settled at exist for two reasons: to
+            # reach down to where a listener actually plays, since the
+            # correction stands between and takes 13 to 16 dB off on
+            # his three profiles, and to give the reading a reference
+            # quiet enough to be believed. Neither wants RESOLUTION
+            # down there -- the border is above, and that is where the
+            # fine step belongs.
+            #
+            # Six rungs of the descent become two or three, and the
+            # verdict does not move: thinning the bottom of his own
+            # two ladders from 2 dB to 6 left both channels of both
+            # rigs on exactly the level they had. Four sweeps a
+            # channel, and four fewer chances for an earphone to fall
+            # out mid-walk.
+            #
+            # It reads EASIER, not harder: every rung is judged
+            # against the base, so a bigger step is a bigger ask.
             step = float(step_db)
+            if fine_from is not None and v < fine_from:
+                step = max(step, MAP_DOWN_STEP_DB)
             # the peak follows the level one for one, so the walk
             # knows before it plays where a step would land
             from_peak = peak_db
@@ -1004,7 +1122,15 @@ def summary(volume, probes):
 # the step is what WE asked for, the answer is what the deconvolution
 # recovered, and short of half the step is short by any reading.
 ANSWER_SHORT = 0.5          # of the asked step; below this it is scatter
-HEARD_OVER_NOISE_DB = 10.0  # a rung speaks only where it was heard
+# WHETHER A RUNG CAN BE A REFERENCE -- not whether a bin can be read.
+# The two questions shared this constant for a long time and are not
+# the same. Everything is read against the base, so the base's own
+# noise enters every reading and it has to be audible; but a bin of a
+# rung that IS audible reads to a tenth of a decibel far below this,
+# because a deconvolution spreads stationary noise and concentrates
+# the sweep. Readability is decided by the disagreement of this
+# walk's own sweeps, in shortfall().
+HEARD_OVER_NOISE_DB = 10.0
 MIN_READABLE_STEP = 2.0
 #                             measured: the scatter between sweeps is
 #                             two tenths of a decibel, so a 2 dB step
@@ -1037,17 +1163,47 @@ def asked_db(prev, cur):
     return 60.0 * math.log10(float(lv1) / float(lv0))
 
 
-def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
+def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
+              scatter):
     """Where a rung bought less than half of what was asked.
 
     A rig runs out over a REGION, not at one frequency, so the answer
     is the median of a third of an octave -- one bin below the line is
-    the spread between sweeps. And the question is only worth asking
-    where the rung was HEARD: a response has to stand clear of that
-    take's own noise, or the difference of two rungs is the difference
-    of two noises. His Adam D3V makes no sound at 25 Hz, and without
-    that gate the reading there claimed headroom where there is no
-    sound at all.
+    the spread between sweeps.
+
+    AND ONLY WHERE THE READING IS WORTH MORE THAN ITS OWN NOISE. What
+    that means was got wrong for a long time. The rule was a signal to
+    noise ratio of ten decibels, and on a coupler it hid bins that are
+    accurate to a tenth: measured over four channels of two rigs, the
+    error of a rung-to-rung difference is 0.03 dB with a spread of 0.1
+    and does not grow at all down to an SNR of minus fifteen. A
+    swept-sine deconvolution spreads uncorrelated noise and
+    concentrates the sweep, so a stationary hiss never reaches the
+    answer, and a number measured in the silence between sweeps says
+    nothing about it.
+
+    A ROOM IS NOT STATIONARY. On a UMIK-2 walk three sweeps at one
+    level disagreed by 20.5 dB where the SNR was below zero, while the
+    same three on a coupler never left half a decibel. Rumble and
+    traffic are not rejected, and a log sweep dwells longest where
+    they live.
+
+    So the gate is the EXPECTED DISAGREEMENT of this walk's own
+    sweeps, when the caller can supply it -- a bin is worth asking
+    about while two sweeps of it would land closer together than the
+    shortfall being looked for. That is stricter than ten decibels in
+    a room and wide open on a coupler, which is the whole point: one
+    rule, measured each time, instead of a constant that can only suit
+    one of them.
+
+    THERE IS NO SECOND RULE. A map walked before the scatter was
+    recorded everywhere cannot be read by this one, and keeping the
+    old ratio alive for it would divide profiles into ones where the
+    level is named and the fader is held, and ones where none of that
+    works -- with a branch here to serve the worse half. His decision,
+    and the same one that decided the two epochs before it. Such maps
+    are re-walked; three minutes a channel, and a coupler disturbs
+    nobody.
     """
     prev = np.asarray(prev_mag, float)
     cur = np.asarray(cur_mag, float)
@@ -1059,11 +1215,13 @@ def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
         seg = seg[np.isfinite(seg)]
         if seg.size >= max(2, w // 3):
             sm[k] = float(np.median(seg))
-    ok = np.isfinite(sm) & (np.asarray(heard, float) > HEARD_OVER_NOISE_DB)
+    keep = np.asarray(scatter, float) < ANSWER_SHORT * asked_db
+    ok = np.isfinite(sm) & keep
     return ok & (sm < ANSWER_SHORT * asked_db), ok
 
 
-def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
+def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
+                 scatter):
     """HOW SHORT a rung came, per frequency, in decibels.
 
     `shortfall` answers yes or no, and that is enough to find a
@@ -1079,7 +1237,8 @@ def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
     DOWN to 50 Hz and a fresh one appears at a kilohertz, where the
     amplifier rather than the port gives out.
 
-    NaN where the rung was not heard: a rig that makes no sound at a
+    NaN where the reading is not worth its own noise, judged the same
+    way shortfall() judges it: a rig that makes no sound at a
     frequency is not short there, it is absent.
     """
     prev = np.asarray(prev_mag, float)
@@ -1092,7 +1251,8 @@ def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo):
         seg = seg[np.isfinite(seg)]
         if seg.size >= max(2, w // 3):
             sm[k] = float(np.median(seg))
-    ok = np.isfinite(sm) & (np.asarray(heard, float) > HEARD_OVER_NOISE_DB)
+    ok = np.isfinite(sm) & (np.asarray(scatter, float)
+                            < ANSWER_SHORT * asked_db)
     return np.where(ok, np.maximum(0.0, asked_db - sm), np.nan)
 
 
