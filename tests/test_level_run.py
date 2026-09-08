@@ -857,13 +857,24 @@ def test_a_profile_with_no_map_reads_as_none():
 
 # --- which rung does not belong with the rest -------------------------
 
-def _ladder(k=11, n=200, drive=2.0):
-    """A rig that follows its knob, with a little noise."""
+def _ladder(k=11, n=200, drive=2.0, steps=None):
+    """A rig that follows its knob, with a little noise.
+
+    Each rung carries the capture peak, because that is the axis the
+    reading is fitted against: a ladder is smooth in LEVEL, and the
+    rungs are not evenly spaced once the descent goes coarse.
+    """
     rng = random.Random(4)
     out = []
+    at = 0.0
     for j in range(k):
-        out.append({"level": 0.3 * 1.06 ** j,
-                    "mag_db": [j * drive + rng.gauss(0, 0.02)
+        if j and steps:
+            at += steps[(j - 1) % len(steps)]
+        elif j:
+            at += drive
+        out.append({"level": 0.3 * 10.0 ** (at / 60.0),
+                    "peak_dbfs": -40.0 + at,
+                    "mag_db": [at + rng.gauss(0, 0.02)
                                for _ in range(n)]})
     return out
 
@@ -885,6 +896,7 @@ def test_one_spoiled_rung_lights_one_rung_and_not_its_neighbours():
     for i in range(40, 90):                       # a bark, one rung
         got[5]["mag_db"][i] += 2.0
     res, floor = level_run.odd_rung_out(got)
+
     def rms(k):
         v = [x for x in res[k] if x is not None]
         return (sum(x * x for x in v) / len(v)) ** 0.5
@@ -1381,3 +1393,26 @@ def test_without_a_mark_every_step_is_the_fine_one(monkeypatch):
              for a, b in zip(played, played[1:]) if b > a]
     assert steps and all(d <= level_run.MAP_STEP_DB + 0.1
                          for d in steps)
+
+
+def test_an_uneven_ladder_does_not_flag_its_own_handover():
+    """A ladder is smooth in LEVEL, and fitting it against rung number
+    assumes even spacing. His descent went coarse -- 12.2, 15.4, 19.4
+    then 20.9, 22.6, 24.4, 26.4, six decibels apart and then two -- and
+    the curve that is smooth in level is kinked in index. The kink
+    lands on the handover rung, and it was flagged on every walk."""
+    got = _ladder(k=7, steps=[6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    res, floor = level_run.odd_rung_out(got)
+    for k in range(len(got)):
+        v = [x for x in res[k] if x is not None]
+        rms = (sum(x * x for x in v) / len(v)) ** 0.5
+        assert rms < max(0.15, 4 * floor), "rung %d flagged" % k
+
+
+def test_a_rung_with_no_peak_leaves_the_reading_unmade():
+    """The peak IS the axis, so a ladder that does not record it
+    cannot be read this way at all -- better than reading it against
+    a made-up one."""
+    got = _ladder(k=7)
+    got[3]["peak_dbfs"] = None
+    assert level_run.odd_rung_out(got) == ([], 0.0)

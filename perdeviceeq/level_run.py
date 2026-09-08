@@ -690,7 +690,24 @@ def odd_rung_out(rungs, deg=2):
     n = min(len(c) for c in cols)
     if n == 0:
         return [], 0.0
-    K = len(rungs)
+    # THE AXIS IS WHAT ARRIVED, NOT WHICH RUNG IT WAS. A ladder is
+    # smooth in LEVEL, and fitting it against rung number assumes the
+    # rungs are evenly spaced. They were, until the descent went
+    # coarse: 12.2, 15.4, 19.4 then 20.9, 22.6, 24.4, 26.4 -- six
+    # decibels apart and then two. A curve that is smooth in level is
+    # kinked in index, the kink lands on the handover rung, and that
+    # rung was flagged as odd on every walk. His words: with enviable
+    # regularity, the third one.
+    #
+    # The capture peak is the axis, for the same reason it is the axis
+    # everywhere else here -- a knob decibel is not a decibel. Read
+    # this way the flag disappears and the floor falls from 0.42 dB to
+    # 0.01: most of what was called noise was the wrong abscissa.
+    x = np.array([float(r.get("peak_dbfs"))
+                  if r.get("peak_dbfs") is not None else np.nan
+                  for r in rungs], float)
+    if not np.all(np.isfinite(x)) or len(set(x.tolist())) < deg + 3:
+        return [], 0.0
     # ALL THE FREQUENCIES AT ONCE. Fitting them one at a time took
     # 224 ms on an eleven rung walk of 958 bins, which is four
     # repaints a second -- and the pointer asks for a repaint on
@@ -699,8 +716,7 @@ def odd_rung_out(rungs, deg=2):
     # one Vandermonde, and the whole thing lands in single figures.
     Y = np.array([[np.nan if v is None else float(v) for v in c[:n]]
                   for c in cols], dtype=float)
-    ks = np.arange(K, dtype=float)
-    V = np.vander(ks, deg + 1)
+    V = np.vander(x, deg + 1)
     good = ~np.isnan(Y)
     Z = np.where(good, Y, 0.0)
 

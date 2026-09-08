@@ -1140,10 +1140,15 @@ class MeasureWindow(Adw.Window):
             self._map_odd = got
         res, floor = got[1], got[2]
         if not res:
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
-            cr.move_to(ml + 8, mt + ph / 2)
-            cr.show_text("too few rungs to tell one from the others")
-            return
+            # NOT AN EMPTY BOX WHILE A WALK IS RUNNING. This view
+            # reads each rung against the trend of the others, so
+            # until there are five there is no trend and it has
+            # nothing to say. A hand watching a rig climb was shown a
+            # grey rectangle for five rungs and then five lines at
+            # once -- and the whole point of handing rungs over as
+            # they arrive is to see them arrive. The fan needs two, so
+            # it stands in until this one can speak.
+            return self._draw_fan(cr, w, h, ml, mr, mt, mb, rungs)
         grid = ((self.parent.store.get(self.edit_pid) or {})
                 .get("measurement", {}).get("grid") or {}) \
             if self.edit_pid else {}
@@ -5071,6 +5076,19 @@ class MeasureWindow(Adw.Window):
                    "%.1f" % p.snr_db if p.snr_db is not None else "n/a",
                    thd, p.step))
 
+        # A REBUILD DOES NOT SEARCH. The search exists to find a level
+        # for a rig nothing is known about; when a rung is chosen,
+        # everything below it is already measured and the level is
+        # read off those rungs. Searching again spends five or six
+        # sweeps on ground already walked -- and worse, it MOVES the
+        # level, so the rungs kept and the rungs added would be about
+        # two different settings of the knob.
+        keep = self._map_pick
+        if keep:
+            got = level_run.rolled_back(self._map_rungs(), keep)
+            if got:
+                return self._walk_map(ch, about_to,
+                                      max(r["level"] for r in got), got)
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
             self.session.cfg.channels,
@@ -5096,44 +5114,55 @@ class MeasureWindow(Adw.Window):
             # must leave what was there alone.
             return None, None
         if not self._stop_asked:
-            try:
-                keep = self._map_pick
-                have = (level_run.rolled_back(
-                            self._map_rungs(), keep)
-                        if keep else None)
-                rungs = level_run.headroom_map(
-                    self.session.sink, self.session.source,
-                    self.session.cfg.channels,
-                    vol * 10.0 ** (-level_run.MAP_BELOW_DB / 60.0),
-                    sink_name=self.session.sink_ident["name"],
-                    analyze=self.mic_of[ch],
-                    sweep=self.session.sweep, freqs=self.session.freqs,
-                    pre_silence=self.session.cfg.pre_silence,
-                    post_silence=self.session.cfg.post_silence,
-                    play_map=self.session._channel_map(ch),
-                    on_level=lambda v, i: about_to(v, i),
-                    on_step=self._map_live,
-                    have=have,
-                    fine_from=vol,
-                    should_stop=lambda: self._stop_asked)
-            except level_run.SeatingChanged as e:
-                # NOT a failure and not a map: the rig moved between
-                # the kept rungs and now, so old and new would be
-                # about two different rigs. Say so and change nothing.
-                GLib.idle_add(self._say, str(e))
-                rungs = None
-            except (RuntimeError, ValueError, OSError):
-                # a profile without a map is a profile that cannot say
-                # where the rig runs out; nothing else about it changes
-                rungs = None
-            if rungs:
-                self.session.set_headroom(self.ch_keys[ch], rungs)
-                self._store_headroom(self.ch_keys[ch], rungs)
-                # the choice is spent: what it named has been measured
-                self._map_pick = None
-                self._map_partial = []
-                GLib.idle_add(self._sync_relevel)
+            self._walk_map(ch, about_to,
+                           vol * 10.0 ** (-level_run.MAP_BELOW_DB / 60.0),
+                           None, fine_from=vol)
         return vol, level_run.summary(vol, probes)
+
+    def _walk_map(self, ch, about_to, start, have, fine_from=None):
+        """The map itself. Returns (level, summary) so the search's
+        caller and the rebuild can share one exit.
+
+        A REBUILD ENTERS HERE DIRECTLY, without a search: the level is
+        already known from the rungs being kept.
+        """
+        try:
+            rungs = level_run.headroom_map(
+                self.session.sink, self.session.source,
+                self.session.cfg.channels, start,
+                sink_name=self.session.sink_ident["name"],
+                analyze=self.mic_of[ch],
+                sweep=self.session.sweep, freqs=self.session.freqs,
+                pre_silence=self.session.cfg.pre_silence,
+                post_silence=self.session.cfg.post_silence,
+                play_map=self.session._channel_map(ch),
+                on_level=lambda v, i: about_to(v, i),
+                on_step=self._map_live,
+                have=have,
+                fine_from=fine_from,
+                should_stop=lambda: self._stop_asked)
+        except level_run.SeatingChanged as e:
+            # NOT a failure and not a map: the rig moved between
+            # the kept rungs and now, so old and new would be
+            # about two different rigs. Say so and change nothing.
+            GLib.idle_add(self._say, str(e))
+            rungs = None
+        except (RuntimeError, ValueError, OSError):
+            # a profile without a map is a profile that cannot say
+            # where the rig runs out; nothing else about it changes
+            rungs = None
+        if rungs:
+            self.session.set_headroom(self.ch_keys[ch], rungs)
+            self._store_headroom(self.ch_keys[ch], rungs)
+            # the choice is spent: what it named has been measured
+            self._map_pick = None
+            self._map_partial = []
+            GLib.idle_add(self._sync_relevel)
+        got = level_run.working_level(
+            {self.ch_keys[ch]: rungs} if rungs else {},
+            (self.session.cfg.ppo if hasattr(self.session.cfg, "ppo")
+             else None))[0]
+        return got, None
 
     def _store_headroom(self, ch_key, rungs):
         """Write the map into the bound profile straight away.
