@@ -1058,9 +1058,25 @@ class MeasureWindow(Adw.Window):
         # squeezed eleven rungs into the bottom two thirds of it. The
         # range is taken from the bulk instead, and a line that leaves
         # it is simply drawn past the edge.
-        srt = sorted(vals)
-        y0 = srt[int(0.01 * (len(srt) - 1))] - 1.0
-        y1 = srt[int(0.99 * (len(srt) - 1))] + 1.0
+        # THE AXIS IS THE WALK'S OWN REACH, NOT THE DATA'S SPREAD.
+        # Taken from the data it was recomputed every frame, so every
+        # rung that landed stretched it and every line already drawn
+        # moved: watching a walk, the picture rescaled under the hand
+        # four or five times. Zero is the reference rung and the top
+        # is where the capture runs out -- both known from the first
+        # rung, both fixed for the rest of the walk, and the same on
+        # two channels of one rig so their pictures can be compared.
+        # A line that leaves it is drawn past the edge, as before.
+        pk = [r.get("peak_dbfs") for r in rungs]
+        ref_pk = base.get("peak_dbfs")
+        if ref_pk is not None and all(x is not None for x in pk):
+            y0 = min(-1.0, min(pk) - float(ref_pk) - 1.0)
+            y1 = max(y0 + 2.0,
+                     level_run.AUTO_PEAK_CEIL - float(ref_pk) + 1.0)
+        else:
+            srt = sorted(vals)
+            y0 = srt[int(0.01 * (len(srt) - 1))] - 1.0
+            y1 = srt[int(0.99 * (len(srt) - 1))] + 1.0
         lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
         n = max(len(row) for row in rows)
         grid = ((self.parent.store.get(self.edit_pid) or {})
@@ -1259,10 +1275,16 @@ class MeasureWindow(Adw.Window):
         g_lo = float(grid.get("f_lo") or FMIN_PLOT)
         ppo = float(grid.get("ppo") or 96.0)
         lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
-        flat = sorted(abs(x) for row in res for x in row if x is not None)
-        span = max(0.2, flat[int(0.995 * (len(flat) - 1))]) if flat else 1.0
         shelf = ph / max(1, len(res))
         bar = max(MAP_ODD_FLOOR_DB, level_run.ODD_K * floor)
+        # THE SHELF IS AS TALL AS THE BAR, and this is the same law as
+        # the fan's: a scale taken from the data means a clean walk is
+        # stretched to its own worst number. Six hundredths of a
+        # decibel then filled the shelf edge to edge and read as a
+        # fault -- his lightning. Against the bar, a line that stays
+        # inside its shelf IS the verdict, and one that leaves it is
+        # the finding; the rms printed on every shelf says by how far.
+        span = bar
         self._map_state_line(cr, ml, mt, pw_, rungs)
         for fhz in (100, 1000, 10000):
             gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_

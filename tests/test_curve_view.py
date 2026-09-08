@@ -1032,12 +1032,13 @@ def test_the_fan_picks_the_line_the_pointer_is_on():
     for k in range(len(rungs)):
         assert f._map_at(x, py(rows[k][i])) == k
 
-    # AND THE LADDER IS ADVERSARIAL, or this court has no teeth: the
-    # band arithmetic must answer otherwise on at least one line, and
-    # on this one it answers 2 where the eye is on 1
+    # AND THE LADDER IS ADVERSARIAL, or this court has no teeth: on an
+    # uneven ladder the band arithmetic must answer something other
+    # than the line the eye is on. Which rung it misses is a property
+    # of the axis, not of the defect, so it is not pinned here.
     band = [f._map_band(py(rows[k][i])) for k in range(len(rungs))]
-    assert band != list(range(len(rungs)))
-    assert band[1] == 2
+    assert band != list(range(len(rungs))), "the fixture is too even"
+    assert sum(b != k for k, b in enumerate(band)) >= 1
 
 
 def test_the_shelves_keep_their_bands():
@@ -1130,3 +1131,32 @@ def test_a_walk_owns_the_canvas():
     cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
     f._draw_map(None, cr, 700, 230)
     assert f._fan_geom is None
+
+
+def test_neither_picture_takes_its_scale_from_the_data():
+    """A clean walk was stretched to its own worst number, so
+    hundredths of a decibel filled the picture and every arriving rung
+    rescaled what was already drawn. The fan's axis is the walk's
+    reach and the shelves are as tall as the bar -- both known from
+    the first rung, neither moving after it.
+    """
+    import cairo
+    import copy
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+
+    def axis(rs):
+        f = map_window(rs, on=False)
+        cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
+        f._draw_map(None, cr, 700, 230)
+        _rows, _bin_at, py = f._fan_geom
+        return py(0.0), py(1.0)          # where zero and +1 dB land
+
+    was = axis(rungs)
+    # the same walk with a rung that departs by ten decibels: the axis
+    # may not follow it
+    bent = copy.deepcopy(rungs)
+    bent[4]["mag_db"] = [None if v is None else v - 10.0
+                         for v in bent[4]["mag_db"]]
+    assert axis(bent) == was
+    # and it does not creep as the walk arrives rung by rung
+    assert axis(rungs[:3]) == was
