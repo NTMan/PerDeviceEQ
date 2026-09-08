@@ -868,6 +868,20 @@ class MeasureWindow(Adw.Window):
         if area is not None:
             GLib.idle_add(area.queue_draw)
 
+    def _map_fine_from(self, ch=None):
+        """Where this channel's map turned from coarse to fine, or
+        None for a map walked before that was written down."""
+        store = getattr(self.parent, "store", None)
+        prof = (store.get(self.edit_pid)
+                if store is not None and self.edit_pid else None)
+        keys = self.ch_keys or []
+        k = self._selected_ch if ch is None else ch
+        if not (0 <= k < len(keys)):
+            return None
+        rec = level_run.passport_of(prof or {}).get(keys[k]) or {}
+        got = rec.get("fine_from")
+        return float(got) if got else None
+
     def _map_rungs(self):
         """This channel's rungs, quietest first, as they stand on
         disk."""
@@ -5109,16 +5123,29 @@ class MeasureWindow(Adw.Window):
         if keep:
             got = level_run.rolled_back(self._map_rungs(), keep)
             if got:
-                # AND THE REBUILD IS STEPPED LIKE THE WALK IT
-                # CONTINUES. From the kept top upward the fresh walk
-                # would be in its fine region, so that is where the
-                # fine step begins here too -- otherwise a rebuilt map
-                # has a different shape from the one it replaced, and
-                # his came back with twelve rungs where the original
-                # had seven.
+                # AND IT IS STEPPED LIKE THE WALK IT CONTINUES. The
+                # boundary between the coarse descent and the fine
+                # climb is the level the search settled at, and it is
+                # not recoverable from the rungs -- the first cut of
+                # this took the kept top instead, which is right only
+                # when the chosen rung is above the boundary. Choose
+                # one inside the coarse part and everything above it
+                # came back fine: seven rungs became twelve.
+                #
+                # So the walk records it, and a rebuild reads it. A
+                # map from before it was recorded is not rebuilt at
+                # all: half a shape is worse than saying so.
+                fine = self._map_fine_from()
+                if fine is None:
+                    GLib.idle_add(
+                        self._say,
+                        "this map was walked before its shape was "
+                        "recorded -- walk it again rather than "
+                        "rebuilding part of it")
+                    return None, None
                 keep_top = max(r["level"] for r in got)
                 return self._walk_map(ch, about_to, keep_top, got,
-                                      fine_from=keep_top)
+                                      fine_from=fine)
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
             self.session.cfg.channels,
@@ -5183,7 +5210,8 @@ class MeasureWindow(Adw.Window):
             rungs = None
         if rungs:
             self.session.set_headroom(self.ch_keys[ch], rungs)
-            self._store_headroom(self.ch_keys[ch], rungs)
+            self._store_headroom(self.ch_keys[ch], rungs,
+                                 fine_from=fine_from)
             # the choice is spent: what it named has been measured
             self._map_pick = None
             self._map_partial = []
@@ -5194,7 +5222,7 @@ class MeasureWindow(Adw.Window):
              else None))[0]
         return got, None
 
-    def _store_headroom(self, ch_key, rungs):
+    def _store_headroom(self, ch_key, rungs, fine_from=None):
         """Write the map into the bound profile straight away.
 
         A map used to reach the profile only when a whole measurement
@@ -5245,6 +5273,14 @@ class MeasureWindow(Adw.Window):
         src = self.session.source_ident or {}
         book[str(ch_key)] = {
             "rungs": list(rungs),
+            # WHERE THE FINE STEP BEGAN. A walk is coarse below the
+            # level the search settled at and fine above it, and that
+            # boundary is not recoverable from the rungs: a rebuild
+            # that guesses it walks a different shape. His map went
+            # from seven rungs to twelve when a rung inside the coarse
+            # part was chosen and everything above it came back fine.
+            "fine_from": (float(fine_from) if fine_from is not None
+                          else None),
             "walked_utc": datetime.now(timezone.utc).isoformat(
                 timespec="seconds").replace("+00:00", "Z"),
             # CONDITIONS, WRITTEN LIKE A TAKE'S. What can be read back

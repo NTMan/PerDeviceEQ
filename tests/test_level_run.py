@@ -1435,3 +1435,57 @@ def test_a_rebuild_does_not_measure_the_rung_it_kept(monkeypatch):
     lv = [round(r["level"], 6) for r in got]
     assert len(lv) == len(set(lv)), "a level was measured twice: %s" % lv
     assert lv[:2] == [round(r["level"], 6) for r in kept]
+
+
+def test_a_rebuild_from_inside_the_coarse_part_keeps_the_shape(
+        monkeypatch):
+    """His case. The boundary between the coarse descent and the fine
+    climb is the level the search settled at; a rebuild that guesses
+    it from the rungs it kept is right only when the chosen rung is
+    above the boundary. Choose one inside the coarse part and
+    everything above it comes back fine: seven rungs became twelve."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.12))
+    fine = 0.24
+    first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.12,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=12, fine_from=fine)
+    assert len(first) >= 5
+    # a rung inside the COARSE part -- below where the fine step began
+    coarse = [k for k, r in enumerate(first) if r["level"] < fine]
+    assert len(coarse) >= 2
+    keep = level_run.rolled_back(first, coarse[1])
+    again = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.12,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=12, have=keep,
+                                   fine_from=fine)
+    assert len(again) == len(first), \
+        "%d rungs became %d" % (len(first), len(again))
+    for a, b in zip(first, again):
+        assert abs(a["level"] - b["level"]) < 1e-6
+
+
+def test_guessing_the_boundary_from_the_kept_top_does_not_keep_it(
+        monkeypatch):
+    """Why the boundary has to be recorded rather than inferred: the
+    first cut of this used the kept top, and this is what that does."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.12))
+    fine = 0.24
+    first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.12,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=12, fine_from=fine)
+    coarse = [k for k, r in enumerate(first) if r["level"] < fine]
+    keep = level_run.rolled_back(first, coarse[1])
+    top = max(r["level"] for r in keep)
+    guessed = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
+                                     0.12, sink_name="x", freqs=freqs,
+                                     max_rungs=12, have=keep,
+                                     fine_from=top)
+    # the count is capped by the rung budget either way; what the bad
+    # guess costs is REACH -- the same twelve sweeps spent on a third
+    # of the ground, so the map stops far below where the rig does
+    assert (max(r["level"] for r in guessed)
+            < 0.7 * max(r["level"] for r in first))
