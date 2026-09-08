@@ -602,10 +602,14 @@ def test_the_map_climbs_past_the_border_rather_than_closing_on_it():
         lv = sorted(r["level"] for r in rungs)
         # it did not stop at the border it found around 55%
         assert lv[-1] > 0.80
-        # and the rungs are an even ladder, so the border is located
-        # to one step without any closing in
+        # and above the descent the rungs are an even ladder, so the
+        # border is located to one step without any closing in. The
+        # first strides are the descent and are deliberately coarse:
+        # they exist to reach where a listener plays and to give the
+        # reading a quiet reference, not to resolve anything.
         steps = [60.0 * math.log10(b / a) for a, b in zip(lv, lv[1:])]
-        assert max(steps) - min(steps) < 0.3
+        fine = steps[level_run.MAP_DOWN_STEPS:]
+        assert max(fine) - min(fine) < 0.3
     finally:
         level_run._play_rung = real_rung
         level_run.pw_backend.backend = real_backend
@@ -1371,28 +1375,41 @@ def test_the_descent_is_coarse_and_the_climb_is_fine(monkeypatch):
     played = []
     _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.2))
     level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.2,
-                           sink_name="x", freqs=freqs, max_rungs=8,
-                           fine_from=0.4)
-    pairs = [(a, round(60 * math.log10(b / a), 1))
+                           sink_name="x", freqs=freqs, max_rungs=8)
+    pairs = [round(60 * math.log10(b / a), 1)
              for a, b in zip(played, played[1:]) if b > a]
-    below = [d for a, d in pairs if a < 0.4]
-    above = [d for a, d in pairs if a >= 0.4]
-    assert below and all(d >= level_run.MAP_DOWN_STEP_DB - 0.1
-                         for d in below)
-    assert above and all(d <= level_run.MAP_STEP_DB + 0.1
-                         for d in above)
+    coarse = pairs[:level_run.MAP_DOWN_STEPS]
+    fine = pairs[level_run.MAP_DOWN_STEPS:]
+    assert coarse and all(d >= level_run.MAP_DOWN_STEP_DB - 0.1
+                          for d in coarse)
+    assert fine and all(d <= level_run.MAP_STEP_DB + 0.1 for d in fine)
 
 
-def test_without_a_mark_every_step_is_the_fine_one(monkeypatch):
+def test_the_boundary_is_counted_and_not_compared(monkeypatch):
+    """The walk came back 12.2, 15.4, 19.4, 24.4, 26.3 -- three coarse
+    strides and one fine rung before the ceiling -- while the walk
+    before it, same rig, had four fine ones. The descent used to end
+    where the level passed the one the search settled at, and with a
+    12 dB descent in 6 dB strides the third rung lands EXACTLY there:
+    which side of it a float falls on decided the shape of the map.
+
+    Counted, the answer cannot depend on where the search sat."""
     freqs = np.array([100.0, 1000.0, 10000.0])
-    played = []
-    _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.2))
-    level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.2,
-                           sink_name="x", freqs=freqs, max_rungs=6)
-    steps = [round(60 * math.log10(b / a), 1)
-             for a, b in zip(played, played[1:]) if b > a]
-    assert steps and all(d <= level_run.MAP_STEP_DB + 0.1
-                         for d in steps)
+    seen = []
+    for start in (0.2, 0.2001, 0.19999, 0.31, 0.117):
+        played = []
+        _fake_backend(monkeypatch, _rig(played, head_db=40.0,
+                                        start=start))
+        level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, start,
+                               sink_name="x", freqs=freqs, max_rungs=9)
+        pairs = [round(60 * math.log10(b / a), 1)
+                 for a, b in zip(played, played[1:]) if b > a]
+        seen.append(pairs[:level_run.MAP_DOWN_STEPS + 1])
+    for got in seen:
+        assert got[:level_run.MAP_DOWN_STEPS] == \
+            [level_run.MAP_DOWN_STEP_DB] * level_run.MAP_DOWN_STEPS
+        assert got[level_run.MAP_DOWN_STEPS] <= level_run.MAP_STEP_DB
+    assert len({tuple(g) for g in seen}) == 1
 
 
 def test_an_uneven_ladder_does_not_flag_its_own_handover():
@@ -1447,49 +1464,46 @@ def test_a_rebuild_from_inside_the_coarse_part_keeps_the_shape(
     freqs = np.array([100.0, 1000.0, 10000.0])
     played = []
     _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.12))
-    fine = 0.24
     first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.12,
                                    sink_name="x", freqs=freqs,
-                                   max_rungs=12, fine_from=fine)
+                                   max_rungs=12)
     assert len(first) >= 5
-    # a rung inside the COARSE part -- below where the fine step began
-    coarse = [k for k, r in enumerate(first) if r["level"] < fine]
-    assert len(coarse) >= 2
-    keep = level_run.rolled_back(first, coarse[1])
+    # a rung inside the COARSE part
+    keep = level_run.rolled_back(first, level_run.MAP_DOWN_STEPS)
     again = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.12,
                                    sink_name="x", freqs=freqs,
-                                   max_rungs=12, have=keep,
-                                   fine_from=fine)
+                                   max_rungs=12, have=keep)
     assert len(again) == len(first), \
         "%d rungs became %d" % (len(first), len(again))
     for a, b in zip(first, again):
-        assert abs(a["level"] - b["level"]) < 1e-6
+        assert abs(a["level"] - b["level"]) < 2e-4
 
 
-def test_guessing_the_boundary_from_the_kept_top_does_not_keep_it(
-        monkeypatch):
-    """Why the boundary has to be recorded rather than inferred: the
-    first cut of this used the kept top, and this is what that does."""
+def test_a_rebuild_keeps_the_shape_wherever_it_starts(monkeypatch):
+    """Coarse or fine follows from a rung's POSITION, so a rebuild
+    from any rung -- inside the coarse part or above it -- lands on
+    the same ladder. Two earlier cuts passed a boundary LEVEL here,
+    one guessed and one recorded, and both were answering a question
+    a count does not raise."""
     freqs = np.array([100.0, 1000.0, 10000.0])
     played = []
     _fake_backend(monkeypatch, _rig(played, head_db=40.0, start=0.12))
-    fine = 0.24
     first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.12,
                                    sink_name="x", freqs=freqs,
-                                   max_rungs=12, fine_from=fine)
-    coarse = [k for k, r in enumerate(first) if r["level"] < fine]
-    keep = level_run.rolled_back(first, coarse[1])
-    top = max(r["level"] for r in keep)
-    guessed = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2,
-                                     0.12, sink_name="x", freqs=freqs,
-                                     max_rungs=12, have=keep,
-                                     fine_from=top)
-    # the count is capped by the rung budget either way; what the bad
-    # guess costs is REACH -- the same twelve sweeps spent on a third
-    # of the ground, so the map stops far below where the rig does
-    assert (max(r["level"] for r in guessed)
-            < 0.7 * max(r["level"] for r in first))
-
+                                   max_rungs=12)
+    for keep_n in (1, 2, 3, len(first) - 1):
+        keep = level_run.rolled_back(first, keep_n)
+        again = level_run.headroom_map(
+            {"name": "x"}, {"name": "y"}, 2, 0.12, sink_name="x",
+            freqs=freqs, max_rungs=12, have=keep)
+        assert len(again) == len(first), \
+            "from %d kept: %d rungs became %d" % (keep_n, len(first),
+                                                  len(again))
+        for a, b in zip(first, again):
+            # levels are stored rounded, and the walk re-derives them
+            # from the kept ones -- a ten-thousandth is the grid, not
+            # a difference in shape
+            assert abs(a["level"] - b["level"]) < 2e-4
 
 def test_every_sweep_of_a_walk_is_announced_first(monkeypatch):
     """A level is worth knowing while it can still be refused, so the

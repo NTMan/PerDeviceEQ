@@ -350,6 +350,18 @@ MAP_MAX_RUNGS = 12
 # on his rigs covers where he listens and leaves room under it.
 MAP_BELOW_DB = 12.0
 MAP_DOWN_STEP_DB = 6.0   # the descent's step, three times the climb's
+# HOW MANY OF THEM, counted rather than compared. The descent used to
+# end where the level passed the one the search settled at, and with
+# a 12 dB descent in 6 dB strides the third rung lands EXACTLY on that
+# level: which side of it the comparison falls on is decided by the
+# last bit of a float. One walk came back 12.2, 15.4, 19.4, 24.4, 26.3
+# -- three coarse strides and a single fine one before the capture
+# ceiling -- and the walk before it, from the same rig, had four fine
+# rungs. A coin toss, not a rig.
+#
+# The count says the same thing and cannot be ambiguous: two strides
+# down, everything after them fine.
+MAP_DOWN_STEPS = 2
 
 
 PASSPORT = "passport"    # where a map lives in a profile, one record
@@ -811,16 +823,19 @@ def maps_of(prof):
 PASSPORT_LEGACY_SID = "headroom"
 
 
-def _next_step_db(exact, v, from_peak, fine_from, step_db,
+def _next_step_db(exact, v, from_peak, taken, step_db,
                   stop_peak_dbfs):
     """How much louder the next rung asks for, in decibels.
 
-    Shared by the loop and by the first rung of a rebuild, so a
-    rebuilt map is stepped exactly like a fresh one rather than by
-    whatever the caller guessed.
+    `taken` is how many rungs the ladder already holds, which is what
+    decides coarse from fine: the first MAP_DOWN_STEPS strides cover
+    the descent and everything above them is walked finely. Shared by
+    the loop and by the first rung of a rebuild, so a rebuilt map is
+    stepped exactly like a fresh one -- and because the rule is
+    positional, a rebuild needs nothing recorded to know where it is.
     """
     step = float(step_db)
-    if fine_from is not None and v < fine_from:
+    if taken is not None and taken <= MAP_DOWN_STEPS:
         step = max(step, MAP_DOWN_STEP_DB)
     ratio = 2.0
     if len(exact) >= 2:
@@ -832,7 +847,7 @@ def _next_step_db(exact, v, from_peak, fine_from, step_db,
     return min(step, room)
 
 
-def _first_step(exact, v, fine_from, step_db, stop_peak_dbfs):
+def _first_step(exact, v, taken, step_db, stop_peak_dbfs):
     """The step off a kept rung, using that rung's own peak."""
     from_peak = None
     for lv, pk in exact:
@@ -841,7 +856,7 @@ def _first_step(exact, v, fine_from, step_db, stop_peak_dbfs):
     if from_peak is None:
         from_peak = exact[-1][1] if exact else stop_peak_dbfs
     return max(MIN_READABLE_STEP,
-               _next_step_db(exact, v, from_peak, fine_from, step_db,
+               _next_step_db(exact, v, from_peak, taken, step_db,
                              stop_peak_dbfs))
 
 
@@ -851,7 +866,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                  on_level=None, should_stop=None, on_rung=None,
                  on_step=None,
                  stop_peak_dbfs=AUTO_PEAK_CEIL, step_db=MAP_STEP_DB,
-                 max_rungs=MAP_MAX_RUNGS, have=None, fine_from=None):
+                 max_rungs=MAP_MAX_RUNGS, have=None):
     """Climb from the level the search settled at, keeping what each
     rung bought -- the map of where this rig stops answering.
 
@@ -932,7 +947,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         # and append it: his rebuilt map came back with two rungs at
         # 12%. The step is chosen the same way every other step is,
         # once, before the loop begins.
-        v = _clamp(v * 10.0 ** (_first_step(exact, v, fine_from,
+        v = _clamp(v * 10.0 ** (_first_step(exact, v, len(rungs),
                                             step_db, stop_peak_dbfs)
                                 / 60.0))
     # WHAT STOPPED THE WALK. It never stops because the rig gave out
@@ -1109,7 +1124,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             for lv, pk in exact:
                 if abs(lv - v) < 1e-9:
                     from_peak = pk
-            take = _next_step_db(exact, v, from_peak, fine_from,
+            take = _next_step_db(exact, v, from_peak, len(rungs),
                                  step_db, stop_peak_dbfs)
             if take < MIN_READABLE_STEP:
                 stopped = "capture"
