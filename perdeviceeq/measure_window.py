@@ -439,6 +439,7 @@ class MeasureWindow(Adw.Window):
         # rungs follow it now.
         self._map_hover = None
         self._map_odd = None
+        self._map_partial = []
         pick = Gtk.GestureClick()
         pick.set_button(1)
         pick.connect("released", self._on_map_pick)
@@ -851,6 +852,22 @@ class MeasureWindow(Adw.Window):
             "measured again"
             % (round(100.0 * got[k]["level"]) if k < len(got) else 0, k))
 
+    def _map_live(self, rungs):
+        """The rungs a walk has taken SO FAR, for drawing.
+
+        They are not on disk and they are not a map yet -- the walk
+        may still be stopped or refuse to be built on -- so they live
+        for the length of the walk and no longer. What they buy is the
+        minute a hand used to spend watching a blank canvas and a
+        status line, unable to see a rung go wrong until every rung
+        was already spent.
+        """
+        self._map_partial = list(rungs or [])
+        self._map_odd = None
+        area = getattr(self, "map_area", None)
+        if area is not None:
+            GLib.idle_add(area.queue_draw)
+
     def _map_rungs(self):
         """This channel's rungs, quietest first, as they stand on
         disk."""
@@ -860,7 +877,12 @@ class MeasureWindow(Adw.Window):
         keys = self.ch_keys or []
         if not (0 <= self._selected_ch < len(keys)):
             return []
-        got = level_run.maps_of(prof or {}).get(keys[self._selected_ch])
+        # A WALK IN PROGRESS OUTRANKS WHAT IS ON DISK, for as long as
+        # it runs: the canvas should show the rungs being taken, not
+        # the ones the last walk left.
+        got = (self._map_partial if self._busy and self._map_partial
+               else level_run.maps_of(prof or {})
+               .get(keys[self._selected_ch]))
         return sorted(got or [], key=lambda r: r["level"])
 
     def _draw_map(self, _area, cr, w, h, *_):
@@ -902,7 +924,7 @@ class MeasureWindow(Adw.Window):
                          "one rung: a map needs a second to say "
                          "anything")
             return
-        base = rungs[0]
+        base = self._map_ref(rungs)
         mute = self._map_mask(base)
         rows = []
         for r in rungs:
@@ -914,10 +936,34 @@ class MeasureWindow(Adw.Window):
                            or (i < len(mute) and mute[i]) else x - b)
             rows.append(row)
         vals = [v for row in rows for v in row if v is not None]
-        if not vals:
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
-            cr.move_to(ml + 8, mt + ph / 2)
-            cr.show_text("the base rung was not heard anywhere")
+        # HOW MUCH OF THE BAND SURVIVED THE MASK, and a word when
+        # almost none of it did. Every line here is a difference
+        # against the quietest rung, so where that rung was not heard
+        # there is nothing to divide by -- and a walk whose base was
+        # barely audible therefore draws almost nothing, which looks
+        # exactly like a broken canvas. His Liberty 5 walked from 38%
+        # of a Bluetooth knob and its base stood clear of its own
+        # noise at ten bins out of 958: the fan came back blank with
+        # two stubs at the top of the band and said nothing about why.
+        #
+        # The check view has no such dependence -- it reads each rung
+        # against the trend of the others and needs no reference rung
+        # at all -- so the word points there rather than shrugging.
+        wide = max((len(row) for row in rows), default=0)
+        span = len(vals) / float(max(1, len(rows) * wide))
+        if not vals or span < 0.05:
+            cr.set_source_rgba(0.85, 0.45, 0.10, 0.95)
+            said = self._wrapped(
+                cr, "The quietest rung was heard at %d%% of the band, "
+                    "so there is nothing here to draw against. The "
+                    "check view needs no reference rung and draws "
+                    "this walk in full." % round(100 * span),
+                pw_ - 16)
+            y = mt + ph / 2 - (len(said) - 1) * 7
+            for line in said:
+                cr.move_to(ml + 8, y)
+                cr.show_text(line)
+                y += 14
             return
         # THE EDGES OF THE GRID ARE NOT THE PICTURE. A single bin at
         # 20 kHz, where the response is falling off a cliff and the
@@ -944,6 +990,22 @@ class MeasureWindow(Adw.Window):
             return mt + ph - (v - y0) / max(1e-9, y1 - y0) * ph
 
         self._map_state_line(cr, ml, mt, pw_, rungs)
+        # WHERE THE MASK TOOK THE BAND, shaded. Without it the lines
+        # come back in pieces and the eye reads a broken renderer
+        # rather than a reference that was not heard: on his Liberty's
+        # FR only 292 bins of 958 kept a scatter, so the fan drew as
+        # islands with nothing to say why.
+        run = None
+        for i in range(n + 1):
+            bad = i < n and i < len(mute) and mute[i]
+            if bad and run is None:
+                run = i
+            elif not bad and run is not None:
+                x0, x1 = px(run), px(i - 1)
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
+                cr.rectangle(x0, mt, max(1.0, x1 - x0), ph)
+                cr.fill()
+                run = None
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.35)
         cr.set_line_width(1)
         for fhz in (100, 1000, 10000):
@@ -1181,6 +1243,24 @@ class MeasureWindow(Adw.Window):
         "asked": "UNFINISHED: stopped by hand",
     }
 
+    @staticmethod
+    def _wrapped(cr, text, width):
+        """Break text to fit a width. Cairo has no idea what a line
+        is, so a sentence written straight out runs off the canvas and
+        is simply cut -- which is what happened to the one explaining
+        why the canvas was empty."""
+        out, line = [], ""
+        for word in text.split():
+            trial = (line + " " + word).strip()
+            if line and cr.text_extents(trial)[4] > width:
+                out.append(line)
+                line = word
+            else:
+                line = trial
+        if line:
+            out.append(line)
+        return out
+
     def _map_state_line(self, cr, ml, mt, pw_, rungs):
         """Say whether this map is finished, in the corner of the
         plot.
@@ -1204,6 +1284,52 @@ class MeasureWindow(Adw.Window):
                   "it stopped"))
         cr.restore()
 
+    REF_HEARD = 0.9          # of the band, before a rung may be the
+                             # one everything else is drawn against
+
+    def _map_ref(self, rungs):
+        """The rung to draw everything else against.
+
+        NOT SIMPLY THE QUIETEST, which is what this drew at first and
+        what emptied the canvas. Every line here is a difference, so
+        wherever the reference was not heard there is nothing to
+        subtract -- and the quietest rung of a walk is the one least
+        likely to have been heard anywhere. His Liberty 5 walked from
+        38% of a Bluetooth knob and that rung stood clear of its own
+        noise on ONE per cent of the band for FL and thirty for FR,
+        while its 56% rung was heard on ninety-nine. Drawn against the
+        first, the fan was a blank with two stubs; against the second
+        it is a fan.
+
+        So the reference is the QUIETEST RUNG THAT WAS ACTUALLY
+        HEARD, over REF_HEARD of the band. The walk itself already
+        chooses its base this way -- the quietest rung audible over a
+        quarter of the band -- and the drawing simply never followed.
+
+        Rungs below the reference now draw NEGATIVE, which is correct
+        and was always true: they are quieter than it.
+
+        If nothing reaches the bar the widest-heard rung is taken,
+        because a poor reference still beats none; if no rung records
+        what its noise was, the quietest is used as before.
+        """
+        best, cover = None, -1.0
+        for r in rungs:
+            off = r.get("heard_offset_db")
+            mag = r.get("mag_db") or []
+            if off is None or not mag:
+                continue
+            got = [x for x in mag if x is not None]
+            if not got:
+                continue
+            frac = sum(1 for x in got if x - float(off)
+                       > level_run.HEARD_OVER_NOISE_DB) / float(len(got))
+            if frac >= self.REF_HEARD:
+                return r                     # quietest that clears it
+            if frac > cover:
+                best, cover = r, frac
+        return best or rungs[0]
+
     def _map_mask(self, base):
         """True where the base rung disagreed with itself by more than
         MAP_MUTE_DB, judged over a third of an octave: one bin of a
@@ -1212,8 +1338,15 @@ class MeasureWindow(Adw.Window):
         distortion strip made and had to unlearn."""
         sc = base.get("scatter_db")
         mag = base.get("mag_db") or []
+        off = base.get("heard_offset_db")
         if not sc:
-            return [False] * len(mag)
+            # a rung that is not the walk's own base carries no
+            # scatter; what it can be judged on is whether it was
+            # heard at all
+            if off is None:
+                return [False] * len(mag)
+            return [x is None or x - float(off)
+                    <= level_run.HEARD_OVER_NOISE_DB for x in mag]
         w = 33
         out = []
         for i in range(len(sc)):
@@ -4979,6 +5112,7 @@ class MeasureWindow(Adw.Window):
                     post_silence=self.session.cfg.post_silence,
                     play_map=self.session._channel_map(ch),
                     on_level=lambda v, i: about_to(v, i),
+                    on_step=self._map_live,
                     have=have,
                     should_stop=lambda: self._stop_asked)
             except level_run.SeatingChanged as e:
@@ -4996,6 +5130,7 @@ class MeasureWindow(Adw.Window):
                 self._store_headroom(self.ch_keys[ch], rungs)
                 # the choice is spent: what it named has been measured
                 self._map_pick = None
+                self._map_partial = []
                 GLib.idle_add(self._sync_relevel)
         return vol, level_run.summary(vol, probes)
 
