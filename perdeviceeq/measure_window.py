@@ -906,12 +906,22 @@ class MeasureWindow(Adw.Window):
         line is still a line and this one reads as bass.
         """
         ml, mr, mt, mb = 34, 40, 8, 16
-        pw_ = max(1, w - ml - mr)
-        ph = max(1, h - mt - mb)
         rungs = self._map_rungs()
         btn = getattr(self, "map_view", None)
         if btn is not None and btn.get_active():
             return self._draw_check(cr, w, h, ml, mr, mt, mb, rungs)
+        return self._draw_fan(cr, w, h, ml, mr, mt, mb, rungs)
+
+    def _draw_fan(self, cr, w, h, ml, mr, mt, mb, rungs):
+        """One line per rung, each against the quietest that was
+        HEARD.
+
+        Two rungs are enough to draw, which is why the check view
+        borrows this while a walk is still short of the five its own
+        reading needs.
+        """
+        pw_ = max(1, w - ml - mr)
+        ph = max(1, h - mt - mb)
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
         cr.rectangle(ml, mt, pw_, ph)
         cr.fill()
@@ -5099,8 +5109,16 @@ class MeasureWindow(Adw.Window):
         if keep:
             got = level_run.rolled_back(self._map_rungs(), keep)
             if got:
-                return self._walk_map(ch, about_to,
-                                      max(r["level"] for r in got), got)
+                # AND THE REBUILD IS STEPPED LIKE THE WALK IT
+                # CONTINUES. From the kept top upward the fresh walk
+                # would be in its fine region, so that is where the
+                # fine step begins here too -- otherwise a rebuilt map
+                # has a different shape from the one it replaced, and
+                # his came back with twelve rungs where the original
+                # had seven.
+                keep_top = max(r["level"] for r in got)
+                return self._walk_map(ch, about_to, keep_top, got,
+                                      fine_from=keep_top)
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
             self.session.cfg.channels,

@@ -811,6 +811,40 @@ def maps_of(prof):
 PASSPORT_LEGACY_SID = "headroom"
 
 
+def _next_step_db(exact, v, from_peak, fine_from, step_db,
+                  stop_peak_dbfs):
+    """How much louder the next rung asks for, in decibels.
+
+    Shared by the loop and by the first rung of a rebuild, so a
+    rebuilt map is stepped exactly like a fresh one rather than by
+    whatever the caller guessed.
+    """
+    step = float(step_db)
+    if fine_from is not None and v < fine_from:
+        step = max(step, MAP_DOWN_STEP_DB)
+    ratio = 2.0
+    if len(exact) >= 2:
+        (lv0, pk0), (lv1, pk1) = exact[-2], exact[-1]
+        knob = 60.0 * math.log10(lv1 / lv0)
+        if knob > 0.5:
+            ratio = max(1.0, (pk1 - pk0) / knob)
+    room = (stop_peak_dbfs - from_peak) / max(ratio, 1e-6)
+    return min(step, room)
+
+
+def _first_step(exact, v, fine_from, step_db, stop_peak_dbfs):
+    """The step off a kept rung, using that rung's own peak."""
+    from_peak = None
+    for lv, pk in exact:
+        if abs(lv - v) < 1e-9:
+            from_peak = pk
+    if from_peak is None:
+        from_peak = exact[-1][1] if exact else stop_peak_dbfs
+    return max(MIN_READABLE_STEP,
+               _next_step_db(exact, v, from_peak, fine_from, step_db,
+                             stop_peak_dbfs))
+
+
 def headroom_map(sink, source, channels, start_volume, sink_name=None,
                  analyze=0, sweep=None, freqs=None,
                  pre_silence=None, post_silence=None, play_map=None,
@@ -865,7 +899,6 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
              if r.get("peak_dbfs") is not None]
     scatter = None          # the base rung against a repeat of itself
     v = _clamp(start_volume)
-    step = float(step_db)
     if rungs:
         # REBUILDING FROM A CHOSEN RUNG. Everything at or above it was
         # dropped by the caller; the walk climbs on from the highest
@@ -884,6 +917,15 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         if again is not None:
             _check_seating(top, again)
         max_rungs = max(0, int(max_rungs) - len(rungs))
+        # AND THE FIRST NEW RUNG GOES ABOVE THE KEPT ONE, not on top
+        # of it. The loop plays wherever v stands, so seeding v with
+        # the kept top made the walk measure that level a second time
+        # and append it: his rebuilt map came back with two rungs at
+        # 12%. The step is chosen the same way every other step is,
+        # once, before the loop begins.
+        v = _clamp(v * 10.0 ** (_first_step(exact, v, fine_from,
+                                            step_db, stop_peak_dbfs)
+                                / 60.0))
     # WHAT STOPPED THE WALK. It never stops because the rig gave out
     # -- a map does not bracket, it climbs past a ceiling on purpose,
     # since the rungs above one are where the loss grows. So the
@@ -1052,36 +1094,14 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             #
             # It reads EASIER, not harder: every rung is judged
             # against the base, so a bigger step is a bigger ask.
-            step = float(step_db)
-            if fine_from is not None and v < fine_from:
-                step = max(step, MAP_DOWN_STEP_DB)
             # the peak follows the level one for one, so the walk
             # knows before it plays where a step would land
             from_peak = peak_db
             for lv, pk in exact:
                 if abs(lv - v) < 1e-9:
                     from_peak = pk
-            # A KNOB DECIBEL IS NOT A DECIBEL. On a sink with a scale
-            # of its own the delivered gain outruns the asked one: his
-            # JBL answers AVRCP's 128 steps and arrived 7.0 dB louder
-            # for 4.1 asked, 1.72 to one. A wall that predicts the
-            # landing from the knob therefore lands somewhere else,
-            # and the bolder the stride the worse the overshoot --
-            # two of his rigs came back at 0.0 dBFS, clipped, from a
-            # step the wall had computed to reach exactly -2.0.
-            #
-            # So the walk measures the ratio as it goes and predicts
-            # with it. Before there is one to measure it assumes the
-            # worst it has ever seen, which is a measurement too:
-            # 1.72 on his Bluetooth walks, rounded up.
-            ratio = 2.0
-            if len(exact) >= 2:
-                (lv0, pk0), (lv1, pk1) = exact[-2], exact[-1]
-                knob = 60.0 * math.log10(lv1 / lv0)
-                if knob > 0.5:
-                    ratio = max(1.0, (pk1 - pk0) / knob)
-            room = (stop_peak_dbfs - from_peak) / max(ratio, 1e-6)
-            take = min(step, room)
+            take = _next_step_db(exact, v, from_peak, fine_from,
+                                 step_db, stop_peak_dbfs)
             if take < MIN_READABLE_STEP:
                 stopped = "capture"
                 break

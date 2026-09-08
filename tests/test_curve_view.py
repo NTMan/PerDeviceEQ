@@ -7,6 +7,8 @@ suite let two field breakages through in one night -- this is the
 answer to that, and it needs no xvfb."""
 
 import math
+import os
+
 import numpy as np
 
 from perdeviceeq import curve_view as cv
@@ -924,3 +926,76 @@ def test_the_base_rung_has_to_be_heard_itself():
                  (0.38, 0.90)]) == 0.35
     # and one that is audible from the start keeps its first rung
     assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41
+
+
+def test_every_map_view_draws_without_gtk():
+    """A call to a method that was never written passes pyflakes and
+    every court here, and fails the moment a canvas repaints: a rename
+    left _draw_map calling a _draw_fan that did not exist, and the
+    window died on the first redraw. Nothing exercised the drawing at
+    all.
+
+    This does: it runs each view on a plain cairo surface, with the
+    rungs a walk actually produces.
+    """
+    import math
+    import re
+    import types
+    import cairo
+    import numpy as np
+    from perdeviceeq import level_run
+
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "perdeviceeq",
+        "measure_window.py")).read()
+
+    def grab(name):
+        m = re.search(r"\n    (?:@staticmethod\n    )?def %s\(.*?"
+                      r"(?=\n    (?:@staticmethod|def|_MAP_ENDS|"
+                      r"REF_HEARD))" % name, src, re.S)
+        assert m, "%s is not defined at all" % name
+        return m.group(0)
+
+    ns = {"math": math, "np": np, "level_run": level_run,
+          "FMIN_PLOT": 20.0, "FMAX_PLOT": 20000.0,
+          "MAP_MUTE_DB": 1.0, "MAP_ODD_FLOOR_DB": 0.15, "MAP_H": 230}
+    body = "".join(grab(n) for n in (
+        "_map_rungs", "_wrapped", "_map_state_line", "_map_ref",
+        "_map_mask", "_draw_map", "_draw_fan", "_draw_check"))
+    body += ("\n    _MAP_ENDS = " +
+             re.search(r"_MAP_ENDS = (\{.*?\})", src, re.S).group(1) +
+             "\n    REF_HEARD = 0.9\n")
+    exec("class Fake:\n" + body, ns)
+
+    n = 200
+    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
+    rungs = []
+    for j in range(7):
+        r = {"level": 0.12 * 10.0 ** (j * 2.0 / 60.0),
+             "peak_dbfs": -30.0 + j * 2.0,
+             "heard_offset_db": -40.0,
+             "mag_db": [j * 2.0 + s for s in slope],
+             "stopped_by": "capture" if j == 6 else None}
+        if j == 0:
+            r["scatter_db"] = [0.1] * n
+        rungs.append(r)
+    prof = {"passport": {"FL": {"rungs": rungs}},
+            "measurement": {"grid": {"f_lo": 20.0, "ppo": 96}}}
+
+    for on in (False, True):
+        for k in (0, 3, 7):
+            f = ns["Fake"]()
+            f.ch_keys = ["FL"]
+            f._selected_ch = 0
+            f.edit_pid = "p"
+            f._map_pick = 2
+            f._map_hover = 1
+            f._map_odd = None
+            f._busy = False
+            f._map_partial = rungs[:k]
+            f.map_view = types.SimpleNamespace(get_active=lambda: on)
+            f.parent = types.SimpleNamespace(
+                store=types.SimpleNamespace(get=lambda _p: prof))
+            surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230)
+            cr = cairo.Context(surf)
+            f._draw_map(None, cr, 700, 230)

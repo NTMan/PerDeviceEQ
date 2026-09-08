@@ -1416,3 +1416,22 @@ def test_a_rung_with_no_peak_leaves_the_reading_unmade():
     got = _ladder(k=7)
     got[3]["peak_dbfs"] = None
     assert level_run.odd_rung_out(got) == ([], 0.0)
+
+
+def test_a_rebuild_does_not_measure_the_rung_it_kept(monkeypatch):
+    """The loop plays wherever v stands, and seeding v with the kept
+    top made the walk measure that level a second time and append it:
+    his rebuilt map came back with two rungs at 12%."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played))
+    first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=5)
+    kept = level_run.rolled_back(first, 2)
+    got = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                 sink_name="x", freqs=freqs,
+                                 max_rungs=5, have=kept)
+    lv = [round(r["level"], 6) for r in got]
+    assert len(lv) == len(set(lv)), "a level was measured twice: %s" % lv
+    assert lv[:2] == [round(r["level"], 6) for r in kept]
