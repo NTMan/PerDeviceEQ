@@ -40,6 +40,7 @@ measure window must never gate code anywhere else.
 
 import sys
 import threading
+import time
 import traceback
 from abc import ABC, abstractmethod
 
@@ -181,7 +182,72 @@ class AudioBackend(ABC):
                 self._push_mute(sink, False)
             if measure_cubic is not None:
                 self._push_volume(sink, measure_cubic)
+            # AND IT DOES NOT RETURN UNTIL IT IS IN FORCE. Every push
+            # above is a metadata write the server applies when it
+            # gets to it, and this returned the instant they were
+            # SENT -- so a caller could start a sweep into a sink that
+            # still wore its correction.
+            #
+            # That is not a theory. One rung of a walk came back 26 dB
+            # quiet, and subtracting the profile's own correction
+            # curve from the shortfall halved its spread and flattened
+            # its tilt: the sweep had been played through the EQ. It
+            # was his recollection that put us onto it -- the same
+            # thing happened once before, when the bypass was a
+            # separate toggle rather than this.
+            #
+            # The takes waited for the volume and nothing waited for
+            # the graph; the map's rungs waited for neither. Waiting
+            # here covers both, because both come through this door.
+            #
+            # The wait is NOT recorded in the evidence dict. That dict
+            # is a contract two courts compare whole, and a duration
+            # differs on every run -- a number that cannot be equal to
+            # itself does not belong in a record whose job is to be
+            # compared.
+            self._await_moratorium(sink, measure_cubic,
+                                   restore["graph"] is not None)
             return state
+
+    # how long to wait for the pushes above to be visible on the
+    # server. A sweep is twenty seconds and a metadata write is
+    # milliseconds, so this is generous by two orders and still
+    # cheaper than one ruined rung
+    SETTLE_TIMEOUT_S = 1.5
+    SETTLE_POLL_S = 0.01
+
+    def _await_moratorium(self, sink, measure_cubic, had_graph):
+        """Block until the server shows the moratorium in force, or
+        the timeout runs out.
+
+        NOT AN ERROR ON TIMEOUT. A backend that cannot read one of
+        these back would otherwise refuse every measurement, and the
+        old behaviour -- not waiting at all -- is what this replaces:
+        a bounded wait that sometimes gives up is strictly better than
+        no wait, and the base rung's own check catches what slips
+        through.
+        """
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < self.SETTLE_TIMEOUT_S:
+            ok = True
+            if had_graph:
+                try:
+                    value, _src = self._read_graph(sink)
+                except Exception:
+                    value = None
+                ok = ok and not value
+            if ok and measure_cubic is not None:
+                try:
+                    now = self._read_volume(sink)
+                except Exception:
+                    now = None
+                # the server rounds; a hundredth of a cubic step is
+                # far below anything a rung can tell apart
+                ok = ok and (now is not None
+                             and abs(now - measure_cubic) <= 0.01)
+            if ok:
+                break
+            time.sleep(self.SETTLE_POLL_S)
 
     def moratorium_end(self):
         """Measurement over (normal end or forced stop): restore in

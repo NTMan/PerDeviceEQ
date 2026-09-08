@@ -1196,3 +1196,70 @@ def test_the_reference_stays_put_until_the_asking_adds_up():
     for r, pk in zip(got, (-40.0, -39.9, -36.0, -32.0)):
         r["peak_dbfs"] = pk
     assert level_run.linear_top(got) == 0.25
+
+
+def test_a_walk_hands_over_its_rungs_as_it_takes_them(monkeypatch):
+    """A map used to appear all at once when the walk ended, so a hand
+    watching a rig climb had a blank canvas for a minute -- and the
+    whole point of drawing rungs is to see a bad one while there is
+    still a walk to stop."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played, seen = [], []
+    _fake_backend(monkeypatch, _rig(played))
+    got = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                 sink_name="x", freqs=freqs,
+                                 max_rungs=4,
+                                 on_step=lambda rs: seen.append(len(rs)))
+    # one handover per rung, each carrying every rung so far
+    assert seen == list(range(1, len(got) + 1))
+
+
+def test_the_handover_carries_a_copy(monkeypatch):
+    """The list handed over must not be the walk's own, or a caller
+    holding it would watch its rungs change under it."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played, kept = [], []
+    _fake_backend(monkeypatch, _rig(played))
+    level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                           sink_name="x", freqs=freqs, max_rungs=3,
+                           on_step=kept.append)
+    assert [len(x) for x in kept] == list(range(1, len(kept) + 1))
+
+
+def test_a_base_sweep_that_lost_a_whole_level_is_not_kept(monkeypatch):
+    """One walk came back with 26 dB between the two sweeps of its
+    base, its correction still engaged for the first. Measured, two
+    sweeps of a rung differ by tenths of a decibel."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    calls = {"n": 0}
+
+    def rig(back, name, sink, source, wav, duration, channels,
+            sweep, fr, analyze, v, play_map):
+        played.append(round(float(v), 4))
+        calls["n"] += 1
+        db = 60.0 * math.log10(v / 0.4)
+        # the FIRST sweep of all is 26 dB down, as his was
+        drop = 26.0 if calls["n"] == 1 else 0.0
+        return None, -30.0 + db - drop, False, _Got(
+            np.full(len(fr), db - drop))
+    _fake_backend(monkeypatch, rig)
+    rungs = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=3)
+    base = rungs[0]
+    # the good sweep is the one kept, so the base is NOT 26 dB down
+    assert base["mag_db"][0] > -1.0
+    # and its scatter is the honest zero, not 26
+    assert max(base["scatter_db"]) < 1.0
+
+
+def test_two_agreeing_base_sweeps_are_left_alone(monkeypatch):
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played))
+    rungs = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=3)
+    assert rungs[0]["scatter_db"] is not None
+    assert max(rungs[0]["scatter_db"]) < 0.001

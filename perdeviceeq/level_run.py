@@ -701,6 +701,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                  analyze=0, sweep=None, freqs=None,
                  pre_silence=None, post_silence=None, play_map=None,
                  on_level=None, should_stop=None, on_rung=None,
+                 on_step=None,
                  stop_peak_dbfs=AUTO_PEAK_CEIL, step_db=MAP_STEP_DB,
                  max_rungs=MAP_MAX_RUNGS, have=None):
     """Climb from the level the search settled at, keeping what each
@@ -816,6 +817,26 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                                    analyze, v, play_map)[3]
                 a = np.asarray(got.mag_db, float)
                 b = np.asarray(again.mag_db, float)
+                # A BASE THAT DISAGREES WITH ITSELF BY A WHOLE LEVEL
+                # IS NOT A SCATTER, IT IS A RUINED SWEEP -- and this
+                # is the rung everything else is read against, so it
+                # is the worst one to keep quietly. Measured, the two
+                # sweeps of a rung differ by tenths of a decibel: a
+                # tenth on a coupler, a fifth in a room. One walk came
+                # back with 26 dB between them, its correction still
+                # engaged for the first sweep.
+                #
+                # The louder of the two is kept, because these
+                # failures take sound AWAY -- a bypass that did not
+                # land, a volume that did not, a link still waking.
+                # None of them makes a sweep louder than the truth.
+                lift = float(np.nanmedian(b - a))
+                if abs(lift) > MIN_READABLE_STEP:
+                    if lift > 0:
+                        got, a = again, b
+                    b = a
+                    if on_level is not None:
+                        on_level(v, i)
                 scatter = np.abs(a - b)
                 # ONLY WHERE THE RUNG WAS HEARD. Where a rig makes no
                 # sound the two sweeps compare two noises, and the
@@ -873,6 +894,13 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                           "mag_db": [None if not math.isfinite(x)
                                      else round(float(x), 2)
                                      for x in mag]})
+            # HANDED OVER AS IT IS TAKEN. A map used to appear all at
+            # once when the walk ended, so a hand watching a rig climb
+            # had a blank canvas and a status line for a minute -- and
+            # the whole point of drawing rungs is to see a bad one
+            # while there is still a walk to stop.
+            if on_step is not None:
+                on_step(list(rungs))
             if clipped:
                 stopped = "capture"
                 break
