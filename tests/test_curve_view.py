@@ -929,8 +929,8 @@ def test_the_base_rung_has_to_be_heard_itself():
 
 
 MAP_METHODS = ("_map_rungs", "_wrapped", "_map_state_line", "_map_ref",
-               "_map_mask", "_draw_map", "_draw_fan", "_draw_check",
-               "_map_band", "_map_at")
+               "_map_mask", "_draw_map", "_walking", "_draw_fan",
+               "_draw_check", "_map_band", "_map_at")
 
 
 def map_fake():
@@ -1105,3 +1105,28 @@ def test_every_map_view_draws_without_gtk():
             surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230)
             cr = cairo.Context(surf)
             f._draw_map(None, cr, 700, 230)
+
+
+def test_a_walk_owns_the_canvas():
+    """The shelves need five rungs and used to borrow the fan until
+    the fifth arrived, then take over mid-walk: axis, colour and the
+    shape of every line changed in one frame with nothing said. A
+    walk now draws one picture from the first rung to the last.
+    """
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    for n in (2, 5, 7):
+        f = map_window(rungs, on=True, partial=n)
+        f._busy = True
+        assert f._walking()
+        cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
+        f._draw_map(None, cr, 700, 230)
+        # the fan leaves its geometry; the shelves do not
+        assert f._fan_geom is not None, "the shelves took over at %d rungs" % n
+    # and the moment the walk ends the toggle is honoured again
+    f = map_window(rungs, on=True)
+    f._busy = False
+    assert not f._walking()
+    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
+    f._draw_map(None, cr, 700, 230)
+    assert f._fan_geom is None

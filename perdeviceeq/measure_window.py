@@ -959,10 +959,34 @@ class MeasureWindow(Adw.Window):
         """
         ml, mr, mt, mb = 34, 40, 8, 16
         rungs = self._map_rungs()
+        # ONE PICTURE FOR THE LENGTH OF A WALK. The shelves cannot be
+        # read under five rungs -- there is no trend to read a rung
+        # against -- so they used to BORROW the fan until the fifth
+        # arrived and then take over. The hand saw the axis change
+        # from decibels over the base to a residual, the colour go
+        # from a gradient to one pen, and the lines straighten, all
+        # in one frame and with nothing said: his words were that the
+        # curves magically straighten out.
+        #
+        # A picture that changes what it measures while a hand is
+        # watching one thing happen is not a picture of it. So a walk
+        # owns the canvas and the fan draws it from the first rung to
+        # the last; the toggle is disabled meanwhile rather than
+        # lying about what is on screen, and takes effect when the
+        # walk ends -- which is a change the hand asked for.
         btn = getattr(self, "map_view", None)
-        if btn is not None and btn.get_active():
+        if btn is not None and btn.get_active() and not self._walking():
             return self._draw_check(cr, w, h, ml, mr, mt, mb, rungs)
         return self._draw_fan(cr, w, h, ml, mr, mt, mb, rungs)
+
+    def _walking(self):
+        """A walk is producing rungs right now.
+
+        The same test _map_rungs uses to prefer them over what is on
+        disk, so the canvas cannot think one thing about whose rungs
+        it is drawing and another about which view draws them.
+        """
+        return bool(self._busy and self._map_partial)
 
     def _draw_fan(self, cr, w, h, ml, mr, mt, mb, rungs):
         """One line per rung, each against the quietest that was
@@ -4923,6 +4947,12 @@ class MeasureWindow(Adw.Window):
                         self._source_present(),
                         self._mic_gone, self._busy,
                         self.mic_picker.core.node))
+        # A CONTROL THAT CANNOT ACT SAYS SO, rather than standing lit
+        # over a canvas that is ignoring it: the fan owns the screen
+        # for the length of a walk, so the view toggle is disabled
+        # while one runs and comes back when it ends.
+        if getattr(self, "map_view", None) is not None:
+            self.map_view.set_sensitive(not self._walking())
         if not live and not self._busy:
             # the tracer law, third service: a locked pult
             # names the missing end out loud -- the field saw
