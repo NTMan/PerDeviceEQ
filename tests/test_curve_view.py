@@ -1195,6 +1195,8 @@ def test_arming_a_walk_asks_for_the_frame():
     f = map_window(rungs, on=False, pick=2)
     f._walk_live = False
     f._map_partial = []
+    f._rebuild_ack = True
+    f._sync_relevel = lambda: None
     drawn = []
     f.map_area = types.SimpleNamespace(get_height=lambda: 230,
                                        queue_draw=lambda: drawn.append(1))
@@ -1208,7 +1210,30 @@ def test_arming_a_walk_asks_for_the_frame():
     g = map_window(rungs, on=False, pick=2)
     g._walk_live = False
     g._map_partial = []
+    g._rebuild_ack = True
+    g._sync_relevel = lambda: None
     g.map_area = types.SimpleNamespace(get_height=lambda: 230,
                                        queue_draw=lambda: drawn.append(1))
     g._arm_walk(False)
     assert not g._walk_live and g._map_partial == []
+
+
+def test_marking_the_lowest_rung_is_a_choice_not_the_absence_of_one():
+    """`if keep:` read index zero as nobody having marked anything, so
+    the choice was never spent and every rung above it stayed faded
+    for the whole walk -- against a ladder that no longer had them."""
+    import types
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    f = map_window(rungs, on=False, pick=0)
+    f._walk_live = False
+    f._map_partial = []
+    f._rebuild_ack = True
+    f._sync_relevel = lambda: None
+    f.map_area = types.SimpleNamespace(get_height=lambda: 230,
+                                       queue_draw=lambda: None)
+    f._arm_walk(True)
+    assert f._walk_keep == 0            # remembered as a choice
+    assert f._map_pick is None          # and spent
+    assert f._map_partial == []         # keeping none of them
+    assert [r["level"] for r in f._walk_old] == \
+        [r["level"] for r in rungs]

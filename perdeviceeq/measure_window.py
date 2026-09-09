@@ -459,6 +459,8 @@ class MeasureWindow(Adw.Window):
         # walk that has not produced a rung yet and a window with no
         # walk look identical in it.
         self._walk_live = False
+        self._walk_keep = None
+        self._walk_old = []
         pick = Gtk.GestureClick()
         pick.set_button(1)
         pick.connect("released", self._on_map_pick)
@@ -929,11 +931,26 @@ class MeasureWindow(Adw.Window):
         """
         if not level_only:
             return
+        # INDEX ZERO IS A CHOICE, and `if keep:` read it as no choice
+        # at all. Marking the lowest rung means "keep none of them",
+        # and it was answered as "nobody marked anything": the choice
+        # was never spent, so every rung above it stayed faded for the
+        # whole walk against a ladder that no longer had them -- and
+        # the same falsy zero sent the rebuild into a level search it
+        # had no business running.
         keep = self._map_pick
-        self._map_partial = (level_run.rolled_back(self._map_rungs(), keep)
-                             if keep else [])
+        self._walk_keep = keep
+        self._walk_old = self._map_rungs()
+        self._map_partial = (
+            level_run.rolled_back(self._walk_old, keep)
+            if keep is not None else [])
         self._map_odd = None
         self._walk_live = True
+        # SPENT AT THE PRESS, wherever it points. It has done its work
+        # the moment the doomed rungs are dropped, which is here.
+        self._map_pick = None
+        self._rebuild_ack = False
+        self._sync_relevel()
         area = getattr(self, "map_area", None)
         if area is not None:
             area.queue_draw()
@@ -5275,9 +5292,21 @@ class MeasureWindow(Adw.Window):
         # sweeps on ground already walked -- and worse, it MOVES the
         # level, so the rungs kept and the rungs added would be about
         # two different settings of the knob.
-        keep = self._map_pick
-        if keep:
-            got = level_run.rolled_back(self._map_rungs(), keep)
+        keep = getattr(self, "_walk_keep", None)
+        if keep is not None:
+            old = getattr(self, "_walk_old", None) or []
+            got = level_run.rolled_back(old, keep)
+            if not got and old:
+                # KEEPING NONE IS STILL NOT A SEARCH. His rule: if I
+                # want a hunt I mark nothing, and that is a different
+                # operation. With every rung dropped there is nothing
+                # to read a level off -- but the levels the old map
+                # walked are recorded, and the quietest of them is
+                # where this walk starts. The search's answer is
+                # already in the map; spending six sweeps to find it
+                # again is the full cycle he asked to be rid of.
+                return self._walk_map(
+                    ch, about_to, min(r["level"] for r in old), None)
             if got:
                 # AND IT IS STEPPED LIKE THE WALK IT CONTINUES,
                 # without being told how: coarse or fine is decided by
@@ -5288,13 +5317,6 @@ class MeasureWindow(Adw.Window):
                 # top, one read from the map -- and both were answering
                 # a question that a count does not raise.
                 keep_top = max(r["level"] for r in got)
-                # SPENT WHEN IT IS USED, not when the walk ends. It
-                # has done its work the moment the rungs above it were
-                # dropped, and leaving it set fades those rungs on
-                # every repaint for the length of the walk -- against
-                # a ladder that no longer has them.
-                self._map_pick = None
-                GLib.idle_add(self._sync_relevel)
                 return self._walk_map(ch, about_to, keep_top, got)
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
