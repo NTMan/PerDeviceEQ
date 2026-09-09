@@ -1028,6 +1028,31 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                         got, a = again, b
                     b = a
                 scatter = np.abs(a - b)
+                # AND THE BASE IS BUILT FROM THE PAIR, not taken from
+                # one of them. Every line of the fan is a rung minus
+                # this one, so whatever is in this ONE recording is
+                # copied, inverted, into every line of the picture --
+                # and it stays there through every rebuild, because a
+                # rebuild keeps the base and re-measures the rest. His
+                # field report: the same saw survived four rebuilds
+                # and vanished the moment the base itself was walked
+                # again.
+                #
+                # Worse, it is the one rung the reading cannot name: a
+                # fault in the end rung of a ladder reads as zero at
+                # itself and lands on its neighbour, so the sweep that
+                # poisons every line is invisible to the detector that
+                # exists to find such things.
+                #
+                # The pair is the cure and it costs no sound, since
+                # the second sweep is already played. Where the two
+                # agree, average: the base's own noise falls by root
+                # two. Where they disagree by more than the walk's own
+                # scale, one of them has an EVENT in it -- a click, a
+                # bark, a chair -- and the quieter is the honest
+                # choice, because an event adds energy and never takes
+                # it away.
+                got = _Rebased(got, blend_base(a, b))
                 # KEPT EVERYWHERE, including where the rung was not
                 # heard. It used to be blanked there, on the ground
                 # that two noises compared give whatever the room felt
@@ -1339,6 +1364,120 @@ MAP_TOP_STEP_DB = 1.0    # the LAST rung may be shorter than the
                          # What a step must be is READABLE, and 1.9 dB
                          # reads as easily as 2.0 against a walk whose
                          # own scatter is hundredths.
+
+
+class _Rebased:
+    """An analysis with its magnitude replaced.
+
+    The base rung's curve is built from the pair of sweeps that
+    measured its scatter; everything else the analysis carries --
+    noise, harmonics, the SNR -- belongs to the sweep that produced
+    it and is passed through untouched.
+    """
+
+    __slots__ = ("_it", "mag_db")
+
+    def __init__(self, it, mag_db):
+        object.__setattr__(self, "_it", it)
+        object.__setattr__(self, "mag_db", mag_db)
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_it"), name)
+
+
+MAP_TOP_STEP_DB = 1.0    # the LAST rung may be shorter than the
+                         # nominal fine step. Refusing it because the
+                         # room left was 1.93 dB rather than 2.00 threw
+                         # away the most valuable rung in the map --
+                         # the walk's own reasoning is that the rungs
+                         # above the border matter most -- and made the
+                         # ladder's LENGTH turn on hundredths: one walk
+                         # cleared the old threshold by 0.01 dB and
+                         # took seven rungs, the next missed by 0.07
+                         # and took six, same rig and same ceiling.
+                         # What a step must be is READABLE, and 1.9 dB
+                         # reads as easily as 2.0 against a walk whose
+                         # own scatter is hundredths.
+
+BASE_EVENT_K = 6.0       # times the LOCAL disagreement of the pair,
+                         # and a bin is an event rather than noise
+BASE_EVENT_FLOOR_DB = 0.1   # but never below this, so a stretch that
+                         # agrees perfectly does not make every
+                         # hundredth of a decibel a hole
+
+
+def blend_base(a, b):
+    """Two sweeps of the base rung, made into one curve.
+
+    Where they agree, the average: the base's own noise falls by root
+    two, and it is the one curve every other rung is read against, so
+    that is worth having for free.
+
+    WHERE THEY DISAGREE BY MORE THAN THEIR OWN SCALE, NEITHER. An
+    earlier cut of this took the quieter, on the reasoning that an
+    event adds energy and never takes it away -- true of a click, a
+    bark, a chair, and false of a dropout. His FR base carried one:
+    ten bins around 1.37 kHz, down to -3.36 dB, present in one sweep
+    of the pair and not the other, and the rule picked the sweep that
+    had it. Twenty-nine bins of a hundred and five, all of them the
+    damaged one.
+
+    Neither is what the data supports. Two sweeps of one rung that
+    disagree by decibels in a bin do not agree on what the rig did
+    there, and the honest answer is that the bin has no reference --
+    which is the map's own doctrine already: a large scatter is the
+    answer, not a trap. A blank propagates by itself, since every
+    rung is read against this one.
+
+    The whole-band rule above keeps its direction, and should: a
+    bypass that did not land takes sound away across the band, so
+    there the louder wins. That is a known direction over a known
+    span; this is one bin with neither.
+
+    ONE OWNER, because a base gets a second sweep in two different
+    places: a fresh walk plays the pair for the scatter, and a rebuild
+    plays the seating check at exactly the base's level. Both hand it
+    here.
+    """
+    a = np.asarray(a, float)
+    b = np.asarray(b, float)
+    apart = np.abs(a - b)
+    # THE SCALE COMES FROM THE NEIGHBOURHOOD, not from the whole band
+    # and not from a constant. An event is a bin where the two sweeps
+    # disagree many times more than they usually disagree AT THAT
+    # FREQUENCY -- which is the lesson the mask already learned in the
+    # other direction, and it has to be learned here too.
+    #
+    # A single median over the whole band cannot serve both sweeps
+    # this is handed. A fresh pair is seconds apart and agrees to
+    # hundredths everywhere, so the constant governed and was about
+    # right. The seating sweep is HOURS from the base it is compared
+    # with, and a seating that moved half a decibel in the treble is
+    # ordinary -- his own two channels showed +0.47 and +0.73 up
+    # there. The bass and the mid still agree, so the whole-band
+    # median stays near zero, the constant takes over, and the entire
+    # top of the band is called a dropout and blanked. That is the
+    # blindness he reported at 8 to 9 kHz.
+    #
+    # Locally the same drift raises its own scale and passes, while a
+    # ten-bin hole inside a quiet stretch stands out as sharply as
+    # ever: on his FR pair this keeps the floor of the dropout and
+    # drops the fringe around it, thirty bins down to three.
+    scale = _local_scale(apart)
+    wide = apart > np.maximum(BASE_EVENT_FLOOR_DB, BASE_EVENT_K * scale)
+    return np.where(wide, np.nan, 0.5 * (a + b))
+
+
+def _local_scale(apart, w=33):
+    """The median disagreement around each bin, over a third of an
+    octave of the 1/96 grid."""
+    n = len(apart)
+    out = np.empty(n, float)
+    for i in range(n):
+        win = apart[max(0, i - w // 2):i + w // 2 + 1]
+        win = win[np.isfinite(win)]
+        out[i] = np.median(win) if win.size else 0.0
+    return out
 
 
 class Probe:

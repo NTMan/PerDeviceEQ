@@ -1591,3 +1591,102 @@ def test_the_last_rung_may_be_shorter_than_the_nominal_step():
     exact = [(0.26, -2.60), (0.27, -2.30)]
     none = L._next_step_db(exact, 0.27, -2.30, 7, 2.0, L.AUTO_PEAK_CEIL)
     assert none < L.MAP_TOP_STEP_DB
+
+
+def test_the_base_is_built_from_its_pair():
+    """Every line of the fan is a rung minus the base, so whatever is
+    in that ONE recording is copied into every line and survives every
+    rebuild -- and it is the one rung the reading cannot name. The
+    pair is the cure, and it costs no sound: where the two sweeps
+    agree they are averaged, where one carries an event the quieter
+    wins, because an event adds energy.
+    """
+    import numpy as np
+    from perdeviceeq import level_run as L
+
+    n = 400
+    truth = np.linspace(-20.0, -30.0, n)
+    rng = np.random.default_rng(7)
+    a = truth + rng.normal(0, 0.02, n)
+    b = truth + rng.normal(0, 0.02, n)
+    # a click during the first sweep: ringing over a dozen bins
+    a[200:214] += np.array([0.4, 1.1, 2.6, 4.0, 3.1, 1.9, 1.0,
+                            2.2, 3.4, 2.0, 1.1, 0.6, 0.3, 0.15])
+
+    mag = L.blend_base(a, b)
+
+    # the event leaves no reference behind rather than a guess
+    assert float(np.max(np.abs(a - truth))) > 3.0
+    assert np.isnan(mag[203:210]).all()
+    good = ~np.isnan(mag)
+    assert float(np.max(np.abs(mag[good] - truth[good]))) < 0.25
+    # away from the event the pair is averaged, not picked
+    quiet = np.ones(n, bool)
+    quiet[190:225] = False
+    assert np.allclose(mag[quiet], 0.5 * (a + b)[quiet])
+    # and the noise of the base falls, which is the whole point
+    assert (float(np.sqrt(np.mean((mag[quiet] - truth[quiet]) ** 2)))
+            < float(np.sqrt(np.mean((a[quiet] - truth[quiet]) ** 2))))
+
+
+def test_a_rebased_analysis_passes_everything_else_through():
+    from perdeviceeq import level_run as L
+
+    class Got:
+        mag_db = [1.0, 2.0]
+        snr_db = 44.0
+        noise_dbfs = -70.0
+
+    r = L._Rebased(Got(), [9.0, 9.0])
+    assert r.mag_db == [9.0, 9.0]
+    assert r.snr_db == 44.0 and r.noise_dbfs == -70.0
+
+
+def test_a_dropout_is_not_answered_by_taking_the_quieter():
+    """His FR base: ten bins around 1.37 kHz, down to -3.36 dB,
+    present in one sweep of the pair and not the other. An event that
+    REMOVES energy is as real as one that adds it, and the rule that
+    took the quieter picked the damaged sweep every time."""
+    import numpy as np
+    from perdeviceeq import level_run as L
+
+    n = 200
+    truth = np.full(n, -23.0)
+    a = truth.copy()
+    b = truth.copy()
+    a[100:110] -= np.array([1.0, 1.3, 1.8, 2.5, 3.2, 3.4, 2.5, 1.2, 0.6, 0.3])
+
+    mag = L.blend_base(a, b)
+    hurt = np.isnan(mag)
+    assert hurt[103:107].all()               # the deep bins have no reference
+    assert not hurt[:90].any() and not hurt[130:].any()
+    # and nothing anywhere is the damaged value
+    good = ~hurt
+    assert float(np.max(np.abs(mag[good] - truth[good]))) < 0.3
+
+
+def test_the_event_scale_is_local_not_a_constant():
+    """A fresh pair agrees to hundredths everywhere, so a constant was
+    about right. The seating sweep is hours from the base it is
+    compared with, and half a decibel of seating drift in the treble
+    is ordinary -- against a whole-band median it looked like a
+    dropout and blanked the top of the band."""
+    import numpy as np
+    from perdeviceeq import level_run as L
+
+    n = 958                      # the real grid, 20 Hz to 20 kHz
+    f = np.array([20.0 * 2 ** (i / 96) for i in range(n)])
+    rng = np.random.default_rng(11)
+    a = np.full(n, -23.0) + rng.normal(0, 0.01, n)
+    b = np.full(n, -23.0) + rng.normal(0, 0.01, n)
+    # ordinary seating drift, smooth and only up top
+    b += np.clip(0.9 * (np.log10(f) - np.log10(3000.0)), 0, None)
+    # and one real hole, ten bins wide, in the quiet middle
+    a[560:570] -= np.array([0.8, 1.4, 2.2, 3.0, 3.4, 3.1, 2.3, 1.3, 0.7, 0.3])
+
+    mag = L.blend_base(a, b)
+    gone = np.isnan(mag)
+    assert gone[562:568].all(), "the hole must lose its reference"
+    top = f > 6000
+    assert not gone[top].any(), "smooth drift is not an event"
+    assert int(gone.sum()) < 20
