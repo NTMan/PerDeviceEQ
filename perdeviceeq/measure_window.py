@@ -1062,17 +1062,7 @@ class MeasureWindow(Adw.Window):
                          "one rung: a map needs a second to say "
                          "anything")
             return
-        base = self._map_ref(rungs)
-        mute = self._map_mask(base)
-        rows = []
-        for r in rungs:
-            row = []
-            for i, x in enumerate(r.get("mag_db") or []):
-                b = (base.get("mag_db") or [None] * (i + 1))
-                b = b[i] if i < len(b) else None
-                row.append(None if x is None or b is None
-                           or (i < len(mute) and mute[i]) else x - b)
-            rows.append(row)
+        rows = self._map_steps(rungs)
         vals = [v for row in rows for v in row if v is not None]
         # HOW MUCH OF THE BAND SURVIVED THE MASK, and a word when
         # almost none of it did. Every line here is a difference
@@ -1092,10 +1082,9 @@ class MeasureWindow(Adw.Window):
         if not vals or span < 0.05:
             cr.set_source_rgba(0.85, 0.45, 0.10, 0.95)
             said = self._wrapped(
-                cr, "The quietest rung was heard at %d%% of the band, "
-                    "so there is nothing here to draw against. The "
-                    "check view needs no reference rung and draws "
-                    "this walk in full." % round(100 * span),
+                cr, "No two neighbouring rungs were both heard on more "
+                    "than %d%% of the band, so no step can be read."
+                    % round(100 * span),
                 pw_ - 16)
             y = mt + ph / 2 - (len(said) - 1) * 7
             for line in said:
@@ -1103,31 +1092,15 @@ class MeasureWindow(Adw.Window):
                 cr.show_text(line)
                 y += 14
             return
-        # THE EDGES OF THE GRID ARE NOT THE PICTURE. A single bin at
-        # 20 kHz, where the response is falling off a cliff and the
-        # capture is noise, stretched the axis by five decibels and
-        # squeezed eleven rungs into the bottom two thirds of it. The
-        # range is taken from the bulk instead, and a line that leaves
-        # it is simply drawn past the edge.
-        # THE AXIS IS THE WALK'S OWN REACH, NOT THE DATA'S SPREAD.
-        # Taken from the data it was recomputed every frame, so every
-        # rung that landed stretched it and every line already drawn
-        # moved: watching a walk, the picture rescaled under the hand
-        # four or five times. Zero is the reference rung and the top
-        # is where the capture runs out -- both known from the first
-        # rung, both fixed for the rest of the walk, and the same on
-        # two channels of one rig so their pictures can be compared.
-        # A line that leaves it is drawn past the edge, as before.
-        pk = [r.get("peak_dbfs") for r in rungs]
-        ref_pk = base.get("peak_dbfs")
-        if ref_pk is not None and all(x is not None for x in pk):
-            y0 = min(-1.0, min(pk) - float(ref_pk) - 1.0)
-            y1 = max(y0 + 2.0,
-                     level_run.AUTO_PEAK_CEIL - float(ref_pk) + 1.0)
-        else:
-            srt = sorted(vals)
-            y0 = srt[int(0.01 * (len(srt) - 1))] - 1.0
-            y1 = srt[int(0.99 * (len(srt) - 1))] + 1.0
+        # THE AXIS IS FIXED BY WHAT A STEP CAN BE, not by the data.
+        # A line here is one step of the ladder against what that step
+        # asked for, so zero is "delivered exactly", a fine step lost
+        # whole is -2, a coarse one -6, and a tooth from an event can
+        # point either way by a few decibels. That is the whole range
+        # a step can honestly occupy, so it is the axis, known before
+        # the first rung and the same for every walk on every rig.
+        # A line that leaves it is drawn past the edge.
+        y0, y1 = -6.0, 2.0
         lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
         n = max(len(row) for row in rows)
         grid = ((self.parent.store.get(self.edit_pid) or {})
@@ -1135,6 +1108,10 @@ class MeasureWindow(Adw.Window):
             if self.edit_pid else {}
         g_lo = float(grid.get("f_lo") or FMIN_PLOT)
         ppo = float(grid.get("ppo") or 96.0)
+        # WHERE NO STEP COULD BE READ AT ALL: a bin that neither rung
+        # of any pair heard. Shaded, so a gap reads as "not heard"
+        # rather than as a broken renderer.
+        mute = [all(row[i] is None for row in rows[1:]) for i in range(n)]
 
         def px(i):
             f = g_lo * 2.0 ** (i / ppo)
@@ -1480,6 +1457,70 @@ class MeasureWindow(Adw.Window):
 
     REF_HEARD = 0.9          # of the band, before a rung may be the
                              # one everything else is drawn against
+
+    def _map_steps(self, rungs):
+        """Each rung against the one below it, minus what the step asked.
+
+            line_k(f) = (mag_k(f) - mag_k-1(f)) - (knob_k - knob_k-1)
+
+        knob is the requested level in decibels, 60 log10 of the cubic
+        volume. Zero means the step delivered exactly what it asked
+        for; a line below zero lost that much of it at that frequency.
+
+        NO REFERENCE RUNG, AND THAT IS THE POINT. Every previous
+        picture subtracted one chosen recording from all the others --
+        the quietest, then a blend of the quietest pair, then a median
+        of all -- and whatever was in the chosen one, or wherever the
+        chosen one sat, went into every line. Five patches chased the
+        consequences. A step is compared only with its own neighbour,
+        so nothing propagates further than one line.
+
+        AND AN EVENT MIRRORS. Something that happened during rung k's
+        sweep -- a click, a dropout -- appears in line k with one sign
+        and in line k+1 with the other, because the next step subtracts
+        the same recording back out. A real loss does not mirror: the
+        rig does not give back on the next step what it lost on this
+        one. That is a detector which uses nothing but the ladder, and
+        it is blind nowhere except at the top rung, which has no next.
+
+        The knob is subtracted, not the capture peak: the knob delivers
+        what it promises to hundredths on this rig, and the peak was
+        measured to wander by a quarter of a decibel between identical
+        sweeps, which would land in every line as a flat offset.
+
+        Each line is drawn only where both rungs of its step were heard
+        over their own noise. Row zero is the base and has no step, so
+        it is empty and draws nothing; the rows line up with the rungs
+        so colour, label and aim need no translation.
+        """
+        n = max((len(r.get("mag_db") or []) for r in rungs), default=0)
+
+        def heard(r):
+            mag = r.get("mag_db") or []
+            off = r.get("heard_offset_db")
+            return [i < len(mag) and mag[i] is not None
+                    and (off is None or mag[i] - float(off)
+                         > level_run.HEARD_OVER_NOISE_DB)
+                    for i in range(n)]
+
+        def knob(r):
+            lv = float(r.get("level") or 0.0)
+            return 60.0 * math.log10(lv) if lv > 0 else None
+
+        rows = [[None] * n]
+        for k in range(1, len(rungs)):
+            lo, hi = rungs[k - 1], rungs[k]
+            ok = [a and b for a, b in zip(heard(lo), heard(hi))]
+            ka, kb = knob(lo), knob(hi)
+            if ka is None or kb is None:
+                rows.append([None] * n)
+                continue
+            asked = kb - ka
+            ml, mh = lo.get("mag_db") or [], hi.get("mag_db") or []
+            rows.append([
+                (mh[i] - ml[i]) - asked if ok[i] else None
+                for i in range(n)])
+        return rows
 
     def _map_ref(self, rungs):
         """The rung to draw everything else against.

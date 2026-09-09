@@ -928,7 +928,7 @@ def test_the_base_rung_has_to_be_heard_itself():
     assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41
 
 
-MAP_METHODS = ("_map_rungs", "_arm_walk", "_wrapped", "_map_state_line", "_map_ref",
+MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_wrapped", "_map_state_line", "_map_ref",
                "_map_mask", "_draw_map", "_walking", "_draw_fan",
                "_draw_check", "_map_band", "_map_at")
 
@@ -1023,6 +1023,11 @@ def test_the_fan_picks_the_line_the_pointer_is_on():
     """
     import cairo
     rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    # a rig whose loss grows with level, so the STEPS differ and the
+    # lines stand apart: on a linear ladder every step lies on zero
+    # and there is nothing to aim at
+    for k, r in enumerate(rungs):
+        r["mag_db"] = [v - 0.3 * k * k for v in r["mag_db"]]
     f = map_window(rungs, on=False)
     cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
     f._draw_map(None, cr, 700, 230)
@@ -1031,15 +1036,16 @@ def test_the_fan_picks_the_line_the_pointer_is_on():
     x = 350.0
     i = bin_at(x)
     for k in range(len(rungs)):
+        if rows[k][i] is None:          # the base has no step to aim at
+            continue
         assert f._map_at(x, py(rows[k][i])) == k
 
     # AND THE LADDER IS ADVERSARIAL, or this court has no teeth: on an
     # uneven ladder the band arithmetic must answer something other
     # than the line the eye is on. Which rung it misses is a property
     # of the axis, not of the defect, so it is not pinned here.
-    band = [f._map_band(py(rows[k][i])) for k in range(len(rungs))]
-    assert band != list(range(len(rungs))), "the fixture is too even"
-    assert sum(b != k for k, b in enumerate(band)) >= 1
+    band = [f._map_band(py(rows[k][i])) for k in range(1, len(rungs))]
+    assert band != list(range(1, len(rungs))), "the fixture is too even"
 
 
 def test_the_shelves_keep_their_bands():
@@ -1237,3 +1243,35 @@ def test_marking_the_lowest_rung_is_a_choice_not_the_absence_of_one():
     assert f._map_partial == []         # keeping none of them
     assert [r["level"] for r in f._walk_old] == \
         [r["level"] for r in rungs]
+
+
+def test_a_step_is_read_against_what_it_asked():
+    """On a linear ladder every step delivers what it asked and every
+    line lies on zero; a rung that lost three decibels reads -3 on its
+    own step and +3 on the next -- the mirror -- and no other step
+    hears of it."""
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    f = map_window(rungs, on=False)
+    rows = f._map_steps(rungs)
+    assert len(rows) == len(rungs)
+    assert all(v is None for v in rows[0])          # the base has no step
+    assert max(abs(v) for row in rows[1:] for v in row if v is not None) < 1e-9
+
+    hurt = [dict(r) for r in rungs]
+    m = list(hurt[3]["mag_db"])
+    for i in range(300, 312):
+        m[i] -= 3.0
+    hurt[3]["mag_db"] = m
+    rows = f._map_steps(hurt)
+    assert abs(rows[3][305] + 3.0) < 1e-6           # the step that lost
+    assert abs(rows[4][305] - 3.0) < 1e-6           # mirrored on the next
+    for k in (1, 2, 5, 6):
+        assert abs(rows[k][305]) < 1e-9             # and nowhere else
+    # a real loss does not mirror: a rung that falls behind and stays
+    # behind reads once and the next step reads zero
+    lost = [dict(r) for r in rungs]
+    for k in range(3, len(lost)):
+        lost[k]["mag_db"] = [v - 3.0 for v in lost[k]["mag_db"]]
+    rows = f._map_steps(lost)
+    assert abs(rows[3][305] + 3.0) < 1e-6
+    assert abs(rows[4][305]) < 1e-9
