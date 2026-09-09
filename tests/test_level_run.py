@@ -1565,3 +1565,29 @@ def test_a_sweep_that_is_not_a_rung_says_what_it_is(monkeypatch):
     # the seating sweep names itself and does not take a step number
     assert said[0][1] == "seating"
     assert said[1][0] > said[0][0] and said[1][1] == 1
+
+
+def test_the_last_rung_may_be_shorter_than_the_nominal_step():
+    """One walk cleared the old threshold by 0.01 dB and took seven
+    rungs; the next missed by 0.07 and took six, same rig and same
+    ceiling. A step has to be readable, not equal to the nominal one.
+    """
+    from perdeviceeq import level_run as L
+
+    assert L.MAP_TOP_STEP_DB < L.MIN_READABLE_STEP
+
+    # his own two walks, at the rung before the ceiling
+    exact = [(0.2332, -6.11), (0.2518, -4.06)]
+    took = L._next_step_db(exact, 0.2518, -4.06, 6, 2.0, L.AUTO_PEAK_CEIL)
+    assert took >= L.MAP_TOP_STEP_DB          # 2.01 of room: taken before too
+
+    exact = [(0.2332, -6.01), (0.2518, -3.97)]
+    short = L._next_step_db(exact, 0.2518, -3.97, 6, 2.0, L.AUTO_PEAK_CEIL)
+    assert short < L.MIN_READABLE_STEP        # 1.93: refused before
+    assert short >= L.MAP_TOP_STEP_DB         # and taken now
+    assert 1.8 < short < 2.0
+
+    # but a rung a hair from its neighbour still adds nothing
+    exact = [(0.26, -2.60), (0.27, -2.30)]
+    none = L._next_step_db(exact, 0.27, -2.30, 7, 2.0, L.AUTO_PEAK_CEIL)
+    assert none < L.MAP_TOP_STEP_DB

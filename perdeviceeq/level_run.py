@@ -1136,7 +1136,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                     from_peak = pk
             take = _next_step_db(exact, v, from_peak, len(rungs),
                                  step_db, stop_peak_dbfs)
-            if take < MIN_READABLE_STEP:
+            if take < MAP_TOP_STEP_DB:
                 stopped = "capture"
                 break
             nxt = _clamp(v * 10.0 ** (take / 60.0))
@@ -1324,6 +1324,21 @@ def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
     ok = np.isfinite(sm) & (np.asarray(scatter, float)
                             < ANSWER_SHORT * asked_db)
     return np.where(ok, np.maximum(0.0, asked_db - sm), np.nan)
+
+
+MAP_TOP_STEP_DB = 1.0    # the LAST rung may be shorter than the
+                         # nominal fine step. Refusing it because the
+                         # room left was 1.93 dB rather than 2.00 threw
+                         # away the most valuable rung in the map --
+                         # the walk's own reasoning is that the rungs
+                         # above the border matter most -- and made the
+                         # ladder's LENGTH turn on hundredths: one walk
+                         # cleared the old threshold by 0.01 dB and
+                         # took seven rungs, the next missed by 0.07
+                         # and took six, same rig and same ceiling.
+                         # What a step must be is READABLE, and 1.9 dB
+                         # reads as easily as 2.0 against a walk whose
+                         # own scatter is hundredths.
 
 
 class Probe:
