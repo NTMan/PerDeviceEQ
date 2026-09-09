@@ -709,11 +709,22 @@ class MeasureWindow(Adw.Window):
         self.hunt_area.set_draw_func(self._draw_hunt)
         self._hunt_dots = []
         self._hunt_found = None
-        act.append(self.hunt_area)
         act.append(self.center)
+        # THE STRIP TAKES THE ROW'S WHOLE WIDTH, not the transport
+        # box's. That box is centred and as wide as its widest child
+        # -- the status sentence -- so a strip inside it stretched
+        # and shrank with every word the status said. A picture whose
+        # size follows the caption is the scale rule broken in a new
+        # place.
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        for side in ("start", "end"):
+            getattr(self.hunt_area, "set_margin_" + side)(12)
+        self.hunt_area.set_margin_top(12)
+        card.append(self.hunt_area)
+        card.append(act)
         self._act_row = Adw.PreferencesRow()
         self._act_row.set_activatable(False)
-        self._act_row.set_child(act)
+        self._act_row.set_child(card)
         # its OWN card, and the last one. Play and stop are done when
         # everything else is prepared -- the microphone, the target,
         # the level -- so they sit at the bottom of the page and
