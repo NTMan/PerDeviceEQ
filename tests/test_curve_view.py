@@ -928,7 +928,7 @@ def test_the_base_rung_has_to_be_heard_itself():
     assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41
 
 
-MAP_METHODS = ("_map_rungs", "_wrapped", "_map_state_line", "_map_ref",
+MAP_METHODS = ("_map_rungs", "_arm_walk", "_wrapped", "_map_state_line", "_map_ref",
                "_map_mask", "_draw_map", "_walking", "_draw_fan",
                "_draw_check", "_map_band", "_map_at")
 
@@ -1007,6 +1007,7 @@ def map_window(rungs, on=False, partial=None, pick=2, hover=1):
     f._busy = False
     f._fan_geom = None
     f._map_partial = rungs[:partial] if partial is not None else []
+    f._walk_live = partial is not None
     f.map_area = types.SimpleNamespace(get_height=lambda: 230)
     f.map_view = types.SimpleNamespace(get_active=lambda: on)
     f.parent = types.SimpleNamespace(
@@ -1160,3 +1161,54 @@ def test_neither_picture_takes_its_scale_from_the_data():
     assert axis(bent) == was
     # and it does not creep as the walk arrives rung by rung
     assert axis(rungs[:3]) == was
+
+
+def test_the_press_hands_the_canvas_over_before_the_first_result():
+    """A walk that has not produced a rung yet and a window with no
+    walk look identical in _map_partial, so the canvas kept drawing
+    the whole old map until the first new rung landed -- a sweep and
+    a half of looking at what the button had already discarded."""
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    f = map_window(rungs, on=False, partial=0)   # armed, nothing yet
+    f._busy = True
+    assert f._walking()
+    assert f._map_rungs() == []
+    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
+    f._draw_map(None, cr, 700, 230)              # says so rather than lying
+    assert f._fan_geom is None
+    # a rebuild that keeps two shows exactly those two, from the press
+    f = map_window(rungs, on=False, partial=2)
+    f._busy = True
+    assert [r["level"] for r in f._map_rungs()] == \
+        [r["level"] for r in rungs[:2]]
+
+
+def test_arming_a_walk_asks_for_the_frame():
+    """0336 changed what the canvas would draw and never told the
+    widget, so the old map stayed up until the first rung arrived and
+    called queue_draw on its way past -- which is exactly what the
+    field reported. Setting what a canvas shows and repainting it
+    belong in one place."""
+    import types
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    f = map_window(rungs, on=False, pick=2)
+    f._walk_live = False
+    f._map_partial = []
+    drawn = []
+    f.map_area = types.SimpleNamespace(get_height=lambda: 230,
+                                       queue_draw=lambda: drawn.append(1))
+    f._arm_walk(True)
+    assert f._walk_live
+    assert [r["level"] for r in f._map_partial] == \
+        [r["level"] for r in rungs[:2]]
+    assert drawn, "the canvas was never asked to repaint"
+
+    # a take is not a walk and must leave the map alone
+    g = map_window(rungs, on=False, pick=2)
+    g._walk_live = False
+    g._map_partial = []
+    g.map_area = types.SimpleNamespace(get_height=lambda: 230,
+                                       queue_draw=lambda: drawn.append(1))
+    g._arm_walk(False)
+    assert not g._walk_live and g._map_partial == []

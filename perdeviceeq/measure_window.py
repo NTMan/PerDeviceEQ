@@ -454,6 +454,11 @@ class MeasureWindow(Adw.Window):
         self._fan_geom = None
         self._map_odd = None
         self._map_partial = []
+        # A WALK OWNS THE CANVAS FROM THE PRESS, not from its first
+        # result. The emptiness of _map_partial cannot say that: a
+        # walk that has not produced a rung yet and a window with no
+        # walk look identical in it.
+        self._walk_live = False
         pick = Gtk.GestureClick()
         pick.set_button(1)
         pick.connect("released", self._on_map_pick)
@@ -904,6 +909,35 @@ class MeasureWindow(Adw.Window):
             "measured again"
             % (round(100.0 * got[k]["level"]) if k < len(got) else 0, k))
 
+    def _arm_walk(self, level_only):
+        """Hand the canvas to the walk, before a sound is played.
+
+        WHAT SURVIVES THE PRESS IS WHAT IS DRAWN, from the press. The
+        canvas used to keep the whole old map until the first new rung
+        landed -- a sweep and a half of looking at a picture the
+        button had already thrown away, and 0331 spends the chosen
+        rung here, so even the fading of the doomed rungs went with
+        it.
+
+        AND THE FRAME IS ASKED FOR HERE TOO, which is what 0336 left
+        out and the field found at once: the state changed and nothing
+        told the widget, so the picture still waited for the first
+        rung to arrive and call queue_draw on its way past. Setting
+        what a canvas shows in one place and repainting it in another
+        is the same fault the floor strip had, and the cure is the
+        same -- the two live together.
+        """
+        if not level_only:
+            return
+        keep = self._map_pick
+        self._map_partial = (level_run.rolled_back(self._map_rungs(), keep)
+                             if keep else [])
+        self._map_odd = None
+        self._walk_live = True
+        area = getattr(self, "map_area", None)
+        if area is not None:
+            area.queue_draw()
+
     def _map_live(self, rungs):
         """The rungs a walk has taken SO FAR, for drawing.
 
@@ -932,7 +966,7 @@ class MeasureWindow(Adw.Window):
         # A WALK IN PROGRESS OUTRANKS WHAT IS ON DISK, for as long as
         # it runs: the canvas should show the rungs being taken, not
         # the ones the last walk left.
-        got = (self._map_partial if self._busy and self._map_partial
+        got = (self._map_partial if self._busy and self._walk_live
                else level_run.maps_of(prof or {})
                .get(keys[self._selected_ch]))
         return sorted(got or [], key=lambda r: r["level"])
@@ -986,7 +1020,7 @@ class MeasureWindow(Adw.Window):
         disk, so the canvas cannot think one thing about whose rungs
         it is drawing and another about which view draws them.
         """
-        return bool(self._busy and self._map_partial)
+        return bool(self._busy and self._walk_live)
 
     def _draw_fan(self, cr, w, h, ml, mr, mt, mb, rungs):
         """One line per rung, each against the quietest that was
@@ -5179,6 +5213,7 @@ class MeasureWindow(Adw.Window):
         self._take_gain = self.gain_spin.get_value() / 100.0
         self._stop_asked = False
         self._walk_why = None
+        self._arm_walk(level_only)
         self._busy = True
         self._set_row_sensitive(False)
         self._update_pult()
@@ -5484,6 +5519,7 @@ class MeasureWindow(Adw.Window):
 
     def _measure_done(self, ch, result):
         self._busy = False
+        self._walk_live = False
         self._set_row_sensitive(True)
         self._update_pult()
         # THE RUN'S REPORT, NOT THE PULT'S STATE. "Ready" describes the
