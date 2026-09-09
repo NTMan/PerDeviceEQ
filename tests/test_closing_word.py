@@ -84,6 +84,9 @@ def _win():
     w.memory = _Obj()
     w.memory.remember = lambda *a, **k: None
     w.sink_node = "sink"
+    w.drawn = []
+    w.map_area = _Obj()
+    w.map_area.queue_draw = lambda: w.drawn.append(1)
     w._assert_entry_route = lambda: None
     w._assert_capture_gain = lambda: None
     return w
@@ -171,3 +174,15 @@ def test_a_run_that_walked_cleanly_says_its_level(monkeypatch):
 
     mw.MeasureWindow._measure_worker(win, 0)
     assert _done(_win(), dict(seen, error=None)) == "FL: level 24%"
+
+
+def test_the_end_of_a_walk_asks_for_the_frame():
+    """The rungs move back from the walk's own stack to what is on
+    disk here, and nothing told the canvas: the last live frame stood
+    until a pointer or a resize forced a repaint, which is why the
+    lines came back only when the mouse crossed them."""
+    win = _win()
+    _done(win, {"error": None, "outcome": None, "level": None,
+                "found": None, "word": None})
+    assert not win._walk_live
+    assert win.drawn, "the canvas was never asked to repaint"

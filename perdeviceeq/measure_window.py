@@ -5520,6 +5520,16 @@ class MeasureWindow(Adw.Window):
     def _measure_done(self, ch, result):
         self._busy = False
         self._walk_live = False
+        # AND THE FRAME, for the third time in this window and by the
+        # same law. The rungs move from the walk's own stack back to
+        # what is on disk here, and nothing told the canvas: the last
+        # live frame stood until something unrelated forced a repaint
+        # -- a pointer, a resize, a tab -- which is why the lines came
+        # back only when the mouse crossed them. Whoever changes what
+        # a canvas shows asks for the frame in the same place.
+        area = getattr(self, "map_area", None)
+        if area is not None:
+            area.queue_draw()
         self._set_row_sensitive(True)
         self._update_pult()
         # THE RUN'S REPORT, NOT THE PULT'S STATE. "Ready" describes the
