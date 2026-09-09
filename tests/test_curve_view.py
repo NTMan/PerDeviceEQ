@@ -1275,3 +1275,30 @@ def test_a_step_is_read_against_what_it_asked():
     rows = f._map_steps(lost)
     assert abs(rows[3][305] + 3.0) < 1e-6
     assert abs(rows[4][305]) < 1e-9
+
+
+def test_the_search_is_drawn_as_a_search():
+    """A hunt is a walk over LEVEL, so its picture is step against
+    level: one dot per probe, joined in order, a line where it
+    settled. The level axis is the whole knob, fixed, so no dot moves
+    when another lands."""
+    import re
+    import cairo
+    src = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "perdeviceeq",
+        "measure_window.py")).read()
+    m = re.search(r"\n    def _draw_hunt\(.*?(?=\n    def )", src, re.S)
+    assert m, "_draw_hunt is not defined at all"
+    ns = {"math": math, "HUNT_SLOTS": 8, "HUNT_FLOOR_DB": -60.0}
+    exec("class Fake:\n" + m.group(0), ns)
+    f = ns["Fake"]()
+    f._hunt_found = None
+    f._hunt_dots = [(1, 0.15, "quiet"), (2, 0.30, "quiet"),
+                    (3, 0.60, "loud"), (4, 0.42, "ok")]
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 48)
+    f._draw_hunt(None, cairo.Context(surf), 700, 48)
+    f._hunt_found = 0.42
+    f._draw_hunt(None, cairo.Context(surf), 700, 48)
+    # nothing drawn is fine too: an empty strip is a strip
+    f._hunt_dots = []
+    f._draw_hunt(None, cairo.Context(surf), 700, 48)

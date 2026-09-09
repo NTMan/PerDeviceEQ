@@ -69,7 +69,10 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 # vertical -- one axis has to carry the response AND its
 # harmonics fifty decibels below it, and that needs room
 FACE_H, ROW_H = 300, 200
-MAP_H = 230          # the level map's own canvas
+MAP_H = 230
+HUNT_H = 48      # the search strip: one dot per probe, step against level
+HUNT_SLOTS = 8   # steps laid out before the strip has to compress them
+HUNT_FLOOR_DB = -60.0   # the bottom of the level axis: 10% of the knob          # the level map's own canvas
 MAP_ODD_FLOOR_DB = 0.15  # under this a rung is not odd
                      # however quiet the walk was
 MAP_MUTE_DB = 1.0    # a base disagreeing with itself by
@@ -692,6 +695,21 @@ class MeasureWindow(Adw.Window):
         act.set_margin_top(12)
         act.set_margin_bottom(12)
         act.append(pult)
+        # THE SEARCH, DRAWN AS A SEARCH. A hunt is a walk over LEVEL,
+        # not over frequency, so its honest picture is step against
+        # level: one dot per probe, coloured by what the search made
+        # of it, and a line where it settled. A hand watching this
+        # sees the program searching, sees where it went, and sees
+        # whether it closed cleanly or bounced -- which no curve of
+        # any probe could show. Nothing here changes on its own: the
+        # dots stay after the search until the next search starts.
+        self.hunt_area = Gtk.DrawingArea()
+        self.hunt_area.set_content_height(HUNT_H)
+        self.hunt_area.set_hexpand(True)
+        self.hunt_area.set_draw_func(self._draw_hunt)
+        self._hunt_dots = []
+        self._hunt_found = None
+        act.append(self.hunt_area)
         act.append(self.center)
         self._act_row = Adw.PreferencesRow()
         self._act_row.set_activatable(False)
@@ -1457,6 +1475,83 @@ class MeasureWindow(Adw.Window):
 
     REF_HEARD = 0.9          # of the band, before a rung may be the
                              # one everything else is drawn against
+
+    def _hunt_reset(self):
+        self._hunt_dots = []
+        self._hunt_found = None
+        self.hunt_area.queue_draw()
+        return False
+
+    def _hunt_dot(self, p):
+        self._hunt_dots.append((p.step, float(p.volume), p.verdict))
+        self.hunt_area.queue_draw()
+        return False
+
+    def _hunt_settled(self, vol):
+        self._hunt_found = None if vol is None else float(vol)
+        self.hunt_area.queue_draw()
+        return False
+
+    def _draw_hunt(self, _area, cr, w, h):
+        """The search as a search: step along, level up.
+
+        THE LEVEL AXIS IS THE WHOLE KNOB, fixed, from HUNT_FLOOR_DB to
+        the top -- the same on every search of every rig, so the
+        picture never rescales under the hand. Each probe is a dot at
+        its step and its level, coloured by the verdict the search
+        gave it: too loud, too quiet, or a level it could accept. The
+        dots are joined in order, so a search that closed cleanly
+        looks like a pendulum settling and one that bounced looks
+        like one that bounced. Where the search settled, a line.
+        """
+        dots = self._hunt_dots
+        if not dots:
+            return
+        ml, mr, mt, mb = 30, 44, 6, 6
+        pw_, ph = max(1, w - ml - mr), max(1, h - mt - mb)
+        slots = max(HUNT_SLOTS, len(dots))
+
+        def px(step):
+            return ml + (step - 0.5) / slots * pw_
+
+        def py(v):
+            db = 60.0 * math.log10(max(v, 1e-6))
+            t = (db - HUNT_FLOOR_DB) / (0.0 - HUNT_FLOOR_DB)
+            return mt + ph - max(0.0, min(1.0, t)) * ph
+
+        cr.set_font_size(9)
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.35)
+        cr.set_line_width(1)
+        cr.move_to(ml, mt + ph + 0.5)
+        cr.line_to(ml + pw_, mt + ph + 0.5)
+        cr.stroke()
+        if self._hunt_found is not None:
+            y = py(self._hunt_found)
+            cr.set_source_rgba(0.20, 0.45, 0.85, 0.9)
+            cr.set_line_width(1.5)
+            cr.move_to(ml, y)
+            cr.line_to(ml + pw_, y)
+            cr.stroke()
+            cr.move_to(ml + pw_ + 4, y + 3)
+            cr.show_text("%d%%" % round(100 * self._hunt_found))
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
+        cr.set_line_width(1)
+        for i, (step, v, _verdict) in enumerate(dots):
+            (cr.move_to if i == 0 else cr.line_to)(px(i + 1), py(v))
+        cr.stroke()
+        for i, (step, v, verdict) in enumerate(dots):
+            if verdict == "loud":
+                cr.set_source_rgba(0.85, 0.25, 0.20, 0.95)
+            elif verdict == "quiet":
+                cr.set_source_rgba(0.55, 0.55, 0.55, 0.95)
+            else:
+                cr.set_source_rgba(0.20, 0.60, 0.30, 0.95)
+            cr.arc(px(i + 1), py(v), 3.5, 0, 2 * math.pi)
+            cr.fill()
+        step, v, _verdict = dots[-1]
+        cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
+        cr.move_to(4, py(v) + 3)
+        cr.show_text("%d%%" % round(100 * v))
 
     def _map_steps(self, rungs):
         """Each rung against the one below it, minus what the step asked.
@@ -5313,6 +5408,7 @@ class MeasureWindow(Adw.Window):
                    WHY.get(step, "step %s" % step)))
 
         def said(p):
+            GLib.idle_add(self._hunt_dot, p)
             thd = ("n/a" if p.thd_pct is None else
                    "%s%s%%%s" % ("<=" if p.thd_bound else "",
                                  measure_build.pct_word(p.thd_pct),
@@ -5359,6 +5455,10 @@ class MeasureWindow(Adw.Window):
                 # a question that a count does not raise.
                 keep_top = max(r["level"] for r in got)
                 return self._walk_map(ch, about_to, keep_top, got)
+        # A SEARCH STARTING IS WHAT CLEARS THE LAST ONE, not the press:
+        # a rebuild never searches, and the previous search's picture
+        # is still the answer to "where did this level come from".
+        GLib.idle_add(self._hunt_reset)
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
             self.session.cfg.channels,
@@ -5371,6 +5471,7 @@ class MeasureWindow(Adw.Window):
             on_probe=said, on_level=about_to,
             should_stop=lambda: self._stop_asked)
 
+        GLib.idle_add(self._hunt_settled, vol)
         # THE EPILOGUE. The search stops as soon as it can name a safe
         # level; the map has to go UP until something gives, and the
         # two want opposite things. But the tedious half -- the quiet

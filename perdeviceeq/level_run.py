@@ -1484,7 +1484,7 @@ class Probe:
     """One rung: what a sweep at one level said."""
 
     __slots__ = ("volume", "peak_dbfs", "snr_db", "thd_pct", "thd_bound",
-                 "margin_db", "clipped", "phase", "step")
+                 "margin_db", "clipped", "phase", "step", "verdict")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -1586,10 +1586,11 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
                    if got.snr_db is not None
                    and math.isfinite(float(got.snr_db)) else None)
 
-            ctl.observe(v, peak_db, snr, clipped, bound, margin)
+            verdict = ctl.observe(v, peak_db, snr, clipped, bound, margin)
             p = Probe(volume=v, peak_dbfs=peak_db, snr_db=snr,
                       thd_pct=pct, thd_bound=bound, margin_db=margin,
-                      clipped=clipped, phase=ctl.phase(), step=step)
+                      clipped=clipped, phase=ctl.phase(), step=step,
+                      verdict=verdict)
             probes.append(p)
             if on_probe is not None:
                 on_probe(p)
