@@ -67,6 +67,7 @@ def _win():
     w.said = []
     w._say = w.said.append
     w._walk_why = None
+    w._ladder_repaint = lambda: False
     w._walk_settled = None
     w._walk_probes = []
     w._stop_asked = False

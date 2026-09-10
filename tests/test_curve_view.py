@@ -928,7 +928,7 @@ def test_the_base_rung_has_to_be_heard_itself():
     assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41
 
 
-MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_wrapped", "_map_state_line", "_map_ref",
+MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes", "_ladder_rows", "_draw_ladder", "_wrapped", "_map_state_line", "_map_ref",
                "_map_mask", "_draw_map", "_walking", "_draw_fan",
                "_draw_check", "_map_band", "_map_at")
 
@@ -961,7 +961,8 @@ def map_fake():
 
     ns = {"math": math, "np": np, "level_run": level_run,
           "FMIN_PLOT": 20.0, "FMAX_PLOT": 20000.0,
-          "MAP_MUTE_DB": 1.0, "MAP_ODD_FLOOR_DB": 0.15, "MAP_H": 230}
+          "MAP_MUTE_DB": 1.0, "MAP_ODD_FLOOR_DB": 0.15, "MAP_H": 230,
+          "LADDER_ROW_H": 26, "LADDER_SPAN_DB": 2.0}
     body = "".join(grab(n) for n in MAP_METHODS)
     body += ("\n    _MAP_ENDS = " +
              re.search(r"_MAP_ENDS = (\{.*?\})", src, re.S).group(1) +
@@ -993,9 +994,10 @@ def map_rungs(steps):
     return rungs
 
 
-def map_window(rungs, on=False, partial=None, pick=2, hover=1):
+def map_window(rungs, on=False, partial=None, pick=2, hover=1,
+               probes=None):
     import types
-    prof = {"passport": {"FL": {"rungs": rungs}},
+    prof = {"passport": {"FL": {"rungs": rungs, "probes": probes or []}},
             "measurement": {"grid": {"f_lo": 20.0, "ppo": 96}}}
     f = map_fake()()
     f.ch_keys = ["FL"]
@@ -1006,6 +1008,9 @@ def map_window(rungs, on=False, partial=None, pick=2, hover=1):
     f._map_odd = None
     f._busy = False
     f._fan_geom = None
+    f._map_announce = None
+    f._walk_probes = []
+    f._ladder_repaint = lambda: False
     f._map_partial = rungs[:partial] if partial is not None else []
     f._walk_live = partial is not None
     f.map_area = types.SimpleNamespace(get_height=lambda: 230)
@@ -1302,3 +1307,41 @@ def test_the_search_is_drawn_as_a_search():
     # nothing drawn is fine too: an empty strip is a strip
     f._hunt_dots = []
     f._draw_hunt(None, cairo.Context(surf), 700, 48)
+
+
+def test_the_passport_canvas_draws_every_row_it_has():
+    """Above the rule the rungs by level, loudest on top, numbered
+    after the probes; below it the probes with their step numbers; an
+    announced row dashed among the rungs at its level, with no curve.
+    Every state draws on a bare cairo canvas."""
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    probes = [{"step": 1, "level": 0.15, "peak_dbfs": -17.0,
+               "verdict": "quiet", "mag_db": rungs[1]["mag_db"]},
+              {"step": 2, "level": 0.20, "peak_dbfs": -10.0,
+               "verdict": "ok", "mag_db": rungs[3]["mag_db"]},
+              {"step": 3, "level": 0.17, "peak_dbfs": -13.0,
+               "verdict": "quiet", "mag_db": rungs[2]["mag_db"]}]
+    f = map_window(rungs, on=False, probes=probes)
+    rows = f._ladder_rows()
+    kinds = [r[0] for r in rows]
+    assert kinds == ["rung"] * 7 + ["probe"] * 3
+    # loudest on top, numbered after the last probe
+    assert [r[1] for r in rows[:7]] == [10, 9, 8, 7, 6, 5, 4]
+    assert rows[6][5] == "base"
+    # probes by level, loudest first, with their own steps
+    assert [r[1] for r in rows[7:]] == [2, 3, 1]
+    assert rows[7][4] == "(2) 20%"
+    # an announced level slots among the rungs, dashed, no curve
+    f._map_announce = (0.235, "playing")
+    rows = f._ladder_rows()
+    at = [r[0] for r in rows].index("announce")
+    assert rows[at - 1][2] > 0.235 > rows[at + 1][2]
+    assert rows[at][3] is None
+    for ann in (None, (0.235, "playing"), (0.12, "seating")):
+        f._map_announce = ann
+        surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 400)
+        f._draw_ladder(None, cairo.Context(surf), 700, 400)
+    # nothing at all is a sentence, not an error
+    g = map_window([], on=False)
+    g._draw_ladder(None, cairo.Context(surf), 700, 400)

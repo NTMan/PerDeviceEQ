@@ -71,6 +71,9 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 FACE_H, ROW_H = 300, 200
 MAP_H = 230
 HUNT_H = 48      # the search strip: one dot per probe, step against level
+LADDER_ROW_H = 26      # one shelf per record on the passport canvas
+LADDER_SPAN_DB = 2.0   # a shelf shows this much either way; beyond it
+                       # a line is pinned to the shelf's edge
 HUNT_SLOTS = 8   # steps laid out before the strip has to compress them
 HUNT_FLOOR_DB = -60.0   # the bottom of the level axis: 10% of the knob          # the level map's own canvas
 MAP_ODD_FLOOR_DB = 0.15  # under this a rung is not odd
@@ -719,10 +722,6 @@ class MeasureWindow(Adw.Window):
         # size follows the caption is the scale rule broken in a new
         # place.
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        for side in ("start", "end"):
-            getattr(self.hunt_area, "set_margin_" + side)(12)
-        self.hunt_area.set_margin_top(12)
-        card.append(self.hunt_area)
         card.append(act)
         self._act_row = Adw.PreferencesRow()
         self._act_row.set_activatable(False)
@@ -988,6 +987,7 @@ class MeasureWindow(Adw.Window):
         area = getattr(self, "map_area", None)
         if area is not None:
             area.queue_draw()
+        self._ladder_repaint()
 
     def _map_live(self, rungs):
         """The rungs a walk has taken SO FAR, for drawing.
@@ -1004,6 +1004,8 @@ class MeasureWindow(Adw.Window):
         area = getattr(self, "map_area", None)
         if area is not None:
             GLib.idle_add(area.queue_draw)
+        self._map_announce = None
+        GLib.idle_add(self._ladder_repaint)
 
     def _map_rungs(self):
         """This channel's rungs, quietest first, as they stand on
@@ -1586,6 +1588,262 @@ class MeasureWindow(Adw.Window):
         cr.move_to(4, py(v) + 3)
         cr.show_text("%d%%" % round(100 * v))
 
+    def _build_ladder_card(self):
+        """The passport, drawn: every sweep of one command on one canvas.
+
+        ABOVE THE RULE, THE GRAPH -- the rungs by level, loudest on top,
+        each row that rung against the one below it minus what the
+        step asked for: the dynamic-linearity picture read one step at
+        a time. BELOW THE RULE, WHAT IS NOT THE GRAPH: the search's
+        probes, the same reading against their nearest rung by level.
+        Both bands are shelves -- a row per record, equal height, the
+        level a label and not a coordinate -- so nothing bunches where
+        the search dwelt.
+
+        EVERY ROW CARRIES ITS SLOT NUMBER, one sequence for the whole
+        command: the probes as they were played, then the rungs
+        climbing. A chosen row tells the hand what a rebuild from it
+        keeps and replays, in numbers rather than in heights.
+
+        THREE STATES OF A LINE and nothing else: dashed while the sweep
+        is announced and playing, grey while a row holds only an
+        auxiliary sweep, black once it is a record. The search's
+        convergence strip sits at the top: its dots are the search's
+        path, the rows below are its records.
+        """
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        for side in ("top", "bottom", "start", "end"):
+            getattr(box, "set_margin_" + side)(12)
+        trow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.ladder_title = Gtk.Label(xalign=0.0)
+        self.ladder_title.add_css_class("heading")
+        self.ladder_word = Gtk.Label(xalign=0.0)
+        self.ladder_word.add_css_class("dim-label")
+        self.ladder_word.set_hexpand(True)
+        trow.append(self.ladder_title)
+        trow.append(self.ladder_word)
+        box.append(trow)
+        box.append(self.hunt_area)
+        self.ladder_area = Gtk.DrawingArea()
+        self.ladder_area.set_hexpand(True)
+        self.ladder_area.set_content_height(LADDER_ROW_H * 4 + 60)
+        self.ladder_area.set_draw_func(self._draw_ladder)
+        pick = Gtk.GestureClick()
+        pick.set_button(1)
+        pick.connect("released", self._on_ladder_pick)
+        self.ladder_area.add_controller(pick)
+        box.append(self.ladder_area)
+        self._map_announce = None
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        card.add_css_class("card")
+        card.append(box)
+        return card
+
+    def _ladder_repaint(self):
+        area = getattr(self, "ladder_area", None)
+        if area is None:
+            return False
+        rows = self._ladder_rows()
+        area.set_content_height(LADDER_ROW_H * max(4, len(rows) + 1) + 60)
+        area.queue_draw()
+        if self.ch_keys:
+            self.ladder_title.set_text(self.ch_keys[self._selected_ch])
+            self.ladder_word.set_text(self._ladder_word_for(self._map_rungs()))
+        return False
+
+    def _ladder_announce(self, level, what):
+        self._map_announce = (level, what)
+        self._ladder_repaint()
+        return False
+
+    def _ladder_probes(self):
+        prof = ((self.parent.store.get(self.edit_pid) or {})
+                if self.edit_pid and getattr(self.parent, "store", None)
+                else {})
+        book = prof.get(level_run.PASSPORT) or {}
+        rec = (book.get(self.ch_keys[self._selected_ch])
+               if self.ch_keys else None)
+        live = getattr(self, "_walk_probes", None)
+        return list(live or (rec or {}).get("probes") or [])
+
+    def _ladder_rows(self):
+        """Every row of the canvas, top to bottom, as
+        (kind, slot, level, row, label, note). kind is "rung", "probe"
+        or "announce"; row is the step reading, None where the line
+        has nothing to say yet. Rungs are numbered after the last
+        probe, in level order, so the sequence is the command's.
+        """
+        rungs = self._map_rungs()
+        probes = sorted(self._ladder_probes(),
+                        key=lambda p: float(p.get("level") or 0.0))
+        steps = (self._map_steps(rungs) if len(rungs) >= 2
+                 else [[None] * len(r.get("mag_db") or []) for r in rungs])
+        first = max((int(p.get("step") or 0) for p in probes), default=0)
+        out = []
+        for k in range(len(rungs) - 1, -1, -1):
+            r = rungs[k]
+            slot = first + k + 1
+            out.append(("rung", slot, float(r["level"]),
+                        steps[k] if k < len(steps) else None,
+                        "%d%% (%d)" % (round(100 * r["level"]), slot),
+                        "base" if k == 0 else None))
+        ann = getattr(self, "_map_announce", None)
+        if ann is not None:
+            lv, what = ann
+            row = ("announce", None, float(lv), None,
+                   "%d%%" % round(100 * lv),
+                   what if isinstance(what, str) else "playing")
+            at = 0
+            while at < len(out) and out[at][2] > lv:
+                at += 1
+            out.insert(at, row)
+        for p in reversed(probes):
+            lv = float(p.get("level") or 0.0)
+            near = (min(rungs, key=lambda r: abs(math.log(
+                max(float(r["level"]), 1e-6) / max(lv, 1e-6))))
+                    if rungs else None)
+            row = None
+            if near is not None and p.get("mag_db") and near.get("mag_db"):
+                asked = 60.0 * math.log10(max(lv, 1e-6)
+                                          / max(float(near["level"]), 1e-6))
+                row = [None if (a is None or b is None) else (a - b) - asked
+                       for a, b in zip(p["mag_db"], near["mag_db"])]
+            step = int(p.get("step") or 0)
+            out.append(("probe", step, lv, row,
+                        "(%d) %d%%" % (step, round(100 * lv)),
+                        p.get("verdict")))
+        return out
+
+    def _draw_ladder(self, _area, cr, w, h):
+        rows = self._ladder_rows()
+        ml, mr, mt = 70, 48, 8
+        pw_ = max(1, w - ml - mr)
+        cr.set_font_size(10)
+        if not rows:
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
+            cr.move_to(ml, mt + 24)
+            cr.show_text("no level map for this channel yet")
+            self._ladder_geom = ([], None)
+            return
+        lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
+        grid = (((self.parent.store.get(self.edit_pid) or {})
+                 .get("measurement", {}).get("grid") or {})
+                if self.edit_pid else {})
+        g_lo = float(grid.get("f_lo") or FMIN_PLOT)
+        ppo = float(grid.get("ppo") or 96.0)
+
+        def px(i):
+            fhz = g_lo * 2.0 ** (i / ppo)
+            return ml + (math.log10(max(fhz, 1e-6)) - lo) / (hi - lo) * pw_
+
+        n_up = sum(1 for r in rows if r[0] != "probe")
+        y = mt
+        rule_y = None
+        scale = (LADDER_ROW_H / 2.0 - 2) / LADDER_SPAN_DB
+        for idx, (kind, _slot, _lv, row, label, note) in enumerate(rows):
+            if idx == n_up and idx < len(rows):
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
+                cr.set_line_width(1)
+                cr.move_to(4, y + 6.5)
+                cr.line_to(w - 4, y + 6.5)
+                cr.stroke()
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
+                cr.move_to(ml, y + 18)
+                cr.show_text("not the graph: the search, and the sweeps "
+                             "that serve it")
+                rule_y = y
+                y += 24
+            mid = y + LADDER_ROW_H / 2.0
+            cr.set_source_rgba(0.5, 0.5, 0.5, 0.18)
+            cr.set_line_width(1)
+            cr.move_to(ml, mid + 0.5)
+            cr.line_to(ml + pw_, mid + 0.5)
+            cr.stroke()
+            cr.set_source_rgba(0.35, 0.35, 0.35, 0.95)
+            cr.move_to(4, mid + 3.5)
+            cr.show_text(label)
+            if kind == "announce":
+                cr.set_source_rgba(0.20, 0.45, 0.85, 0.9)
+                cr.set_dash([4.0, 3.0])
+                cr.set_line_width(1.2)
+                cr.move_to(ml, mid)
+                cr.line_to(ml + pw_, mid)
+                cr.stroke()
+                cr.set_dash([])
+                cr.move_to(ml + pw_ + 4, mid + 3.5)
+                cr.show_text(note or "playing")
+            elif row is None or not any(v is not None for v in row):
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
+                cr.move_to(ml + pw_ + 4, mid + 3.5)
+                cr.show_text(note or "-")
+            else:
+                if kind == "probe":
+                    cr.set_source_rgba(0.55, 0.55, 0.55, 0.95)
+                else:
+                    cr.set_source_rgba(0.12, 0.12, 0.12, 0.95)
+                cr.set_line_width(1.0)
+                pen = False
+                for i, v in enumerate(row):
+                    if v is None:
+                        pen = False
+                        continue
+                    vy = mid - max(-LADDER_SPAN_DB,
+                                   min(LADDER_SPAN_DB, v)) * scale
+                    (cr.line_to if pen else cr.move_to)(px(i), vy)
+                    pen = True
+                cr.stroke()
+                vals = [v for v in row if v is not None]
+                rms = math.sqrt(sum(v * v for v in vals) / len(vals))
+                cr.set_source_rgba(0.5, 0.5, 0.5, 0.95)
+                cr.move_to(ml + pw_ + 4, mid + 3.5)
+                cr.show_text(note or "%.2f" % rms)
+            y += LADDER_ROW_H
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
+        for fhz, txt in ((20, "20"), (100, "100"), (1000, "1k"),
+                         (10000, "10k"), (20000, "20k")):
+            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_ + 2
+            gx = min(gx, ml + pw_ - cr.text_extents(txt).x_advance)
+            cr.move_to(gx, h - 6)
+            cr.show_text(txt)
+        self._ladder_geom = (rows, rule_y)
+
+    def _ladder_word_for(self, rungs):
+        """The one sentence the passport is for: where linearity ends,
+        or how far it is guaranteed when the end was not reached."""
+        if len(rungs) < 2:
+            return ""
+        ppo = ((((self.parent.store.get(self.edit_pid) or {})
+                 .get("measurement", {}).get("grid") or {}).get("ppo"))
+               if self.edit_pid else None)
+        knee = level_run.knee_of(rungs, ppo=ppo)
+        if knee is not None:
+            return "knee at %d%%" % round(100 * knee)
+        top = level_run.linear_top(rungs, ppo=ppo)
+        if top is None:
+            return ""
+        return ("linear at least to %d%% -- the capture ran out first"
+                % round(100 * top))
+
+    def _on_ladder_pick(self, _g, _n, _x, y):
+        """A row chosen on the ladder is the same choice as on the map:
+        the rung to rebuild from. Probes are not choosable yet."""
+        if self._busy:
+            return
+        rows = getattr(self, "_ladder_geom", ([], None))[0] or []
+        idx = int((y - 8) // LADDER_ROW_H)
+        if not 0 <= idx < len(rows) or rows[idx][0] != "rung":
+            return
+        rungs = self._map_rungs()
+        k = rows[idx][1] - 1 - max(
+            (int(p.get("step") or 0) for p in self._ladder_probes()),
+            default=0)
+        if not 0 <= k < len(rungs):
+            return
+        self._map_pick = None if self._map_pick == k else k
+        self._sync_relevel()
+        self.map_area.queue_draw()
+        self._ladder_repaint()
+
     def _map_steps(self, rungs):
         """Each rung against the one below it, minus what the step asked.
 
@@ -1807,6 +2065,7 @@ class MeasureWindow(Adw.Window):
         card.append(face)
         card.append(rev)
         col.append(card)
+        col.append(self._build_ladder_card())
         self._takes_open = True
         self._hl = cv.Highlight()
         self._face = None
@@ -5437,6 +5696,7 @@ class MeasureWindow(Adw.Window):
                 "%s: about to sweep at %d%%  (%s)"
                 % (self.ch_keys[ch], round(100 * v),
                    WHY.get(step, "step %s" % step)))
+            GLib.idle_add(self._ladder_announce, float(v), step)
 
         def said(p):
             GLib.idle_add(self._hunt_dot, p)
@@ -5743,6 +6003,8 @@ class MeasureWindow(Adw.Window):
         area = getattr(self, "map_area", None)
         if area is not None:
             area.queue_draw()
+        self._map_announce = None
+        self._ladder_repaint()
         self._set_row_sensitive(True)
         self._update_pult()
         # THE RUN'S REPORT, NOT THE PULT'S STATE. "Ready" describes the
