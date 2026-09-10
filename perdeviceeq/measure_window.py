@@ -1646,11 +1646,13 @@ class MeasureWindow(Adw.Window):
         ABOVE THE RULE, THE GRAPH -- the rungs by level, loudest on top,
         each row that rung against the one below it minus what the
         step asked for: the dynamic-linearity picture read one step at
-        a time. BELOW THE RULE, WHAT IS NOT THE GRAPH: the search's
-        probes, the same reading against their nearest rung by level.
-        Both bands are shelves -- a row per record, equal height, the
-        level a label and not a coordinate -- so nothing bunches where
-        the search dwelt.
+        a time. The base row, which has no step below it, is the pair:
+        the base's two sweeps against each other, the walk's own
+        scale. BELOW THE RULE, WHAT IS NOT THE GRAPH: the search's
+        probes, the same reading in the order the search played them
+        -- each against the probe before it. Both bands are shelves --
+        a row per record, equal height, the level a label and not a
+        coordinate -- so nothing bunches where the search dwelt.
 
         EVERY ROW CARRIES ITS SLOT NUMBER, one sequence for the whole
         command: the probes as they were played, then the rungs
@@ -1731,10 +1733,22 @@ class MeasureWindow(Adw.Window):
         for k in range(len(rungs) - 1, -1, -1):
             r = rungs[k]
             slot = first + k + 1
-            out.append(("rung", slot, float(r["level"]),
-                        steps[k] if k < len(steps) else None,
-                        "%d%% (%d)" % (round(100 * r["level"]), slot),
-                        "base" if k == 0 else None))
+            row = steps[k] if k < len(steps) else None
+            label = "%d%% (%d)" % (round(100 * r["level"]), slot)
+            if k == 0:
+                # THE BASE ROW IS THE PAIR. It has no step below it to
+                # be read against, so it drew nothing and its shelf
+                # showed only its own zero line -- which read as a
+                # sweep too faint to see. What the base has that no
+                # other rung has is a second sweep of itself, and the
+                # disagreement of the two, per bin, is the walk's own
+                # scale: every line above is believed only where it
+                # clears this. So that is the base's line, and its
+                # number on the right is that scatter.
+                sc = r.get("scatter_db")
+                row = list(sc) if sc else None
+                label += " pair"
+            out.append(("rung", slot, float(r["level"]), row, label, None))
         ann = getattr(self, "_map_announce", None)
         searching = getattr(self, "_walk_phase", None) == "search"
         if ann is not None and not searching:
@@ -1748,19 +1762,26 @@ class MeasureWindow(Adw.Window):
             out.insert(at, row)
         n_up = len(out)
         self._ladder_split = n_up    # the rule goes after this many rows
+        # THE SEARCH IS READ AGAINST ITSELF: each probe against the
+        # probe played before it, the step it asked for subtracted --
+        # the arithmetic the rungs use above the rule, in the order
+        # the search was played rather than by level. A probe used to
+        # be read against the nearest RUNG by level, and a search
+        # runs before there is any rung: six sweeps went out and the
+        # band below the rule showed six labelled shelves and no
+        # line, until the base landed and every probe appeared at
+        # once. And as the ladder climbed, the nearest rung changed
+        # and the probes' lines rewrote themselves underneath the
+        # hand. Read against its own neighbour a probe draws the
+        # moment it is judged and never changes afterwards. The first
+        # probe has no neighbour and draws nothing, as the base did.
+        by_step = sorted(probes, key=lambda p: int(p.get("step") or 0))
+        read = dict(zip((int(p.get("step") or 0) for p in by_step),
+                        self._map_steps(by_step)))
         for p in reversed(probes):
             lv = float(p.get("level") or 0.0)
-            near = (min(rungs, key=lambda r: abs(math.log(
-                max(float(r["level"]), 1e-6) / max(lv, 1e-6))))
-                    if rungs else None)
-            row = None
-            if near is not None and p.get("mag_db") and near.get("mag_db"):
-                asked = 60.0 * math.log10(max(lv, 1e-6)
-                                          / max(float(near["level"]), 1e-6))
-                row = [None if (a is None or b is None) else (a - b) - asked
-                       for a, b in zip(p["mag_db"], near["mag_db"])]
             step = int(p.get("step") or 0)
-            out.append(("probe", step, lv, row,
+            out.append(("probe", step, lv, read.get(step),
                         "(%d) %d%%" % (step, round(100 * lv)),
                         p.get("verdict")))
         if ann is not None and searching:

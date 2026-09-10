@@ -1341,7 +1341,9 @@ def test_the_passport_canvas_draws_every_row_it_has():
     assert kinds == ["rung"] * 7 + ["probe"] * 3
     # loudest on top, numbered after the last probe
     assert [r[1] for r in rows[:7]] == [10, 9, 8, 7, 6, 5, 4]
-    assert rows[6][5] == "base"
+    # the base row is the pair: its line is the pair's scatter
+    assert rows[6][4].endswith(" pair") and rows[6][5] is None
+    assert rows[6][3] == rungs[0]["scatter_db"]
     # probes by level, loudest first, with their own steps
     assert [r[1] for r in rows[7:]] == [2, 3, 1]
     assert rows[7][4] == "(2) 20%"
@@ -1425,3 +1427,53 @@ def test_a_walk_that_never_went_quiet_still_reads():
     base["scatter_db"] = [0.03] * len(base["mag_db"])
     m = L.scatter_model(base)
     assert m is not None and m[0] == 0.0 and abs(m[1] - 0.03) < 1e-6
+
+
+def test_the_search_is_read_against_itself():
+    """His screenshots: six sweeps of a search went out and the band
+    below the rule showed six labelled shelves with no line in them,
+    until the base landed and every probe appeared at once -- and as
+    the ladder climbed, the probes' lines changed underneath him. A
+    probe was read against the nearest RUNG by level, and a search
+    runs before there is any rung. It is read against the probe
+    played before it, the step it asked for subtracted: it draws the
+    moment it is judged, an event in it mirrors in the next, and the
+    rungs arriving later change nothing below the rule."""
+    import cairo
+    rungs = map_rungs([5.8, 6.2, 1.3, 2.5])
+    n = len(rungs[0]["mag_db"])
+    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
+
+    def at(level, bump=0.0):
+        up = 60.0 * math.log10(level / 0.12)
+        return [up + s + (bump if 300 < i < 380 else 0.0)
+                for i, s in enumerate(slope)]
+    probes = [{"step": 1, "level": 0.15, "verdict": "quiet",
+               "heard_offset_db": -40.0, "mag_db": at(0.15)},
+              {"step": 2, "level": 0.17, "verdict": "quiet",
+               "heard_offset_db": -40.0, "mag_db": at(0.17)},
+              {"step": 3, "level": 0.19, "verdict": "ok",
+               "heard_offset_db": -40.0, "mag_db": at(0.19, 0.6)},
+              {"step": 4, "level": 0.18, "verdict": "quiet",
+               "heard_offset_db": -40.0, "mag_db": at(0.18)}]
+    # mid-search: no rung exists, three probes judged
+    f = map_window([], on=False, partial=0)
+    f._busy = True
+    f._walk_phase = "search"
+    f._probes_fresh = True
+    f._walk_probes = probes[:3]
+    rows = {r[1]: r[3] for r in f._ladder_rows() if r[0] == "probe"}
+    assert not any(v is not None for v in rows[1] or [])   # no neighbour
+    drawn = [v for v in rows[2] if v is not None]
+    assert drawn and max(abs(v) for v in drawn) < 1e-9   # a linear rig
+    assert abs(rows[3][340] - 0.6) < 1e-9       # the event, in its own row
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 300)
+    f._draw_ladder(None, cairo.Context(surf), 700, 300)
+    # the next probe mirrors it, whatever its level
+    f._walk_probes = probes
+    rows = {r[1]: r[3] for r in f._ladder_rows() if r[0] == "probe"}
+    assert abs(rows[4][340] + 0.6) < 1e-9
+    # and the rungs, arriving, change nothing below the rule
+    f._map_partial = rungs
+    later = {r[1]: r[3] for r in f._ladder_rows() if r[0] == "probe"}
+    assert later == rows
