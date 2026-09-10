@@ -2148,8 +2148,17 @@ class MeasureWindow(Adw.Window):
         sh = self.session.comp_shift_db(ch)
         shifts = ({r.id: v for r, v in zip(takes, sh)}
                   if sh is not None else {})
+        # THE TAKES' OWN GRID, from the profile, as every other reader
+        # of a curve on this page takes it. The session's config was
+        # asked first, and the session a page is drawn against is not
+        # always a live one: the HIG audit draws this window over a
+        # fixture session that has takes and no config, and the page
+        # went down on the first count of clean takes.
+        grid = (((self.parent.store.get(self.edit_pid) or {})
+                 .get("measurement") or {}).get("grid") or {}
+                if self.edit_pid else {})
         return ms.odd_takes(takes, shifts,
-                            getattr(self.session.cfg, "ppo", mc.GRID_PPO))
+                            int(grid.get("ppo") or mc.GRID_PPO))
 
     def _clean_count(self, ch):
         """Takes that are clean on their own AND stand with the
