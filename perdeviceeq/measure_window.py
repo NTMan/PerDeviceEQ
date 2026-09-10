@@ -922,11 +922,15 @@ class MeasureWindow(Adw.Window):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         for side in ("top", "bottom", "start", "end"):
             getattr(box, "set_margin_" + side)(12)
-        trow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # THE SAME FACE AS THE TAKES CARD BELOW: a heading, and beside
+        # it the verdict in the caption size the takes' "3/3 clean"
+        # line uses -- his ask after seeing the two one above the other
+        trow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.ladder_title = Gtk.Label(xalign=0.0)
         self.ladder_title.add_css_class("heading")
         self.ladder_word = Gtk.Label(xalign=0.0)
         self.ladder_word.add_css_class("dim-label")
+        self.ladder_word.add_css_class("caption")
         self.ladder_word.set_hexpand(True)
         trow.append(self.ladder_title)
         trow.append(self.ladder_word)
@@ -1294,7 +1298,10 @@ class MeasureWindow(Adw.Window):
         return b
 
     def _build_page(self):
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        # the gap between cards is the window's one gap, the eighteen
+        # the left column keeps between its own; six was the spacing
+        # of a column that held one card
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         graph = Gtk.DrawingArea()
         graph.update_property(
             [Gtk.AccessibleProperty.LABEL],
