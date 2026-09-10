@@ -497,7 +497,7 @@ class EqWindow(Adw.ApplicationWindow):
         n = len(a)
         freqs = np.array([lo * 2.0 ** (i / ppo) for i in range(n)])
         w = max(1, int(round(ppo / 3.0)))
-        floor = 0.5 * level_run.MIN_READABLE_STEP
+        floor = level_run.WORTH_A_LINE_DB
         cubes = []
         for k in range(0, n, w):
             seg = a[k:k + w]
@@ -685,7 +685,7 @@ class EqWindow(Adw.ApplicationWindow):
         # 0.0 dB". Half a readable step is the smallest thing worth a
         # line, and it is not a taste: below it two sweeps of one rig
         # are already closer together than the claim.
-        bad = np.isfinite(a) & (a >= 0.5 * level_run.MIN_READABLE_STEP)
+        bad = np.isfinite(a) & (a >= level_run.WORTH_A_LINE_DB)
         if not bad.any():
             return None
         grid = ((self.store.get(self.current_pid) or {})
@@ -799,6 +799,17 @@ class EqWindow(Adw.ApplicationWindow):
             gate = 2.0 * sm
         else:
             gate = 2.0 * self._spread(ppo, n)
+        # AND NEVER UNDER WHAT IS WORTH SAYING. The gate says a loss
+        # is real -- twice what two sweeps of this rig disagree by,
+        # hundredths on a coupler -- and the curve turned red on it
+        # while the advice line, the strip and the cubes waited for
+        # half a readable step: his TWS at their working level lose a
+        # few tenths across the band, the peak rising a hair more
+        # than the curve on every rig, and the line went red and
+        # renamed itself "what you hear" over a curve that had not
+        # visibly moved. One bar for everything the loss feeds, and
+        # it is the bar three of the four already used.
+        gate = np.fmax(gate, level_run.WORTH_A_LINE_DB)
         prepared = []
         for rungs in maps:
             # THE BASE IS THE QUIETEST RUNG THAT IS ITSELF HEARD, not

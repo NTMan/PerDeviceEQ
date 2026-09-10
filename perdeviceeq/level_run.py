@@ -1393,6 +1393,17 @@ MIN_READABLE_STEP = 2.0
 #                             measured: the scatter between sweeps is
 #                             two tenths of a decibel, so a 2 dB step
 #                             is read with room and a 1 dB step is not
+WORTH_A_LINE_DB = 0.5 * MIN_READABLE_STEP
+#                             the smallest loss worth a word or a
+#                             colour: half a readable step. A deficit
+#                             can clear the scatter and still be
+#                             nothing -- a coupler resolves hundredths,
+#                             and "short by up to 0.0 dB" is a true
+#                             measurement and an absurd sentence. Not
+#                             a taste: below this, two sweeps of one
+#                             rig are already closer together than
+#                             the claim. The advice line, the strip,
+#                             the cubes and the curve all read it.
 
 
 def asked_db(prev, cur):
