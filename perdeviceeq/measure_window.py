@@ -1613,12 +1613,10 @@ class MeasureWindow(Adw.Window):
         n = max((len(r.get("mag_db") or []) for r in rungs), default=0)
 
         def heard(r):
-            mag = r.get("mag_db") or []
-            off = r.get("heard_offset_db")
-            return [i < len(mag) and mag[i] is not None
-                    and (off is None or mag[i] - float(off)
-                         > level_run.HEARD_OVER_NOISE_DB)
-                    for i in range(n)]
+            marg = level_run.margin_of(r, n)
+            return [bool(marg[i] > level_run.HEARD_OVER_NOISE_DB)
+                    if i < len(marg) and not math.isnan(marg[i])
+                    else False for i in range(n)]
 
         def knob(r):
             lv = float(r.get("level") or 0.0)

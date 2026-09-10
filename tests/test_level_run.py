@@ -1701,11 +1701,13 @@ def test_a_search_is_remembered_as_records_in_the_order_played():
     ps = [L.Probe(volume=0.15, peak_dbfs=-30.0, snr_db=40.0, thd_pct=0.2,
                   thd_bound=1.0, margin_db=12.0, clipped=False,
                   phase="up", step=1, verdict="quiet",
-                  mag_db=[-30.0, -30.5], heard_offset_db=-70.0),
+                  mag_db=[-30.0, -30.5], heard_offset_db=-70.0,
+                  floor_db=[-40.0, -41.0]),
           L.Probe(volume=0.30, peak_dbfs=-12.0, snr_db=48.0, thd_pct=2.0,
                   thd_bound=1.0, margin_db=6.0, clipped=False,
                   phase="up", step=2, verdict="loud",
-                  mag_db=[-12.0, -12.4], heard_offset_db=-70.0)]
+                  mag_db=[-12.0, -12.4], heard_offset_db=-70.0,
+                  floor_db=[-48.0, -47.0])]
     rec = L.probe_records(ps)
     assert [r["step"] for r in rec] == [1, 2]
     assert [r["verdict"] for r in rec] == ["quiet", "loud"]
@@ -1768,3 +1770,25 @@ def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
                                {"FL": 0.90, "FR": 0.90})
     assert abs(lvl - knee * 10.0 ** (-L.KNEE_MARGIN_DB / 60.0)) < 1e-9
     assert who == "FR"
+
+
+def test_the_margin_is_per_bin_from_the_floor():
+    """One broadband number called the base of a ladder deaf across
+    the middle of the band: 8 dB of margin by its arithmetic against
+    45 by the floor the analysis had already measured."""
+    import numpy as np
+    from perdeviceeq import level_run as L
+
+    rec = {"mag_db": [-26.5, -26.5, None, -30.0],
+           "heard_offset_db": -34.8,
+           "floor_db": [-45.0, -8.0, -45.0, None]}
+    m = L.margin_of(rec)
+    assert abs(m[0] - 45.0) < 1e-9          # the floor, not the sum
+    assert abs(m[1] - 8.0) < 1e-9
+    assert np.isnan(m[2])                    # no magnitude, no margin
+    assert np.isnan(m[3])                    # no floor, no margin
+    # without a floor the old broadband arithmetic is what there is
+    old = {"mag_db": [-26.5], "heard_offset_db": -34.8}
+    assert abs(L.margin_of(old)[0] - 8.3) < 1e-9
+    # padded to a requested width with nothing
+    assert len(L.margin_of(rec, 6)) == 6 and np.isnan(L.margin_of(rec, 6)[5])

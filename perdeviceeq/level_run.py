@@ -447,15 +447,17 @@ def scatter_model(rung):
     """
     sc = rung.get("scatter_db")
     mag = rung.get("mag_db")
-    off = rung.get("heard_offset_db")
-    if not sc or not mag or off is None:
+    if not sc or not mag:
         return None
-    n = min(len(sc), len(mag))
+    if rung.get("heard_offset_db") is None and not rung.get("floor_db"):
+        return None
+    marg = margin_of(rung)
+    n = min(len(sc), len(mag), len(marg))
     snr, val = [], []
     for i in range(n):
-        if sc[i] is None or mag[i] is None:
+        if sc[i] is None or mag[i] is None or not math.isfinite(marg[i]):
             continue
-        s = float(mag[i]) - float(off)
+        s = float(marg[i])
         v = float(sc[i])
         if math.isfinite(s) and math.isfinite(v) and v > 0:
             snr.append(s)
@@ -558,7 +560,6 @@ def linear_top(rungs, ppo=None):
             top = cur["level"]
             continue
         prev = ref
-        off = cur.get("heard_offset_db")
         mag = np.asarray([np.nan if v is None else v
                           for v in cur.get("mag_db") or []], float)
         pmag = np.asarray([np.nan if v is None else v
@@ -566,8 +567,7 @@ def linear_top(rungs, ppo=None):
         n = min(len(mag), len(pmag))
         if n == 0:
             break
-        heard = (mag[:n] - float(off)) if off is not None \
-            else np.full(n, np.inf)
+        heard = margin_of(cur, n)[:n]
         short, ok = shortfall(pmag[:n], mag[:n], heard, ask, None, ppo,
                               expected_scatter(model, heard))
         if not ok.any() or short.any():
@@ -860,7 +860,39 @@ def probe_records(probes):
                     "verdict": getattr(p, "verdict", None),
                     "phase": getattr(p, "phase", None),
                     "mag_db": list(getattr(p, "mag_db", None) or []),
-                    "heard_offset_db": getattr(p, "heard_offset_db", None)})
+                    "heard_offset_db": getattr(p, "heard_offset_db", None),
+                    "floor_db": list(getattr(p, "floor_db", None) or [])})
+    return out
+
+
+def margin_of(rec, n=None):
+    """Each bin's margin over the take's own floor, in dB, as an array
+    with NaN where there is none.
+
+    THE FLOOR IS PER BIN, and the analysis already measures it: the
+    floor of the harmonic measurement, the grey line under every take.
+    The old margin was one number for the whole band -- the broadband
+    SNR of the sweep -- laid over a per-bin magnitude, and it was off
+    by tens of decibels wherever the noise is not average: it called
+    the base of a ladder deaf across the middle of the band, 8 dB of
+    margin by its arithmetic against 45 by the floor, and every line
+    read against that base opened with a hole.
+    """
+    mag = np.asarray([np.nan if v is None else v
+                      for v in rec.get("mag_db") or []], float)
+    floor = rec.get("floor_db")
+    if floor:
+        fl = np.asarray([np.nan if v is None else v for v in floor], float)
+        m = min(len(mag), len(fl))
+        out = np.full(len(mag), np.nan)
+        out[:m] = -fl[:m]
+        out[np.isnan(mag)] = np.nan
+    else:
+        off = rec.get("heard_offset_db")
+        out = (mag - float(off)) if off is not None \
+            else np.where(np.isnan(mag), np.nan, np.inf)
+    if n is not None and len(out) < n:
+        out = np.concatenate([out, np.full(n - len(out), np.nan)])
     return out
 
 
@@ -1197,6 +1229,18 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
                           "spl_db": None,
                           "heard_offset_db": (None if off is None
                                               else round(off, 2)),
+                          # THE FLOOR, PER BIN: the harmonic
+                          # measurement's own noise floor re the
+                          # response, which is the margin with its
+                          # sign flipped. One number for the whole
+                          # band called a base deaf across its middle.
+                          "floor_db": [None if not math.isfinite(x)
+                                       else round(float(x), 1)
+                                       for x in np.asarray(
+                                           getattr(got, "thd_noise_db",
+                                                   None) if getattr(
+                                               got, "thd_noise_db", None)
+                                           is not None else [], float)],
                           "mag_db": [None if not math.isfinite(x)
                                      else round(float(x), 2)
                                      for x in mag]})
@@ -1576,7 +1620,7 @@ class Probe:
 
     __slots__ = ("volume", "peak_dbfs", "snr_db", "thd_pct", "thd_bound",
                  "margin_db", "clipped", "phase", "step", "verdict",
-                 "mag_db", "heard_offset_db")
+                 "mag_db", "heard_offset_db", "floor_db")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -1692,7 +1736,13 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
                               for x in np.asarray(
                                   getattr(got, "mag_db", []), float)],
                       heard_offset_db=getattr(got, "heard_offset_db",
-                                              None))
+                                              None),
+                      floor_db=[None if not math.isfinite(x)
+                                else round(float(x), 1)
+                                for x in np.asarray(
+                                    getattr(got, "thd_noise_db", None)
+                                    if getattr(got, "thd_noise_db", None)
+                                    is not None else [], float)])
             probes.append(p)
             if on_probe is not None:
                 on_probe(p)
