@@ -1331,23 +1331,31 @@ def test_a_coupler_fits_almost_no_noise_term():
     assert A < 1.0
 
 
-def test_a_rung_that_never_saw_a_low_snr_gets_no_model():
-    """A is what the scatter does as the signal falls away, so a curve
-    that never goes there cannot constrain it -- and an unconstrained
-    A near zero throws the gate wide open."""
-    assert level_run.scatter_model(
-        _scatter_rung(7.0, 0.10, lo_snr=25.0)) is None
+def test_a_rung_that_never_saw_a_low_snr_gets_the_floor_alone():
+    """A is what the scatter does as the signal falls away; a curve
+    that never goes there cannot constrain it. It used to get no model
+    at all, and with the margin read per bin against the measured
+    floor that refused the cleanest walk a rig can make -- his Origin,
+    37 dB above its noise in every bin, came back with no top, no knee
+    and no verdict. Every rung of a walk is at least as far from its
+    noise as the base, so no bin is ever asked about at a margin the
+    base did not see: the floor alone is the model, A pinned to zero.
+    """
+    A, F = level_run.scatter_model(_scatter_rung(7.0, 0.10, lo_snr=25.0))
+    assert A == 0.0
+    assert 0.05 < F < 0.5
 
 
-def test_an_old_profile_keeps_the_rule_it_was_walked_under():
-    """Scatter used to be kept only where the base was heard, so those
-    profiles have no quiet end by construction."""
+def test_scatter_kept_only_where_heard_still_yields_a_floor():
+    """Scatter kept only where the base was heard has no quiet end by
+    construction; that too is a walk that never went quiet."""
     r = _scatter_rung(7.0, 0.10)
     r["scatter_db"] = [None if s < 10 else v
                        for s, v in zip(
                            [m - r["heard_offset_db"] for m in r["mag_db"]],
                            r["scatter_db"])]
-    assert level_run.scatter_model(r) is None
+    A, F = level_run.scatter_model(r)
+    assert A == 0.0 and F > 0
 
 
 def test_the_gate_follows_the_scatter_not_the_ratio():

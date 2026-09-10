@@ -1020,6 +1020,9 @@ def map_window(rungs, on=False, partial=None, pick=2, hover=1,
     f.ladder_title = _Lbl()
     f._hunt_dots = []
     f._hunt_found = None
+    f._walk_phase = None
+    f._probes_fresh = False
+    f._ladder_split = 0
     f._map_partial = rungs[:partial] if partial is not None else []
     f._walk_live = partial is not None
     f.map_area = types.SimpleNamespace(get_height=lambda: 230)
@@ -1377,3 +1380,48 @@ def test_the_passport_card_speaks_and_shows_its_choice():
     f._draw_hunt(None, cairo.Context(surf), 700, 48)
     # a slot goes back to its rung
     assert f._ladder_k(f._ladder_rows()[0][1]) == len(rungs) - 1
+
+
+def test_a_search_announces_below_the_rule_and_starts_empty():
+    """While the search runs, its announce is a row among the probes,
+    not among the rungs; a fresh search shows no old probes until its
+    own land; and a rebuild keeps the record's."""
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0])
+    old = [{"step": 1, "level": 0.15, "verdict": "quiet",
+            "mag_db": rungs[1]["mag_db"]}]
+    f = map_window(rungs, on=False, probes=old)
+    # fresh search, nothing landed yet: no old probes, announce below
+    f._probes_fresh = True
+    f._walk_phase = "search"
+    f._map_announce = (0.15, "playing")
+    rows = f._ladder_rows()
+    assert [r[0] for r in rows].count("probe") == 0
+    assert rows[-1][0] == "announce" and f._ladder_split == len(rungs)
+    # the first probe lands: it is a row, the announce moves on
+    f._walk_probes = [{"step": 1, "level": 0.15, "verdict": "quiet",
+                       "mag_db": rungs[1]["mag_db"]}]
+    f._map_announce = (0.20, "playing")
+    rows = f._ladder_rows()
+    kinds = [r[0] for r in rows[f._ladder_split:]]
+    assert kinds == ["announce", "probe"]     # by level, loudest first
+    # a rebuild keeps the record's probes and announces among the rungs
+    f._probes_fresh = False
+    f._walk_probes = []
+    f._walk_phase = "ladder"
+    f._map_announce = (0.235, "playing")
+    rows = f._ladder_rows()
+    assert [r[0] for r in rows[:f._ladder_split]].count("announce") == 1
+    assert [r[0] for r in rows[f._ladder_split:]] == ["probe"]
+
+
+def test_a_walk_that_never_went_quiet_still_reads():
+    """With the margin per bin, a clean rig's base sits tens of dB
+    above its floor in every bin: no quiet end to fit, and refusing
+    the model left the map with no top, no knee, no verdict."""
+    from perdeviceeq import level_run as L
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0])
+    base = dict(rungs[0])
+    base["floor_db"] = [-50.0] * len(base["mag_db"])
+    base["scatter_db"] = [0.03] * len(base["mag_db"])
+    m = L.scatter_model(base)
+    assert m is not None and m[0] == 0.0 and abs(m[1] - 0.03) < 1e-6

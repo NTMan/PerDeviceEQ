@@ -984,6 +984,13 @@ class MeasureWindow(Adw.Window):
         self._walk_keep = keep
         self._walk_probes = []
         self._walk_settled = None
+        # A FRESH SEARCH STARTS WITH AN EMPTY BAND. Until its first
+        # probe lands the canvas used to fall back to the record and
+        # show the LAST search's probes under a new one's announce,
+        # which read as the search doing nothing. A rebuild never
+        # searches and keeps the record's probes, as it keeps the rest.
+        self._probes_fresh = keep is None
+        self._walk_phase = None
         self._walk_old = self._map_rungs()
         self._map_partial = (
             level_run.rolled_back(self._walk_old, keep)
@@ -1530,7 +1537,14 @@ class MeasureWindow(Adw.Window):
 
     def _hunt_dot(self, p):
         self._hunt_dots.append((p.step, float(p.volume), p.verdict))
+        # THE PROBE LANDS ON THE CANVAS AS IT IS JUDGED, not when the
+        # whole search returns: a row below the rule, with its curve,
+        # the moment its sweep is over -- the same rhythm the rungs
+        # keep above it
+        self._walk_probes = list(getattr(self, "_walk_probes", None) or []) \
+            + level_run.probe_records([p])
         self.hunt_area.queue_draw()
+        self._ladder_repaint()
         return False
 
     def _hunt_settled(self, vol):
@@ -1552,7 +1566,7 @@ class MeasureWindow(Adw.Window):
         """
         dots = self._hunt_dots
         found = self._hunt_found
-        if not dots:
+        if not dots and not getattr(self, "_probes_fresh", False):
             # THE STRIP IS NOT BLANK BETWEEN SEARCHES. The dots of the
             # last search are on record with the passport, step,
             # level and verdict, and where it settled; an empty band
@@ -1696,7 +1710,9 @@ class MeasureWindow(Adw.Window):
 
     def _ladder_probes(self):
         live = getattr(self, "_walk_probes", None)
-        return list(live or self._ladder_record().get("probes") or [])
+        if live or getattr(self, "_probes_fresh", False):
+            return list(live or [])
+        return list(self._ladder_record().get("probes") or [])
 
     def _ladder_rows(self):
         """Every row of the canvas, top to bottom, as
@@ -1720,7 +1736,8 @@ class MeasureWindow(Adw.Window):
                         "%d%% (%d)" % (round(100 * r["level"]), slot),
                         "base" if k == 0 else None))
         ann = getattr(self, "_map_announce", None)
-        if ann is not None:
+        searching = getattr(self, "_walk_phase", None) == "search"
+        if ann is not None and not searching:
             lv, what = ann
             row = ("announce", None, float(lv), None,
                    "%d%%" % round(100 * lv),
@@ -1729,6 +1746,8 @@ class MeasureWindow(Adw.Window):
             while at < len(out) and out[at][2] > lv:
                 at += 1
             out.insert(at, row)
+        n_up = len(out)
+        self._ladder_split = n_up    # the rule goes after this many rows
         for p in reversed(probes):
             lv = float(p.get("level") or 0.0)
             near = (min(rungs, key=lambda r: abs(math.log(
@@ -1744,6 +1763,19 @@ class MeasureWindow(Adw.Window):
             out.append(("probe", step, lv, row,
                         "(%d) %d%%" % (step, round(100 * lv)),
                         p.get("verdict")))
+        if ann is not None and searching:
+            # THE SEARCH'S ANNOUNCE LIVES BELOW THE RULE, among the
+            # probes by level: a probe about to be played is not a rung
+            # and was drawn as one, in the graph's band, with the old
+            # probes sitting untouched underneath it
+            lv, what = ann
+            row = ("announce", None, float(lv), None,
+                   "%d%%" % round(100 * lv),
+                   what if isinstance(what, str) else "playing")
+            at = n_up
+            while at < len(out) and out[at][2] > lv:
+                at += 1
+            out.insert(at, row)
         return out
 
     def _draw_ladder(self, _area, cr, w, h):
@@ -1778,7 +1810,7 @@ class MeasureWindow(Adw.Window):
             fhz = g_lo * 2.0 ** (i / ppo)
             return ml + (math.log10(max(fhz, 1e-6)) - lo) / (hi - lo) * pw_
 
-        n_up = sum(1 for r in rows if r[0] != "probe")
+        n_up = getattr(self, "_ladder_split", len(rows))
         field_h = LADDER_ROW_H * len(rows) + (24 if n_up < len(rows) else 0)
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.08)
         cr.rectangle(ml, mt, pw_, field_h)
@@ -1796,6 +1828,7 @@ class MeasureWindow(Adw.Window):
         scale = (LADDER_ROW_H / 2.0 - 2) / LADDER_SPAN_DB
         for idx, (kind, slot, _lv, row, label, note) in enumerate(rows):
             if idx == n_up and idx < len(rows):
+                # the rule, then the band that is not the graph
                 cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
                 cr.set_line_width(1)
                 cr.move_to(4, y + 6.5)
@@ -5826,6 +5859,7 @@ class MeasureWindow(Adw.Window):
         # is still the answer to "where did this level come from".
         GLib.idle_add(self._hunt_reset)
         self._walk_probes = []
+        self._walk_phase = "search"
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
             self.session.cfg.channels,
@@ -5869,6 +5903,7 @@ class MeasureWindow(Adw.Window):
         A REBUILD ENTERS HERE DIRECTLY, without a search: the level is
         already known from the rungs being kept.
         """
+        self._walk_phase = "ladder"
         try:
             rungs = level_run.headroom_map(
                 self.session.sink, self.session.source,
@@ -6079,6 +6114,8 @@ class MeasureWindow(Adw.Window):
         if area is not None:
             area.queue_draw()
         self._map_announce = None
+        self._walk_phase = None
+        self._probes_fresh = False
         self._ladder_repaint()
         self._set_row_sensitive(True)
         self._update_pult()

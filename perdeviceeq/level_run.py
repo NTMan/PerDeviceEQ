@@ -472,8 +472,6 @@ def scatter_model(rung):
         if k.sum() >= 6:
             xs.append(a + 1.5)
             ys.append(float(np.median(val[k])))
-    if len(xs) < 4:
-        return None
     # AND THE FIT HAS TO HAVE SEEN THE QUIET END. A is what the
     # scatter does as the signal falls away, so a curve that never
     # goes there cannot constrain it: on a room walk the loudest rung,
@@ -485,8 +483,20 @@ def scatter_model(rung):
     # An old profile, whose scatter was kept only where the base was
     # heard, has no quiet end by construction and therefore gets no
     # model -- it keeps the rule it was walked under.
-    if min(xs) > MODEL_LOW_SNR:
-        return None
+    if len(xs) < 4 or min(xs) > MODEL_LOW_SNR:
+        # A WALK THAT NEVER WENT QUIET HAS NO A TO FIT, AND NEEDS NONE.
+        # With the margin read per bin against the measured floor,
+        # his Origin's base sits 37 to 81 dB above its noise in every
+        # bin; the old broadband margin had put it at 8 to 30 and the
+        # fit had, by that accident, a quiet end to see. Refusing the
+        # model here left the whole map unreadable -- no linear top,
+        # no knee, no verdict -- for the cleanest walk the rig can
+        # make. Every rung of a walk is at least as far from its noise
+        # as the base is, so no bin will ever be asked about at a
+        # margin the base did not see: the floor alone is the model,
+        # valid everywhere the walk was. (Too few SNR bins to fit is
+        # the same case: a margin that hardly varies across the band.)
+        return (0.0, float(np.median(val)))
     xs = np.asarray(xs)
     ys = np.asarray(ys)
     # a coarse search rather than an optimiser: two parameters over a
