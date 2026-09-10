@@ -1193,9 +1193,20 @@ class MeasureWindow(Adw.Window):
             cr.line_to(gx, mt + ph)
             cr.stroke()
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
-        for fhz, txt in ((100, "100"), (1000, "1k"), (10000, "10k")):
-            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
-            cr.move_to(gx + 2, h - 4)
+        # THE EDGES ARE NAMED. Labelled at the decades only, the axis
+        # ended at "10k" with a third of an octave of lines running on
+        # past it, and read as if it stopped short of 20 kHz. The same
+        # ticks as the take canvas, so the two agree on what the band
+        # is.
+        for fhz, txt in ((20, "20"), (50, "50"), (100, "100"),
+                         (200, "200"), (500, "500"), (1000, "1k"),
+                         (2000, "2k"), (5000, "5k"), (10000, "10k"),
+                         (20000, "20k")):
+            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_ + 2
+            # a label stays inside the field, whatever its width:
+            # measured from the font, not guessed
+            gx = min(gx, ml + pw_ - cr.text_extents(txt).x_advance)
+            cr.move_to(gx, h - 4)
             cr.show_text(txt)
         # A THRESHOLD ON THE SPAN puts a cliff in the middle of the
         # ordinary case: one channel spanning 24.0 dB drew a line
