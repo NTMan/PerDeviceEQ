@@ -859,92 +859,6 @@ def test_a_profile_with_no_map_reads_as_none():
     assert level_run.maps_of({}) == {}
 
 
-# --- which rung does not belong with the rest -------------------------
-
-def _ladder(k=11, n=200, drive=2.0, steps=None):
-    """A rig that follows its knob, with a little noise.
-
-    Each rung carries the capture peak, because that is the axis the
-    reading is fitted against: a ladder is smooth in LEVEL, and the
-    rungs are not evenly spaced once the descent goes coarse.
-    """
-    rng = random.Random(4)
-    out = []
-    at = 0.0
-    for j in range(k):
-        if j and steps:
-            at += steps[(j - 1) % len(steps)]
-        elif j:
-            at += drive
-        out.append({"level": 0.3 * 10.0 ** (at / 60.0),
-                    "peak_dbfs": -40.0 + at,
-                    "mag_db": [at + rng.gauss(0, 0.02)
-                               for _ in range(n)]})
-    return out
-
-
-def test_a_clean_ladder_has_no_odd_rung():
-    res, floor = level_run.odd_rung_out(_ladder())
-    assert floor < 0.1
-    for row in res:
-        v = [x for x in row if x is not None]
-        assert (sum(x * x for x in v) / len(v)) ** 0.5 < 0.1
-
-
-def test_one_spoiled_rung_lights_one_rung_and_not_its_neighbours():
-    """Against NEIGHBOURS a fault lights three -- the culprit at
-    weight one and each neighbour at a half -- and which of the three
-    did it cannot be read off the picture. Against the trend of all,
-    it lights one."""
-    got = _ladder()
-    for i in range(40, 90):                       # a bark, one rung
-        got[5]["mag_db"][i] += 2.0
-    res, floor = level_run.odd_rung_out(got)
-
-    def rms(k):
-        v = [x for x in res[k] if x is not None]
-        return (sum(x * x for x in v) / len(v)) ** 0.5
-    assert rms(5) > 20 * floor
-    for k in (3, 4, 6, 7):
-        assert rms(k) < 4 * floor
-
-
-def test_three_spoiled_rungs_are_named_separately():
-    got = _ladder()
-    for i in range(10, 30):
-        got[2]["mag_db"][i] += 3.0
-    for i in range(60, 120):
-        got[5]["mag_db"][i] += 2.0
-    for i in range(150, 190):
-        got[8]["mag_db"][i] -= 2.5
-    res, floor = level_run.odd_rung_out(got)
-    def rms(k):
-        v = [x for x in res[k] if x is not None]
-        return (sum(x * x for x in v) / len(v)) ** 0.5
-    hot = [k for k in range(len(res)) if rms(k) > 4 * floor]
-    assert hot == [2, 5, 8]
-
-
-def test_a_rig_that_compresses_smoothly_is_not_odd():
-    """Everything a rig does to the step it does gradually, because
-    every mechanism here is monotone in level. Only what is NOT the
-    rig should stand out."""
-    got = _ladder()
-    for j, r in enumerate(got):
-        for i in range(0, 60):                    # bass giving way
-            r["mag_db"][i] -= 0.35 * j * j / 10.0
-    res, floor = level_run.odd_rung_out(got)
-    for row in res:
-        v = [x for x in row if x is not None]
-        assert (sum(x * x for x in v) / len(v)) ** 0.5 < 8 * max(floor,
-                                                                0.02)
-
-
-def test_too_few_rungs_says_nothing():
-    res, floor = level_run.odd_rung_out(_ladder(k=4))
-    assert res == [] and floor == 0.0
-
-
 # --- rebuilding from a chosen rung ------------------------------------
 
 def test_rolling_back_drops_everything_above():
@@ -1047,35 +961,6 @@ def test_a_kept_rung_with_no_scatter_is_built_on_without_a_check(
     assert len(got) > len(old)
 
 
-def test_the_odd_rung_reading_is_the_same_fit_column_by_column():
-    """It fits every frequency at once now, from one Vandermonde,
-    because one fit per bin cost 224 ms on an eleven rung walk and
-    the pointer asks for a repaint on every motion event. The answer
-    has to be the answer the slow way gave."""
-    got = _ladder(k=9, n=60)
-    for i in range(10, 25):
-        got[4]["mag_db"][i] += 2.0
-    res, floor = level_run.odd_rung_out(got)
-
-    # the same thing, one column at a time
-    import numpy as _np
-    cols = [r["mag_db"] for r in got]
-    ks = _np.arange(len(got), dtype=float)
-    slow = []
-    for k in range(len(got)):
-        slow.append([None] * len(cols[0]))
-    for i in range(len(cols[0])):
-        y = _np.array([c[i] for c in cols], float)
-        c = _np.polyfit(ks, y, 2)
-        drop = int(_np.argmax(_np.abs(y - _np.polyval(c, ks))))
-        m = _np.ones(len(got), bool)
-        m[drop] = False
-        c = _np.polyfit(ks[m], y[m], 2)
-        for k in range(len(got)):
-            slow[k][i] = float(y[k] - _np.polyval(c, k))
-    for k in range(len(got)):
-        for i in range(len(cols[0])):
-            assert abs(res[k][i] - slow[k][i]) < 1e-6
 
 
 # --- finished or interrupted ------------------------------------------
@@ -1420,27 +1305,8 @@ def test_the_boundary_is_counted_and_not_compared(monkeypatch):
     assert len({tuple(g) for g in seen}) == 1
 
 
-def test_an_uneven_ladder_does_not_flag_its_own_handover():
-    """A ladder is smooth in LEVEL, and fitting it against rung number
-    assumes even spacing. His descent went coarse -- 12.2, 15.4, 19.4
-    then 20.9, 22.6, 24.4, 26.4, six decibels apart and then two -- and
-    the curve that is smooth in level is kinked in index. The kink
-    lands on the handover rung, and it was flagged on every walk."""
-    got = _ladder(k=7, steps=[6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    res, floor = level_run.odd_rung_out(got)
-    for k in range(len(got)):
-        v = [x for x in res[k] if x is not None]
-        rms = (sum(x * x for x in v) / len(v)) ** 0.5
-        assert rms < max(0.15, 4 * floor), "rung %d flagged" % k
 
 
-def test_a_rung_with_no_peak_leaves_the_reading_unmade():
-    """The peak IS the axis, so a ladder that does not record it
-    cannot be read this way at all -- better than reading it against
-    a made-up one."""
-    got = _ladder(k=7)
-    got[3]["peak_dbfs"] = None
-    assert level_run.odd_rung_out(got) == ([], 0.0)
 
 
 def test_a_rebuild_does_not_measure_the_rung_it_kept(monkeypatch):

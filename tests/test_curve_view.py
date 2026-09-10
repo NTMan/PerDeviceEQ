@@ -928,9 +928,9 @@ def test_the_base_rung_has_to_be_heard_itself():
     assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41
 
 
-MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes", "_ladder_rows", "_draw_ladder", "_ladder_record", "_ladder_k", "_ladder_word_for", "_draw_hunt", "_wrapped", "_map_state_line", "_map_ref",
-               "_map_mask", "_draw_map", "_walking", "_draw_fan",
-               "_draw_check", "_map_band", "_map_at")
+MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes",
+               "_ladder_rows", "_draw_ladder", "_ladder_record",
+               "_ladder_k", "_ladder_word_for", "_wrapped")
 
 
 def map_fake():
@@ -939,7 +939,7 @@ def map_fake():
 
     A call to a method that was never written passes pyflakes and
     every court here, and fails the moment a canvas repaints: a
-    rename left _draw_map calling a _draw_fan that did not exist, and
+    rename left a draw function calling a helper that did not exist, and
     the window died on the first redraw. Nothing exercised the
     drawing at all.
     """
@@ -954,20 +954,14 @@ def map_fake():
 
     def grab(name):
         m = re.search(r"\n    (?:@staticmethod\n    )?def %s\(.*?"
-                      r"(?=\n    (?:@staticmethod|def|_MAP_ENDS|"
-                      r"REF_HEARD))" % name, src, re.S)
+                      r"(?=\n    (?:@staticmethod|def))" % name, src, re.S)
         assert m, "%s is not defined at all" % name
         return m.group(0)
 
     ns = {"math": math, "np": np, "level_run": level_run,
           "FMIN_PLOT": 20.0, "FMAX_PLOT": 20000.0,
-          "MAP_MUTE_DB": 1.0, "MAP_ODD_FLOOR_DB": 0.15, "MAP_H": 230,
-          "LADDER_ROW_H": 26, "LADDER_SPAN_DB": 2.0,
-          "HUNT_SLOTS": 8, "HUNT_FLOOR_DB": -60.0}
+          "LADDER_ROW_H": 26, "LADDER_SPAN_DB": 2.0}
     body = "".join(grab(n) for n in MAP_METHODS)
-    body += ("\n    _MAP_ENDS = " +
-             re.search(r"_MAP_ENDS = (\{.*?\})", src, re.S).group(1) +
-             "\n    REF_HEARD = 0.9\n")
     exec("class Fake:\n" + body, ns)
     return ns["Fake"]
 
@@ -995,8 +989,7 @@ def map_rungs(steps):
     return rungs
 
 
-def map_window(rungs, on=False, partial=None, pick=2, hover=1,
-               probes=None):
+def map_window(rungs, partial=None, pick=2, probes=None):
     import types
     prof = {"passport": {"FL": {"rungs": rungs, "probes": probes or []}},
             "measurement": {"grid": {"f_lo": 20.0, "ppo": 96}}}
@@ -1005,10 +998,7 @@ def map_window(rungs, on=False, partial=None, pick=2, hover=1,
     f._selected_ch = 0
     f.edit_pid = "p"
     f._map_pick = pick
-    f._map_hover = hover
-    f._map_odd = None
     f._busy = False
-    f._fan_geom = None
     f._map_announce = None
     f._walk_probes = []
     f._ladder_repaint = lambda: False
@@ -1018,172 +1008,26 @@ def map_window(rungs, on=False, partial=None, pick=2, hover=1,
         def set_text(self, t): self.t = t
     f.ladder_word = _Lbl()
     f.ladder_title = _Lbl()
-    f._hunt_dots = []
-    f._hunt_found = None
     f._walk_phase = None
     f._probes_fresh = False
     f._ladder_split = 0
     f._map_partial = rungs[:partial] if partial is not None else []
     f._walk_live = partial is not None
-    f.map_area = types.SimpleNamespace(get_height=lambda: 230)
-    f.map_view = types.SimpleNamespace(get_active=lambda: on)
     f.parent = types.SimpleNamespace(
         store=types.SimpleNamespace(get=lambda _p: prof))
     return f
 
 
-def test_the_fan_picks_the_line_the_pointer_is_on():
-    """His field report, in one sentence: aiming at the second line
-    and getting the third. The ladder steps 6, 6, 2, 2, 2, 2, so the
-    lines are not evenly spaced and the even band grid the hit test
-    used points somewhere else than the eye does.
-    """
-    import cairo
-    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    # a rig whose loss grows with level, so the STEPS differ and the
-    # lines stand apart: on a linear ladder every step lies on zero
-    # and there is nothing to aim at
-    for k, r in enumerate(rungs):
-        r["mag_db"] = [v - 0.3 * k * k for v in r["mag_db"]]
-    f = map_window(rungs, on=False)
-    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
-    f._draw_map(None, cr, 700, 230)
-
-    rows, bin_at, py = f._fan_geom
-    x = 350.0
-    i = bin_at(x)
-    for k in range(len(rungs)):
-        if rows[k][i] is None:          # the base has no step to aim at
-            continue
-        assert f._map_at(x, py(rows[k][i])) == k
-
-    # AND THE LADDER IS ADVERSARIAL, or this court has no teeth: on an
-    # uneven ladder the band arithmetic must answer something other
-    # than the line the eye is on. Which rung it misses is a property
-    # of the axis, not of the defect, so it is not pinned here.
-    band = [f._map_band(py(rows[k][i])) for k in range(1, len(rungs))]
-    assert band != list(range(1, len(rungs))), "the fixture is too even"
 
 
-def test_the_shelves_keep_their_bands():
-    """The even spacing there is this window's own, so a band IS a
-    rung and there is no line to aim at."""
-    import cairo
-    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    f = map_window(rungs, on=True)
-    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
-    f._draw_map(None, cr, 700, 230)
-    assert f._fan_geom is None
-    for y in (30.0, 90.0, 150.0, 200.0):
-        assert f._map_at(350.0, y) == f._map_band(y)
 
 
-def test_nothing_is_under_the_pointer_where_no_line_was_drawn():
-    """A fan too short to draw leaves no geometry, and a view that
-    cannot be aimed at must not answer at random."""
-    import cairo
-    f = map_window(map_rungs([])[:1], on=False)
-    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
-    f._draw_map(None, cr, 700, 230)
-    assert f._fan_geom is None
-    assert f._map_at(350.0, 120.0) is None
 
 
-def test_every_map_view_draws_without_gtk():
-    """Each view on a plain cairo surface, with the rungs a walk
-    actually produces."""
-    import types
-    import cairo
-
-    Fake = map_fake()
-    n = 200
-    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
-    rungs = []
-    for j in range(7):
-        r = {"level": 0.12 * 10.0 ** (j * 2.0 / 60.0),
-             "peak_dbfs": -30.0 + j * 2.0,
-             "heard_offset_db": -40.0,
-             "mag_db": [j * 2.0 + s for s in slope],
-             "stopped_by": "capture" if j == 6 else None}
-        if j == 0:
-            r["scatter_db"] = [0.1] * n
-        rungs.append(r)
-    prof = {"passport": {"FL": {"rungs": rungs}},
-            "measurement": {"grid": {"f_lo": 20.0, "ppo": 96}}}
-
-    for on in (False, True):
-        for k in (0, 3, 7):
-            f = Fake()
-            f.ch_keys = ["FL"]
-            f._selected_ch = 0
-            f.edit_pid = "p"
-            f._map_pick = 2
-            f._map_hover = 1
-            f._map_odd = None
-            f._busy = False
-            f._fan_geom = None
-            f._map_partial = rungs[:k]
-            f.map_area = types.SimpleNamespace(get_height=lambda: 230)
-            f.map_view = types.SimpleNamespace(get_active=lambda: on)
-            f.parent = types.SimpleNamespace(
-                store=types.SimpleNamespace(get=lambda _p: prof))
-            surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230)
-            cr = cairo.Context(surf)
-            f._draw_map(None, cr, 700, 230)
 
 
-def test_a_walk_owns_the_canvas():
-    """The shelves need five rungs and used to borrow the fan until
-    the fifth arrived, then take over mid-walk: axis, colour and the
-    shape of every line changed in one frame with nothing said. A
-    walk now draws one picture from the first rung to the last.
-    """
-    import cairo
-    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    for n in (2, 5, 7):
-        f = map_window(rungs, on=True, partial=n)
-        f._busy = True
-        assert f._walking()
-        cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
-        f._draw_map(None, cr, 700, 230)
-        # the fan leaves its geometry; the shelves do not
-        assert f._fan_geom is not None, "the shelves took over at %d rungs" % n
-    # and the moment the walk ends the toggle is honoured again
-    f = map_window(rungs, on=True)
-    f._busy = False
-    assert not f._walking()
-    cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
-    f._draw_map(None, cr, 700, 230)
-    assert f._fan_geom is None
 
 
-def test_neither_picture_takes_its_scale_from_the_data():
-    """A clean walk was stretched to its own worst number, so
-    hundredths of a decibel filled the picture and every arriving rung
-    rescaled what was already drawn. The fan's axis is the walk's
-    reach and the shelves are as tall as the bar -- both known from
-    the first rung, neither moving after it.
-    """
-    import cairo
-    import copy
-    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-
-    def axis(rs):
-        f = map_window(rs, on=False)
-        cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
-        f._draw_map(None, cr, 700, 230)
-        _rows, _bin_at, py = f._fan_geom
-        return py(0.0), py(1.0)          # where zero and +1 dB land
-
-    was = axis(rungs)
-    # the same walk with a rung that departs by ten decibels: the axis
-    # may not follow it
-    bent = copy.deepcopy(rungs)
-    bent[4]["mag_db"] = [None if v is None else v - 10.0
-                         for v in bent[4]["mag_db"]]
-    assert axis(bent) == was
-    # and it does not creep as the walk arrives rung by rung
-    assert axis(rungs[:3]) == was
 
 
 def test_the_press_hands_the_canvas_over_before_the_first_result():
@@ -1193,15 +1037,14 @@ def test_the_press_hands_the_canvas_over_before_the_first_result():
     a half of looking at what the button had already discarded."""
     import cairo
     rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    f = map_window(rungs, on=False, partial=0)   # armed, nothing yet
+    f = map_window(rungs, partial=0)   # armed, nothing yet
     f._busy = True
-    assert f._walking()
     assert f._map_rungs() == []
+    assert [r[0] for r in f._ladder_rows()] == []
     cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 230))
-    f._draw_map(None, cr, 700, 230)              # says so rather than lying
-    assert f._fan_geom is None
+    f._draw_ladder(None, cr, 700, 230)           # says so rather than lying
     # a rebuild that keeps two shows exactly those two, from the press
-    f = map_window(rungs, on=False, partial=2)
+    f = map_window(rungs, partial=2)
     f._busy = True
     assert [r["level"] for r in f._map_rungs()] == \
         [r["level"] for r in rungs[:2]]
@@ -1213,16 +1056,14 @@ def test_arming_a_walk_asks_for_the_frame():
     called queue_draw on its way past -- which is exactly what the
     field reported. Setting what a canvas shows and repainting it
     belong in one place."""
-    import types
     rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    f = map_window(rungs, on=False, pick=2)
+    f = map_window(rungs, pick=2)
     f._walk_live = False
     f._map_partial = []
     f._rebuild_ack = True
     f._sync_relevel = lambda: None
     drawn = []
-    f.map_area = types.SimpleNamespace(get_height=lambda: 230,
-                                       queue_draw=lambda: drawn.append(1))
+    f._ladder_repaint = lambda: drawn.append(1)
     f._arm_walk(True)
     assert f._walk_live
     assert [r["level"] for r in f._map_partial] == \
@@ -1230,13 +1071,12 @@ def test_arming_a_walk_asks_for_the_frame():
     assert drawn, "the canvas was never asked to repaint"
 
     # a take is not a walk and must leave the map alone
-    g = map_window(rungs, on=False, pick=2)
+    g = map_window(rungs, pick=2)
     g._walk_live = False
     g._map_partial = []
     g._rebuild_ack = True
     g._sync_relevel = lambda: None
-    g.map_area = types.SimpleNamespace(get_height=lambda: 230,
-                                       queue_draw=lambda: drawn.append(1))
+    g._ladder_repaint = lambda: drawn.append(1)
     g._arm_walk(False)
     assert not g._walk_live and g._map_partial == []
 
@@ -1245,15 +1085,12 @@ def test_marking_the_lowest_rung_is_a_choice_not_the_absence_of_one():
     """`if keep:` read index zero as nobody having marked anything, so
     the choice was never spent and every rung above it stayed faded
     for the whole walk -- against a ladder that no longer had them."""
-    import types
     rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    f = map_window(rungs, on=False, pick=0)
+    f = map_window(rungs, pick=0)
     f._walk_live = False
     f._map_partial = []
     f._rebuild_ack = True
     f._sync_relevel = lambda: None
-    f.map_area = types.SimpleNamespace(get_height=lambda: 230,
-                                       queue_draw=lambda: None)
     f._arm_walk(True)
     assert f._walk_keep == 0            # remembered as a choice
     assert f._map_pick is None          # and spent
@@ -1268,7 +1105,7 @@ def test_a_step_is_read_against_what_it_asked():
     own step and +3 on the next -- the mirror -- and no other step
     hears of it."""
     rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
-    f = map_window(rungs, on=False)
+    f = map_window(rungs)
     rows = f._map_steps(rungs)
     assert len(rows) == len(rungs)
     assert all(v is None for v in rows[0])          # the base has no step
@@ -1294,32 +1131,6 @@ def test_a_step_is_read_against_what_it_asked():
     assert abs(rows[4][305]) < 1e-9
 
 
-def test_the_search_is_drawn_as_a_search():
-    """A hunt is a walk over LEVEL, so its picture is step against
-    level: one dot per probe, joined in order, a line where it
-    settled. The level axis is the whole knob, fixed, so no dot moves
-    when another lands."""
-    import re
-    import cairo
-    src = open(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), "perdeviceeq",
-        "measure_window.py")).read()
-    m = re.search(r"\n    def _draw_hunt\(.*?(?=\n    def )", src, re.S)
-    assert m, "_draw_hunt is not defined at all"
-    ns = {"math": math, "HUNT_SLOTS": 8, "HUNT_FLOOR_DB": -60.0}
-    exec("class Fake:\n" + m.group(0), ns)
-    f = ns["Fake"]()
-    f._ladder_record = lambda: {}    # no search on record here
-    f._hunt_found = None
-    f._hunt_dots = [(1, 0.15, "quiet"), (2, 0.30, "quiet"),
-                    (3, 0.60, "loud"), (4, 0.42, "ok")]
-    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 48)
-    f._draw_hunt(None, cairo.Context(surf), 700, 48)
-    f._hunt_found = 0.42
-    f._draw_hunt(None, cairo.Context(surf), 700, 48)
-    # nothing drawn is fine too: an empty strip is a strip
-    f._hunt_dots = []
-    f._draw_hunt(None, cairo.Context(surf), 700, 48)
 
 
 def test_the_passport_canvas_draws_every_row_it_has():
@@ -1335,7 +1146,7 @@ def test_the_passport_canvas_draws_every_row_it_has():
                "verdict": "ok", "mag_db": rungs[3]["mag_db"]},
               {"step": 3, "level": 0.17, "peak_dbfs": -13.0,
                "verdict": "quiet", "mag_db": rungs[2]["mag_db"]}]
-    f = map_window(rungs, on=False, probes=probes)
+    f = map_window(rungs, probes=probes)
     rows = f._ladder_rows()
     kinds = [r[0] for r in rows]
     assert kinds == ["rung"] * 7 + ["probe"] * 3
@@ -1358,7 +1169,7 @@ def test_the_passport_canvas_draws_every_row_it_has():
         surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 400)
         f._draw_ladder(None, cairo.Context(surf), 700, 400)
     # nothing at all is a sentence, not an error
-    g = map_window([], on=False)
+    g = map_window([])
     g._draw_ladder(None, cairo.Context(surf), 700, 400)
 
 
@@ -1372,14 +1183,12 @@ def test_the_passport_card_speaks_and_shows_its_choice():
                "mag_db": rungs[1]["mag_db"]},
               {"step": 2, "level": 0.20, "verdict": "ok",
                "mag_db": rungs[3]["mag_db"]}]
-    f = map_window(rungs, on=False, probes=probes, pick=4)
+    f = map_window(rungs, probes=probes, pick=4)
     f.parent.store.get(f.edit_pid)["passport"]["FL"]["settled"] = 0.20
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 400)
     f._draw_ladder(None, cairo.Context(surf), 700, 400)
     assert f.ladder_title.get_text() == "FL"
     assert f.ladder_word.get_text().startswith("linear at least to")
-    # the strip has something to draw from the record alone
-    f._draw_hunt(None, cairo.Context(surf), 700, 48)
     # a slot goes back to its rung
     assert f._ladder_k(f._ladder_rows()[0][1]) == len(rungs) - 1
 
@@ -1391,7 +1200,7 @@ def test_a_search_announces_below_the_rule_and_starts_empty():
     rungs = map_rungs([6.0, 6.0, 2.0, 2.0])
     old = [{"step": 1, "level": 0.15, "verdict": "quiet",
             "mag_db": rungs[1]["mag_db"]}]
-    f = map_window(rungs, on=False, probes=old)
+    f = map_window(rungs, probes=old)
     # fresh search, nothing landed yet: no old probes, announce below
     f._probes_fresh = True
     f._walk_phase = "search"
@@ -1457,7 +1266,7 @@ def test_the_search_is_read_against_itself():
               {"step": 4, "level": 0.18, "verdict": "quiet",
                "heard_offset_db": -40.0, "mag_db": at(0.18)}]
     # mid-search: no rung exists, three probes judged
-    f = map_window([], on=False, partial=0)
+    f = map_window([], partial=0)
     f._busy = True
     f._walk_phase = "search"
     f._probes_fresh = True

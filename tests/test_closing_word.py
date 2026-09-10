@@ -87,9 +87,6 @@ def _win():
     w.memory = _Obj()
     w.memory.remember = lambda *a, **k: None
     w.sink_node = "sink"
-    w.drawn = []
-    w.map_area = _Obj()
-    w.map_area.queue_draw = lambda: w.drawn.append(1)
     w._assert_entry_route = lambda: None
     w._assert_capture_gain = lambda: None
     return w
@@ -185,10 +182,12 @@ def test_the_end_of_a_walk_asks_for_the_frame():
     until a pointer or a resize forced a repaint, which is why the
     lines came back only when the mouse crossed them."""
     win = _win()
+    drawn = []
+    win._ladder_repaint = lambda: drawn.append(1)
     _done(win, {"error": None, "outcome": None, "level": None,
                 "found": None, "word": None})
     assert not win._walk_live
-    assert win.drawn, "the canvas was never asked to repaint"
+    assert drawn, "the canvas was never asked to repaint"
 
 
 # ---- the walk's rungs stay on the canvas until the walk ends -------

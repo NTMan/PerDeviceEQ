@@ -83,8 +83,6 @@ install -Dpm0644 data/icons/pde-level-symbolic.svg \
         %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-level-symbolic.svg
 install -Dpm0644 data/icons/pde-find-gain-symbolic.svg \
         %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-find-gain-symbolic.svg
-install -Dpm0644 data/icons/pde-map-check-symbolic.svg \
-        %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-map-check-symbolic.svg
 install -Dpm0644 data/icons/pde-map-rebuild-symbolic.svg \
         %{buildroot}%{_datadir}/icons/hicolor/scalable/actions/pde-map-rebuild-symbolic.svg
 install -Dpm0644 data/%{appid}.metainfo.xml \
@@ -131,7 +129,6 @@ fi
 %{_datadir}/icons/hicolor/scalable/actions/pde-floor-symbolic.svg
 %{_datadir}/icons/hicolor/scalable/actions/pde-level-symbolic.svg
 %{_datadir}/icons/hicolor/scalable/actions/pde-find-gain-symbolic.svg
-%{_datadir}/icons/hicolor/scalable/actions/pde-map-check-symbolic.svg
 %{_datadir}/icons/hicolor/scalable/actions/pde-map-rebuild-symbolic.svg
 %{_metainfodir}/%{appid}.metainfo.xml
 

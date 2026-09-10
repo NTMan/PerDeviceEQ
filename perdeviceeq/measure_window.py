@@ -69,17 +69,9 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 # vertical -- one axis has to carry the response AND its
 # harmonics fifty decibels below it, and that needs room
 FACE_H, ROW_H = 300, 200
-MAP_H = 230
-HUNT_H = 48      # the search strip: one dot per probe, step against level
 LADDER_ROW_H = 26      # one shelf per record on the passport canvas
 LADDER_SPAN_DB = 2.0   # a shelf shows this much either way; beyond it
                        # a line is pinned to the shelf's edge
-HUNT_SLOTS = 8   # steps laid out before the strip has to compress them
-HUNT_FLOOR_DB = -60.0   # the bottom of the level axis: 10% of the knob          # the level map's own canvas
-MAP_ODD_FLOOR_DB = 0.15  # under this a rung is not odd
-                     # however quiet the walk was
-MAP_MUTE_DB = 1.0    # a base disagreeing with itself by
-                     # more than this is not a reference
 
 
 def _ctrl_down(gesture):
@@ -419,46 +411,7 @@ class MeasureWindow(Adw.Window):
         vbox.set_margin_bottom(6)
         vbox.append(self.vol_spin)
         vbox.append(self.relevel_btn)
-        # THE PASSPORT, DRAWN. It has been stored whole since the day
-        # it was written -- every rung keeps its response across the
-        # grid rather than a verdict -- and it has only ever reached a
-        # hand as one number, the percentage where the walk stopped.
-        # That number says the rig gave out at 89% and cannot say HOW,
-        # and the difference is the whole question: rungs spreading
-        # apart evenly are compression, rungs parting in one place are
-        # a port, a resonance or a limiter.
-        self.map_area = Gtk.DrawingArea()
-        self.map_area.set_content_height(MAP_H)
-        self.map_area.set_hexpand(True)
-        self.map_area.update_property(
-            [Gtk.AccessibleProperty.LABEL],
-            ["The level map of this channel: one line per rung, each "
-             "against the quietest"])
-        self.map_area.set_draw_func(self._draw_map)
-        # PICKING WORKS ON BOTH VIEWS. It was the check view alone at
-        # first, on the ground that the fan's lines collapse where a
-        # walk goes wrong and a click there would be a guess -- but
-        # that only argued against aiming at a LINE. Aiming at a
-        # BAND works the same on either picture, and shutting the
-        # gesture out of the view a hand starts on meant the way to
-        # rebuild part of a ladder could only be found by knowing
-        # about it already.
         self._map_pick = None
-        # NOTHING SAID THE LINES COULD BE CLICKED. A gesture with no
-        # hover is a gesture nobody finds: it can only be discovered
-        # by clicking somewhere at random and noticing that something
-        # happened. The legend in this same window learned that once
-        # already -- hover lights a name, a click pins it -- and the
-        # rungs follow it now.
-        self._map_hover = None
-        # WHERE THE FAN PUT ITS LINES, left by the drawing for the
-        # pointer to read. A hit test that re-derives this geometry
-        # is a second copy of it and the two drift apart; what the
-        # hand aims at is what was drawn, so the drawing answers.
-        # None means the shelves are showing, which need no record:
-        # their spacing is this window's own and even.
-        self._fan_geom = None
-        self._map_odd = None
         self._map_partial = []
         # A WALK OWNS THE CANVAS FROM THE PRESS, not from its first
         # result. The emptiness of _map_partial cannot say that: a
@@ -469,45 +422,7 @@ class MeasureWindow(Adw.Window):
         self._walk_old = []
         self._walk_probes = []
         self._walk_settled = None
-        pick = Gtk.GestureClick()
-        pick.set_button(1)
-        pick.connect("released", self._on_map_pick)
-        self.map_area.add_controller(pick)
-        move = Gtk.EventControllerMotion()
-        move.connect("motion", self._on_map_motion)
-        move.connect("leave", self._on_map_leave)
-        self.map_area.add_controller(move)
-        # TWO QUESTIONS, TWO PICTURES. The fan answers "how much
-        # louder was each rung and did the rig follow"; the shelves
-        # answer "did anything happen during one of these sweeps".
-        # The second is the one a hand needs while a walk is running,
-        # because the sweeps cannot be heard and a bark, a click or a
-        # gut rumble leaves no other trace.
-        # BESIDE THE BUTTON THAT MAKES THE MAP, not under the canvas
-        # in a row of its own. The two act on the same thing -- one
-        # walks the rig, the other reads what the walk left -- and the
-        # pult's grammar for that is a flat circular icon button in
-        # the fader's row. Hung below the drawing it read as a caption
-        # to the picture rather than as a control of the card.
-        self.map_view = Gtk.ToggleButton()
-        self.map_view.set_child(
-            Gtk.Image.new_from_icon_name("pde-map-check-symbolic"))
-        self.map_view.add_css_class("flat")
-        self.map_view.add_css_class("circular")
-        self.map_view.set_valign(Gtk.Align.CENTER)
-        self.map_view.set_halign(Gtk.Align.CENTER)
-        self.map_view.set_tooltip_text(
-            "Show each rung against the trend of all the others: a "
-            "rung that disagrees with its own family caught something "
-            "that is not the rig. Either view can be clicked to "
-            "choose the rung to rebuild from")
-        self.map_view.connect(
-            "toggled", lambda *_: self.map_area.queue_draw())
-        vbox.append(self.map_view)
-        host = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        host.append(vbox)
-        host.append(self.map_area)
-        b.get_object("vol_host").set_child(host)
+        b.get_object("vol_host").set_child(vbox)
         # THE FADER IS NOT HERE. A capture column is a wire with its
         # own gain -- the hardware says so, a CM106 declaring cvolume
         # and taking 60% and 80% independently -- so the control that
@@ -719,12 +634,6 @@ class MeasureWindow(Adw.Window):
         # whether it closed cleanly or bounced -- which no curve of
         # any probe could show. Nothing here changes on its own: the
         # dots stay after the search until the next search starts.
-        self.hunt_area = Gtk.DrawingArea()
-        self.hunt_area.set_content_height(HUNT_H)
-        self.hunt_area.set_hexpand(True)
-        self.hunt_area.set_draw_func(self._draw_hunt)
-        self._hunt_dots = []
-        self._hunt_found = None
         act.append(self.center)
         # THE STRIP TAKES THE ROW'S WHOLE WIDTH, not the transport
         # box's. That box is centred and as wide as its widest child
@@ -832,97 +741,6 @@ class MeasureWindow(Adw.Window):
             "being the weaker side. Walk the maps again to change it."
             % who)
 
-    def _map_band(self, y):
-        """Which rung the pointer is over ON THE SHELVES, by band.
-
-        The shelves are this window's own even spacing -- the whole
-        reason that view exists is that two rungs can never land on
-        each other there -- so the n-th band IS the n-th rung and no
-        line has to be aimed at.
-        """
-        rungs = self._map_rungs()
-        if len(rungs) < 2:
-            return None
-        h = self.map_area.get_height() or MAP_H
-        mt, mb = 8, 16
-        ph = max(1, h - mt - mb)
-        k = int((mt + ph - y) // (ph / len(rungs)))
-        return k if 0 <= k < len(rungs) else None
-
-    def _map_at(self, x, y):
-        """Which rung the pointer is over, on whichever view is drawn.
-
-        ON THE FAN IT IS THE LINE, at the pointer's own x. The lines
-        there sit where the RIG put them, and the even band grid this
-        replaces pointed somewhere else than the eye did: his ladder
-        steps 6, 6, 2, 2, 2, 2, so the second line stands a third of
-        the way up a picture whose second band is a seventh of it --
-        aim at the second line, take the third. Reported from the
-        field in exactly those words.
-
-        Where two lines meet the answer is whichever is nearer, and
-        that is the honest one: they are in the same place, so no
-        rule can read an intention that the picture does not carry.
-        What makes it navigable is that the hover marks the line the
-        click will take, so an ambiguity is visible and one pixel of
-        movement settles it.
-
-        Nothing is under the pointer where no line was drawn -- a
-        masked corridor, or a fan that gave up and printed a sentence
-        instead. A view that cannot be aimed at says so with its
-        cursor rather than answering at random.
-        """
-        geom = self._fan_geom
-        if geom is None:
-            return self._map_band(y)
-        rows, bin_at, py = geom
-        i = bin_at(x)
-        near, at = None, None
-        for k, row in enumerate(rows):
-            v = row[i] if 0 <= i < len(row) else None
-            if v is None:
-                continue
-            d = abs(py(v) - y)
-            if near is None or d < near:
-                near, at = d, k
-        return at
-
-    def _on_map_motion(self, _ctrl, x, y):
-        k = None if self._busy else self._map_at(x, y)
-        if k != self._map_hover:
-            self._map_hover = k
-            self.map_area.set_cursor_from_name(
-                "pointer" if k is not None else None)
-            self.map_area.queue_draw()
-
-    def _on_map_leave(self, _ctrl):
-        if self._map_hover is not None:
-            self._map_hover = None
-            self.map_area.set_cursor_from_name(None)
-            self.map_area.queue_draw()
-
-    def _on_map_pick(self, _g, _n, x, y):
-        """Choose the rung to rebuild from, or let it go.
-
-        Clicking the one already chosen clears it, so the gesture is
-        its own undo and there is no second control to find.
-
-        THE SAME QUESTION THE HOVER ASKED, through the same function:
-        a highlight that promises one rung and a click that takes
-        another is worse than no highlight at all.
-        """
-        if self._busy:
-            return
-        k = self._map_at(x, y)
-        if k is None:
-            return
-        self._map_pick = None if self._map_pick == k else k
-        # a different choice destroys different rungs, so it has to be
-        # answered for again
-        self._rebuild_ack = False
-        self.map_area.queue_draw()
-        self._sync_relevel()
-
     def _sync_relevel(self):
         """The button says which of the two things it will do.
 
@@ -995,16 +813,12 @@ class MeasureWindow(Adw.Window):
         self._map_partial = (
             level_run.rolled_back(self._walk_old, keep)
             if keep is not None else [])
-        self._map_odd = None
         self._walk_live = True
         # SPENT AT THE PRESS, wherever it points. It has done its work
         # the moment the doomed rungs are dropped, which is here.
         self._map_pick = None
         self._rebuild_ack = False
         self._sync_relevel()
-        area = getattr(self, "map_area", None)
-        if area is not None:
-            area.queue_draw()
         self._ladder_repaint()
 
     def _map_live(self, rungs):
@@ -1018,10 +832,6 @@ class MeasureWindow(Adw.Window):
         was already spent.
         """
         self._map_partial = list(rungs or [])
-        self._map_odd = None
-        area = getattr(self, "map_area", None)
-        if area is not None:
-            GLib.idle_add(area.queue_draw)
         self._map_announce = None
         GLib.idle_add(self._ladder_repaint)
 
@@ -1042,449 +852,6 @@ class MeasureWindow(Adw.Window):
                .get(keys[self._selected_ch]))
         return sorted(got or [], key=lambda r: r["level"])
 
-    def _draw_map(self, _area, cr, w, h, *_):
-        """One line per rung, each against the QUIETEST, which is what
-        the map itself reads everything against. A rig that follows
-        its knob draws flat lines stacked by the level asked for, and
-        every departure from flat is the rig not following.
-
-        NOTHING IS DRAWN WHERE THE BASE WAS NOT HEARD. Every line here
-        is a difference, so whatever the base did not hear divides
-        every other rung: a null in the reference lifts the whole fan
-        and a rig that was never driven there appears to gain. On an
-        iLoud walk the top rung read +7.7 dB at 60 Hz -- the speaker
-        swallowing what it was given -- and +19.7 at 35 Hz, which was
-        the reference falling away. Read off a picture the two look
-        alike, one a dip and one a peak, both dramatic.
-
-        The base's own scatter decides: the same level compared with
-        itself should agree, so anything it does not agree about is
-        not the rig. Dropped rather than drawn faint, because a faint
-        line is still a line and this one reads as bass.
-        """
-        ml, mr, mt, mb = 34, 40, 8, 16
-        rungs = self._map_rungs()
-        # ONE PICTURE FOR THE LENGTH OF A WALK. The shelves cannot be
-        # read under five rungs -- there is no trend to read a rung
-        # against -- so they used to BORROW the fan until the fifth
-        # arrived and then take over. The hand saw the axis change
-        # from decibels over the base to a residual, the colour go
-        # from a gradient to one pen, and the lines straighten, all
-        # in one frame and with nothing said: his words were that the
-        # curves magically straighten out.
-        #
-        # A picture that changes what it measures while a hand is
-        # watching one thing happen is not a picture of it. So a walk
-        # owns the canvas and the fan draws it from the first rung to
-        # the last; the toggle is disabled meanwhile rather than
-        # lying about what is on screen, and takes effect when the
-        # walk ends -- which is a change the hand asked for.
-        btn = getattr(self, "map_view", None)
-        if btn is not None and btn.get_active() and not self._walking():
-            return self._draw_check(cr, w, h, ml, mr, mt, mb, rungs)
-        return self._draw_fan(cr, w, h, ml, mr, mt, mb, rungs)
-
-    def _walking(self):
-        """A walk is producing rungs right now.
-
-        The same test _map_rungs uses to prefer them over what is on
-        disk, so the canvas cannot think one thing about whose rungs
-        it is drawing and another about which view draws them.
-        """
-        return bool(self._busy and self._walk_live)
-
-    def _draw_fan(self, cr, w, h, ml, mr, mt, mb, rungs):
-        """One line per rung, each against the quietest that was
-        HEARD.
-
-        Two rungs are enough to draw, which is why the check view
-        borrows this while a walk is still short of the five its own
-        reading needs.
-        """
-        pw_ = max(1, w - ml - mr)
-        ph = max(1, h - mt - mb)
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
-        cr.rectangle(ml, mt, pw_, ph)
-        cr.fill()
-        cr.set_font_size(10)
-        self._fan_geom = None
-        if len(rungs) < 2:
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
-            cr.move_to(ml + 8, mt + ph / 2)
-            cr.show_text("no level map for this channel yet"
-                         if not rungs else
-                         "one rung: a map needs a second to say "
-                         "anything")
-            return
-        rows = self._map_steps(rungs)
-        vals = [v for row in rows for v in row if v is not None]
-        # HOW MUCH OF THE BAND SURVIVED THE MASK, and a word when
-        # almost none of it did. Every line here is a difference
-        # against the quietest rung, so where that rung was not heard
-        # there is nothing to divide by -- and a walk whose base was
-        # barely audible therefore draws almost nothing, which looks
-        # exactly like a broken canvas. His Liberty 5 walked from 38%
-        # of a Bluetooth knob and its base stood clear of its own
-        # noise at ten bins out of 958: the fan came back blank with
-        # two stubs at the top of the band and said nothing about why.
-        #
-        # The check view has no such dependence -- it reads each rung
-        # against the trend of the others and needs no reference rung
-        # at all -- so the word points there rather than shrugging.
-        wide = max((len(row) for row in rows), default=0)
-        span = len(vals) / float(max(1, len(rows) * wide))
-        if not vals or span < 0.05:
-            cr.set_source_rgba(0.85, 0.45, 0.10, 0.95)
-            said = self._wrapped(
-                cr, "No two neighbouring rungs were both heard on more "
-                    "than %d%% of the band, so no step can be read."
-                    % round(100 * span),
-                pw_ - 16)
-            y = mt + ph / 2 - (len(said) - 1) * 7
-            for line in said:
-                cr.move_to(ml + 8, y)
-                cr.show_text(line)
-                y += 14
-            return
-        # THE AXIS IS FIXED BY WHAT A STEP CAN BE, not by the data.
-        # A line here is one step of the ladder against what that step
-        # asked for, so zero is "delivered exactly", a fine step lost
-        # whole is -2, a coarse one -6, and a tooth from an event can
-        # point either way by a few decibels. That is the whole range
-        # a step can honestly occupy, so it is the axis, known before
-        # the first rung and the same for every walk on every rig.
-        # A line that leaves it is drawn past the edge.
-        y0, y1 = -6.0, 2.0
-        lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
-        n = max(len(row) for row in rows)
-        grid = ((self.parent.store.get(self.edit_pid) or {})
-                .get("measurement", {}).get("grid") or {}) \
-            if self.edit_pid else {}
-        g_lo = float(grid.get("f_lo") or FMIN_PLOT)
-        ppo = float(grid.get("ppo") or 96.0)
-        # NO SHADING OF THE CANVAS. A bin no step could read was shaded
-        # across the whole picture, and with one step drawn that meant
-        # the first rung's own unheard stretches -- the quietest sweep
-        # against the noise hump near a kilohertz -- turned into grey
-        # blocks that vanished as louder steps read the same bins. A
-        # property of one line drawn as a property of the canvas, and
-        # it read as blindness coming and going. A line simply has a
-        # gap where its step could not be read; that is the statement,
-        # and it needs no furniture.
-        mute = [False] * n
-
-        def px(i):
-            f = g_lo * 2.0 ** (i / ppo)
-            return ml + (math.log10(max(f, 1e-6)) - lo) / (hi - lo) * pw_
-
-        def bin_at(x):
-            """px inverted. Beside it on purpose: the pointer walks
-            this mapping backwards and two copies of one formula in
-            two places is one of them going stale."""
-            f = 10.0 ** (lo + (x - ml) / max(1.0, pw_) * (hi - lo))
-            return int(round(ppo * math.log2(max(f, 1e-9) / g_lo)))
-
-        def py(v):
-            return mt + ph - (v - y0) / max(1e-9, y1 - y0) * ph
-
-        self._fan_geom = (rows, bin_at, py)
-        self._map_state_line(cr, ml, mt, pw_, rungs)
-        # WHERE THE MASK TOOK THE BAND, shaded. Without it the lines
-        # come back in pieces and the eye reads a broken renderer
-        # rather than a reference that was not heard: on his Liberty's
-        # FR only 292 bins of 958 kept a scatter, so the fan drew as
-        # islands with nothing to say why.
-        run = None
-        for i in range(n + 1):
-            bad = i < n and i < len(mute) and mute[i]
-            if bad and run is None:
-                run = i
-            elif not bad and run is not None:
-                x0, x1 = px(run), px(i - 1)
-                cr.set_source_rgba(0.5, 0.5, 0.5, 0.10)
-                cr.rectangle(x0, mt, max(1.0, x1 - x0), ph)
-                cr.fill()
-                run = None
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.35)
-        cr.set_line_width(1)
-        for fhz in (100, 1000, 10000):
-            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
-            cr.move_to(gx, mt)
-            cr.line_to(gx, mt + ph)
-            cr.stroke()
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
-        # THE EDGES ARE NAMED. Labelled at the decades only, the axis
-        # ended at "10k" with a third of an octave of lines running on
-        # past it, and read as if it stopped short of 20 kHz. The same
-        # ticks as the take canvas, so the two agree on what the band
-        # is.
-        for fhz, txt in ((20, "20"), (50, "50"), (100, "100"),
-                         (200, "200"), (500, "500"), (1000, "1k"),
-                         (2000, "2k"), (5000, "5k"), (10000, "10k"),
-                         (20000, "20k")):
-            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_ + 2
-            # a label stays inside the field, whatever its width:
-            # measured from the font, not guessed
-            gx = min(gx, ml + pw_ - cr.text_extents(txt).x_advance)
-            cr.move_to(gx, h - 4)
-            cr.show_text(txt)
-        # A THRESHOLD ON THE SPAN puts a cliff in the middle of the
-        # ordinary case: one channel spanning 24.0 dB drew a line
-        # every 2 dB and its twin spanning 25.1 drew one every 5, on
-        # the same rig, from the same walk. The step is chosen for a
-        # READABLE COUNT of lines instead, off the 1-2-5 ladder, so
-        # two channels of one pair come out looking alike.
-        step = 1.0
-        for cand in (1.0, 2.0, 5.0, 10.0, 20.0, 50.0):
-            step = cand
-            if (y1 - y0) / cand <= 8:
-                break
-        v = math.ceil(y0 / step) * step
-        while v <= y1:
-            gy = py(v)
-            cr.set_source_rgba(0.5, 0.5, 0.5,
-                               0.45 if abs(v) < 1e-9 else 0.18)
-            cr.move_to(ml, gy)
-            cr.line_to(ml + pw_, gy)
-            cr.stroke()
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
-            cr.move_to(2, gy + 3)
-            cr.show_text("%+d" % int(round(v)))
-            v += step
-        # THE CHOICE IS SHOWN ON BOTH PICTURES. It cannot be MADE on
-        # this one -- the shelves here are spaced by what the rig
-        # delivered and collapse where a walk goes wrong -- but a
-        # choice that changes what the button does and is invisible
-        # on the view a hand happens to be looking at is a haunting,
-        # and this project has a rule against those. So the chosen
-        # rung is red here as well and everything above it is faded:
-        # that is what will be measured again.
-        pick = self._map_pick
-        hover = self._map_hover
-        # NO BAND UNDER THE POINTER HERE. A strip on an even grid is
-        # what the hit test used to be, and drawing it made the eye
-        # trust it: the strip lay over the second line while the
-        # third was what a click took. The hovered LINE is the
-        # highlight now, and it is the same line _map_at returns.
-        last = max(1, len(rows) - 1)
-        # a label per rung piles them on top of each other the moment
-        # a rig follows its knob, which is the ordinary case: eleven
-        # lines over twenty decibels leave nine pixels each
-        said = []
-        for k, row in enumerate(rows):
-            t = k / last
-            if pick is not None and k == pick:
-                cr.set_source_rgb(0.16, 0.40, 0.85)
-                cr.set_line_width(2.2)
-            elif k == hover:
-                cr.set_source_rgb(0.16 + 0.76 * t, 0.35 - 0.15 * t,
-                                  0.78 - 0.62 * t)
-                cr.set_line_width(2.0)
-            elif pick is not None and k > pick:
-                cr.set_source_rgba(0.16 + 0.76 * t, 0.35 - 0.15 * t,
-                                   0.78 - 0.62 * t, 0.22)
-                cr.set_line_width(1.0)
-            else:
-                cr.set_source_rgb(0.16 + 0.76 * t, 0.35 - 0.15 * t,
-                                  0.78 - 0.62 * t)
-                cr.set_line_width(1.4 if k == last else 1.0)
-            pen = False
-            for i in range(n):
-                val = row[i] if i < len(row) else None
-                if val is None:
-                    pen = False
-                    continue
-                x, y = px(i), py(val)
-                if pen:
-                    cr.line_to(x, y)
-                else:
-                    cr.move_to(x, y)
-                pen = True
-            cr.stroke()
-            # NAMED WHERE THE LINE SITS, not where it ends. The last
-            # bin of a walk is at 20 kHz, where an earphone is falling
-            # away and the tail moves several decibels between rungs
-            # -- labels hung on it float away from their own lines.
-            live = [v for v in row if v is not None]
-            if not live:
-                continue
-            gy = py(sorted(live)[len(live) // 2])
-            # THE ONE UNDER THE POINTER IS ALWAYS NAMED, whatever the
-            # crowding rule says: hovering is how a hand asks which
-            # rung this is, and an unnamed highlight answers a
-            # different question.
-            if k in (hover, pick):
-                cr.move_to(ml + pw_ + 3, gy + 3)
-                cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
-                said.append(gy)
-            elif k in (0, last) or all(abs(gy - y) >= 11 for y in said):
-                said.append(gy)
-                cr.move_to(ml + pw_ + 3, gy + 3)
-                cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
-
-    def _draw_check(self, cr, w, h, ml, mr, mt, mb, rungs):
-        """Every rung on a shelf of its own, drawn against the trend
-        of all the others.
-
-        THE SHELVES ARE OURS, not the rig's. Spacing the rungs by the
-        decibels they delivered is what the fan does, and it collapses
-        exactly where a rig stops following -- twelve rungs of an
-        iLoud walk fell into seven decibels at 60 Hz and two of them
-        met. Here the spacing is a number this window picks, so two
-        rungs can never land on each other and a fault always has an
-        address.
-
-        The bar is the walk's OWN median residual, ODD_K times over.
-        A decibel figure would be nonsense: the same reading floors at
-        0.05 dB on a coupler and 1.3 dB in a room with a speaker.
-        """
-        pw_ = max(1, w - ml - mr)
-        ph = max(1, h - mt - mb)
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.08)
-        cr.rectangle(ml, mt, pw_, ph)
-        cr.fill()
-        cr.set_font_size(10)
-        # KEPT BETWEEN REPAINTS. The pointer asks for one on every
-        # motion event, and the reading behind this view is arithmetic
-        # over every bin of every rung: recomputing it per frame is
-        # what made hovering here crawl while the fan beside it was
-        # instant. The key is the levels themselves, so it goes stale
-        # exactly when the map changes and never otherwise.
-        key = (self._selected_ch,
-               tuple(r["level"] for r in rungs))
-        got = getattr(self, "_map_odd", None)
-        if got is None or got[0] != key:
-            got = (key,) + level_run.odd_rung_out(rungs)
-            self._map_odd = got
-        res, floor = got[1], got[2]
-        self._fan_geom = None
-        if not res:
-            # NOT AN EMPTY BOX WHILE A WALK IS RUNNING. This view
-            # reads each rung against the trend of the others, so
-            # until there are five there is no trend and it has
-            # nothing to say. A hand watching a rig climb was shown a
-            # grey rectangle for five rungs and then five lines at
-            # once -- and the whole point of handing rungs over as
-            # they arrive is to see them arrive. The fan needs two, so
-            # it stands in until this one can speak.
-            return self._draw_fan(cr, w, h, ml, mr, mt, mb, rungs)
-        grid = ((self.parent.store.get(self.edit_pid) or {})
-                .get("measurement", {}).get("grid") or {}) \
-            if self.edit_pid else {}
-        g_lo = float(grid.get("f_lo") or FMIN_PLOT)
-        ppo = float(grid.get("ppo") or 96.0)
-        lo, hi = math.log10(FMIN_PLOT), math.log10(FMAX_PLOT)
-        shelf = ph / max(1, len(res))
-        bar = max(MAP_ODD_FLOOR_DB, level_run.ODD_K * floor)
-        # THE SHELF IS AS TALL AS THE BAR, and this is the same law as
-        # the fan's: a scale taken from the data means a clean walk is
-        # stretched to its own worst number. Six hundredths of a
-        # decibel then filled the shelf edge to edge and read as a
-        # fault -- his lightning. Against the bar, a line that stays
-        # inside its shelf IS the verdict, and one that leaves it is
-        # the finding; the rms printed on every shelf says by how far.
-        span = bar
-        self._map_state_line(cr, ml, mt, pw_, rungs)
-        for fhz in (100, 1000, 10000):
-            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.28)
-            cr.move_to(gx, mt)
-            cr.line_to(gx, mt + ph)
-            cr.stroke()
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.8)
-            cr.move_to(gx + 2, h - 4)
-            cr.show_text("%dk" % (fhz // 1000) if fhz >= 1000
-                         else str(fhz))
-        for k, row in enumerate(res):
-            y = mt + ph - (k + 0.5) * shelf
-            if k == self._map_hover and k != self._map_pick:
-                # the band under the pointer, drawn before the line
-                cr.set_source_rgba(0.35, 0.45, 0.75, 0.10)
-                cr.rectangle(ml, y - shelf * 0.5, pw_, shelf)
-                cr.fill()
-            cr.set_source_rgba(0.5, 0.5, 0.5, 0.30)
-            cr.set_line_width(0.7)
-            cr.move_to(ml, y)
-            cr.line_to(ml + pw_, y)
-            cr.stroke()
-            got = [x for x in row if x is not None]
-            v = ((sum(x * x for x in got) / len(got)) ** 0.5
-                 if got else 0.0)
-            odd = v > bar
-            # ONE GRAMMAR ON BOTH VIEWS: the chosen rung is red and
-            # bold, and everything above it fades, because that is
-            # what the button will throw away. A wash over the doomed
-            # region was tried here first and read as a second kind of
-            # highlight beside the fan's, which is one kind too many
-            # for the same fact.
-            pick = self._map_pick
-            gone = pick is not None and k > pick
-            # TWO DIFFERENT THINGS, TWO COLOURS. Red says this rung
-            # disagrees with its own family -- a finding. The chosen
-            # rung is a hand's decision, and drawing both in red left
-            # a picture with two red lines meaning opposite things:
-            # one to be measured again because it is wrong, one to be
-            # measured again because he said so. The choice takes the
-            # selection blue the hover already uses, and red is left
-            # to the reading.
-            if k == pick:
-                cr.set_source_rgb(0.16, 0.40, 0.85)
-                cr.set_line_width(2.2)
-            elif gone:
-                cr.set_source_rgba(*((0.90, 0.25, 0.15)
-                                     if odd else (0.32, 0.42, 0.72)),
-                                   0.22)
-                cr.set_line_width(1.0)
-            elif odd:
-                cr.set_source_rgb(0.90, 0.25, 0.15)
-                cr.set_line_width(1.5)
-            elif k == self._map_hover:
-                cr.set_source_rgb(0.32, 0.42, 0.72)
-                cr.set_line_width(2.0)
-            else:
-                cr.set_source_rgba(0.32, 0.42, 0.72, 0.85)
-                cr.set_line_width(0.9)
-            pen = False
-            for i, x in enumerate(row):
-                if x is None:
-                    pen = False
-                    continue
-                f = g_lo * 2.0 ** (i / ppo)
-                gx = (ml + (math.log10(max(f, 1e-6)) - lo)
-                      / (hi - lo) * pw_)
-                gy = y - max(-1.0, min(1.0, x / span)) * shelf * 0.46
-                if pen:
-                    cr.line_to(gx, gy)
-                else:
-                    cr.move_to(gx, gy)
-                pen = True
-            cr.stroke()
-            cr.set_source_rgba(0.4, 0.4, 0.4, 0.25 if gone else 0.9)
-            cr.move_to(2, y + 3)
-            cr.show_text("%d%%" % round(100.0 * rungs[k]["level"]))
-            # ON EVERY SHELF, not only the odd ones. A number that
-            # appears only when something is wrong answers "is this
-            # rung bad" and leaves "how close to bad is it" unasked --
-            # and the bar moves with the walk's own noise, so the
-            # distance to it is the only thing that says whether a
-            # quiet reading is comfortable or lucky.
-            # the number stays RED when the rung is odd, even where
-            # the line is blue for being chosen: the finding does not
-            # stop being a finding because a hand agreed with it
-            cr.set_source_rgba(*((0.90, 0.25, 0.15) if odd
-                                 else (0.16, 0.40, 0.85) if k == pick
-                                 else (0.55, 0.55, 0.55)),
-                                0.25 if gone else 1.0)
-            cr.move_to(ml + pw_ + 3, y + 3)
-            cr.show_text("%.2f" % v)
-
-    _MAP_ENDS = {
-        "capture": "linear at least this far: the capture ran out first",
-        "knob": "complete: the volume reached its top",
-        "rungs": "complete: the walk spent its rungs",
-        "asked": "UNFINISHED: stopped by hand",
-    }
-
     @staticmethod
     def _wrapped(cr, text, width):
         """Break text to fit a width. Cairo has no idea what a line
@@ -1503,131 +870,15 @@ class MeasureWindow(Adw.Window):
             out.append(line)
         return out
 
-    def _map_state_line(self, cr, ml, mt, pw_, rungs):
-        """Say whether this map is finished, in the corner of the
-        plot.
-
-        Eleven rungs of a walk that ran out of capture and eleven of a
-        walk somebody stopped look exactly alike on the picture, and
-        only the second is missing the rungs that would have answered
-        the question the map exists for. Nothing else in the window
-        can tell them apart either.
-        """
-        done, what = level_run.map_state(rungs)
-        if what is None and not rungs:
-            return
-        cr.save()
-        cr.set_font_size(10)
-        cr.set_source_rgb(*((0.45, 0.45, 0.45) if done
-                            else (0.85, 0.45, 0.10)))
-        cr.move_to(ml + 4, mt + 11)
-        cr.show_text(self._MAP_ENDS.get(
-            what, "UNFINISHED: this map predates the walk saying why "
-                  "it stopped"))
-        cr.restore()
-
-    REF_HEARD = 0.9          # of the band, before a rung may be the
-                             # one everything else is drawn against
-
-    def _hunt_reset(self):
-        self._hunt_dots = []
-        self._hunt_found = None
-        self.hunt_area.queue_draw()
-        return False
-
-    def _hunt_dot(self, p):
-        self._hunt_dots.append((p.step, float(p.volume), p.verdict))
+    def _probe_judged(self, p):
         # THE PROBE LANDS ON THE CANVAS AS IT IS JUDGED, not when the
         # whole search returns: a row below the rule, with its curve,
         # the moment its sweep is over -- the same rhythm the rungs
         # keep above it
         self._walk_probes = list(getattr(self, "_walk_probes", None) or []) \
             + level_run.probe_records([p])
-        self.hunt_area.queue_draw()
         self._ladder_repaint()
         return False
-
-    def _hunt_settled(self, vol):
-        self._hunt_found = None if vol is None else float(vol)
-        self.hunt_area.queue_draw()
-        return False
-
-    def _draw_hunt(self, _area, cr, w, h):
-        """The search as a search: step along, level up.
-
-        THE LEVEL AXIS IS THE WHOLE KNOB, fixed, from HUNT_FLOOR_DB to
-        the top -- the same on every search of every rig, so the
-        picture never rescales under the hand. Each probe is a dot at
-        its step and its level, coloured by the verdict the search
-        gave it: too loud, too quiet, or a level it could accept. The
-        dots are joined in order, so a search that closed cleanly
-        looks like a pendulum settling and one that bounced looks
-        like one that bounced. Where the search settled, a line.
-        """
-        dots = self._hunt_dots
-        found = self._hunt_found
-        if not dots and not getattr(self, "_probes_fresh", False):
-            # THE STRIP IS NOT BLANK BETWEEN SEARCHES. The dots of the
-            # last search are on record with the passport, step,
-            # level and verdict, and where it settled; an empty band
-            # of 48 pixels at the top of the card read as space kept
-            # for a button nobody had promised.
-            rec = self._ladder_record()
-            dots = [(int(p.get("step") or 0), float(p.get("level") or 0.0),
-                     p.get("verdict"))
-                    for p in (rec.get("probes") or [])]
-            found = rec.get("settled")
-        if not dots:
-            return
-        ml, mr, mt, mb = 30, 44, 6, 6
-        pw_, ph = max(1, w - ml - mr), max(1, h - mt - mb)
-        slots = max(HUNT_SLOTS, len(dots))
-
-        def px(step):
-            return ml + (step - 0.5) / slots * pw_
-
-        def py(v):
-            db = 60.0 * math.log10(max(v, 1e-6))
-            t = (db - HUNT_FLOOR_DB) / (0.0 - HUNT_FLOOR_DB)
-            return mt + ph - max(0.0, min(1.0, t)) * ph
-
-        cr.set_font_size(9)
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.35)
-        cr.set_line_width(1)
-        cr.move_to(ml, mt + ph + 0.5)
-        cr.line_to(ml + pw_, mt + ph + 0.5)
-        cr.stroke()
-        if found is not None:
-            y = py(found)
-            cr.set_source_rgba(0.20, 0.45, 0.85, 0.9)
-            cr.set_line_width(1.5)
-            cr.move_to(ml, y)
-            cr.line_to(ml + pw_, y)
-            cr.stroke()
-            cr.move_to(ml + pw_ + 4, y + 3)
-            cr.show_text("%d%%" % round(100 * found))
-        cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
-        cr.set_line_width(1)
-        for i, (step, v, _verdict) in enumerate(dots):
-            (cr.move_to if i == 0 else cr.line_to)(px(i + 1), py(v))
-        cr.stroke()
-        for i, (step, v, verdict) in enumerate(dots):
-            if verdict == "loud":
-                cr.set_source_rgba(0.85, 0.25, 0.20, 0.95)
-            elif verdict == "quiet":
-                cr.set_source_rgba(0.55, 0.55, 0.55, 0.95)
-            else:
-                cr.set_source_rgba(0.20, 0.60, 0.30, 0.95)
-            cr.arc(px(i + 1), py(v), 3.5, 0, 2 * math.pi)
-            cr.fill()
-        # ONLY THE SETTLED LEVEL IS LABELLED ON THE AXIS. The last
-        # probe's percent used to sit at the far left, level with its
-        # dot, and read as a second answer: 18% on one end and 19% on
-        # the other. The dots carry their own numbers.
-        cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
-        for i, (step, v, _verdict) in enumerate(dots):
-            cr.move_to(px(i + 1) - 6, mt + ph + 0.5 + 9)
-            cr.show_text("%d" % (i + 1))
 
     def _ladder_record(self):
         """This channel's passport record on disk, or {}."""
@@ -1661,9 +912,12 @@ class MeasureWindow(Adw.Window):
 
         THREE STATES OF A LINE and nothing else: dashed while the sweep
         is announced and playing, grey while a row holds only an
-        auxiliary sweep, black once it is a record. The search's
-        convergence strip sits at the top: its dots are the search's
-        path, the rows below are its records.
+        auxiliary sweep, black once it is a record.
+
+        THIS IS THE WALK'S ONLY PICTURE. The fan in the level card and
+        the search's strip of dots drew the same rungs and the same
+        probes with less said about them, and went once this canvas
+        had been looked at in the field.
         """
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         for side in ("top", "bottom", "start", "end"):
@@ -1677,7 +931,6 @@ class MeasureWindow(Adw.Window):
         trow.append(self.ladder_title)
         trow.append(self.ladder_word)
         box.append(trow)
-        box.append(self.hunt_area)
         self.ladder_area = Gtk.DrawingArea()
         self.ladder_area.set_hexpand(True)
         self.ladder_area.set_content_height(LADDER_ROW_H * 4 + 60)
@@ -1966,7 +1219,6 @@ class MeasureWindow(Adw.Window):
             return
         self._map_pick = None if self._map_pick == k else k
         self._sync_relevel()
-        self.map_area.queue_draw()
         self._ladder_repaint()
 
     def _map_steps(self, rungs):
@@ -2030,75 +1282,6 @@ class MeasureWindow(Adw.Window):
                 (mh[i] - ml[i]) - asked if ok[i] else None
                 for i in range(n)])
         return rows
-
-    def _map_ref(self, rungs):
-        """The rung to draw everything else against.
-
-        NOT SIMPLY THE QUIETEST, which is what this drew at first and
-        what emptied the canvas. Every line here is a difference, so
-        wherever the reference was not heard there is nothing to
-        subtract -- and the quietest rung of a walk is the one least
-        likely to have been heard anywhere. His Liberty 5 walked from
-        38% of a Bluetooth knob and that rung stood clear of its own
-        noise on ONE per cent of the band for FL and thirty for FR,
-        while its 56% rung was heard on ninety-nine. Drawn against the
-        first, the fan was a blank with two stubs; against the second
-        it is a fan.
-
-        So the reference is the QUIETEST RUNG THAT WAS ACTUALLY
-        HEARD, over REF_HEARD of the band. The walk itself already
-        chooses its base this way -- the quietest rung audible over a
-        quarter of the band -- and the drawing simply never followed.
-
-        Rungs below the reference now draw NEGATIVE, which is correct
-        and was always true: they are quieter than it.
-
-        If nothing reaches the bar the widest-heard rung is taken,
-        because a poor reference still beats none; if no rung records
-        what its noise was, the quietest is used as before.
-        """
-        best, cover = None, -1.0
-        for r in rungs:
-            off = r.get("heard_offset_db")
-            mag = r.get("mag_db") or []
-            if off is None or not mag:
-                continue
-            got = [x for x in mag if x is not None]
-            if not got:
-                continue
-            frac = sum(1 for x in got if x - float(off)
-                       > level_run.HEARD_OVER_NOISE_DB) / float(len(got))
-            if frac >= self.REF_HEARD:
-                return r                     # quietest that clears it
-            if frac > cover:
-                best, cover = r, frac
-        return best or rungs[0]
-
-    def _map_mask(self, base):
-        """True where the base rung disagreed with itself by more than
-        MAP_MUTE_DB, judged over a third of an octave: one bin of a
-        1/96-octave grid that happens to agree, inside a stretch that
-        does not, is luck rather than evidence -- the same mistake the
-        distortion strip made and had to unlearn."""
-        sc = base.get("scatter_db")
-        mag = base.get("mag_db") or []
-        off = base.get("heard_offset_db")
-        if not sc:
-            # a rung that is not the walk's own base carries no
-            # scatter; what it can be judged on is whether it was
-            # heard at all
-            if off is None:
-                return [False] * len(mag)
-            return [x is None or x - float(off)
-                    <= level_run.HEARD_OVER_NOISE_DB for x in mag]
-        w = 33
-        out = []
-        for i in range(len(sc)):
-            win = [x for x in sc[max(0, i - w // 2):i + w // 2 + 1]
-                   if x is not None]
-            med = sorted(win)[len(win) // 2] if win else None
-            out.append(med is None or med > MAP_MUTE_DB)
-        return out
 
     def _pult_btn(self, icon, tip, cb):
         b = Gtk.Button()
@@ -5044,15 +4227,6 @@ class MeasureWindow(Adw.Window):
         self._sync_relevel()
         self._sync_level_fader()
         self._ladder_repaint()
-        # the capture row, its calibration AND its gain belong to the
-        # tab in view, so they are redrawn with it -- and so does the
-        # level map, which is per channel too. A DrawingArea repaints
-        # only when something queues it, and the level card is not
-        # rebuilt by a tab pick, so the canvas would have gone on
-        # showing the channel that was open when the window did.
-        area = getattr(self, "map_area", None)
-        if area is not None:
-            area.queue_draw()
         self._rebuild_map_slots()
         self._refresh_gain()
         self._rebuild_page()
@@ -5575,12 +4749,6 @@ class MeasureWindow(Adw.Window):
                         self._source_present(),
                         self._mic_gone, self._busy,
                         self.mic_picker.core.node))
-        # A CONTROL THAT CANNOT ACT SAYS SO, rather than standing lit
-        # over a canvas that is ignoring it: the fan owns the screen
-        # for the length of a walk, so the view toggle is disabled
-        # while one runs and comes back when it ends.
-        if getattr(self, "map_view", None) is not None:
-            self.map_view.set_sensitive(not self._walking())
         if not live and not self._busy:
             # the tracer law, third service: a locked pult
             # names the missing end out loud -- the field saw
@@ -5828,7 +4996,7 @@ class MeasureWindow(Adw.Window):
             GLib.idle_add(self._ladder_announce, float(v), step)
 
         def said(p):
-            GLib.idle_add(self._hunt_dot, p)
+            GLib.idle_add(self._probe_judged, p)
             thd = ("n/a" if p.thd_pct is None else
                    "%s%s%%%s" % ("<=" if p.thd_bound else "",
                                  measure_build.pct_word(p.thd_pct),
@@ -5875,10 +5043,6 @@ class MeasureWindow(Adw.Window):
                 # a question that a count does not raise.
                 keep_top = max(r["level"] for r in got)
                 return self._walk_map(ch, about_to, keep_top, got)
-        # A SEARCH STARTING IS WHAT CLEARS THE LAST ONE, not the press:
-        # a rebuild never searches, and the previous search's picture
-        # is still the answer to "where did this level come from".
-        GLib.idle_add(self._hunt_reset)
         self._walk_probes = []
         self._walk_phase = "search"
         vol, probes = level_run.hunt(
@@ -5893,7 +5057,6 @@ class MeasureWindow(Adw.Window):
             on_probe=said, on_level=about_to,
             should_stop=lambda: self._stop_asked)
 
-        GLib.idle_add(self._hunt_settled, vol)
         # REMEMBERED WITH THE MAP. The probes ride to the passport on
         # the same write as the rungs, so a walk with no map still
         # leaves its search behind.
@@ -6080,10 +5243,6 @@ class MeasureWindow(Adw.Window):
             return
         if hasattr(self.parent, "_canvas_refresh"):
             GLib.idle_add(self.parent._canvas_refresh)
-        area = getattr(self, "map_area", None)
-        if area is not None:
-            # a DrawingArea repaints only when something queues it
-            GLib.idle_add(area.queue_draw)
         GLib.idle_add(self._sync_level_fader)
 
     def _measure_worker(self, ch):
@@ -6133,16 +5292,10 @@ class MeasureWindow(Adw.Window):
         self._busy = False
         self._walk_live = False
         self._map_partial = []
-        # AND THE FRAME, for the third time in this window and by the
-        # same law. The rungs move from the walk's own stack back to
-        # what is on disk here, and nothing told the canvas: the last
-        # live frame stood until something unrelated forced a repaint
-        # -- a pointer, a resize, a tab -- which is why the lines came
-        # back only when the mouse crossed them. Whoever changes what
-        # a canvas shows asks for the frame in the same place.
-        area = getattr(self, "map_area", None)
-        if area is not None:
-            area.queue_draw()
+        # AND THE FRAME, by the same law as everywhere in this window:
+        # the rungs move from the walk's own stack back to what is on
+        # disk here, and whoever changes what a canvas shows asks for
+        # the frame in the same place.
         self._map_announce = None
         self._walk_phase = None
         self._probes_fresh = False
