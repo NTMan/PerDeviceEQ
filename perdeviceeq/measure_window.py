@@ -1142,10 +1142,16 @@ class MeasureWindow(Adw.Window):
             if self.edit_pid else {}
         g_lo = float(grid.get("f_lo") or FMIN_PLOT)
         ppo = float(grid.get("ppo") or 96.0)
-        # WHERE NO STEP COULD BE READ AT ALL: a bin that neither rung
-        # of any pair heard. Shaded, so a gap reads as "not heard"
-        # rather than as a broken renderer.
-        mute = [all(row[i] is None for row in rows[1:]) for i in range(n)]
+        # NO SHADING OF THE CANVAS. A bin no step could read was shaded
+        # across the whole picture, and with one step drawn that meant
+        # the first rung's own unheard stretches -- the quietest sweep
+        # against the noise hump near a kilohertz -- turned into grey
+        # blocks that vanished as louder steps read the same bins. A
+        # property of one line drawn as a property of the canvas, and
+        # it read as blindness coming and going. A line simply has a
+        # gap where its step could not be read; that is the statement,
+        # and it needs no furniture.
+        mute = [False] * n
 
         def px(i):
             f = g_lo * 2.0 ** (i / ppo)
