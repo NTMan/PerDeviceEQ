@@ -1786,7 +1786,9 @@ def test_the_margin_is_per_bin_from_the_floor():
     assert abs(m[0] - 45.0) < 1e-9          # the floor, not the sum
     assert abs(m[1] - 8.0) < 1e-9
     assert np.isnan(m[2])                    # no magnitude, no margin
-    assert np.isnan(m[3])                    # no floor, no margin
+    # where the harmonic measurement stopped, the nearest measured
+    # floor stands in: the top octave is heard, not blanked
+    assert abs(m[3] - 45.0) < 1e-9
     # without a floor the old broadband arithmetic is what there is
     old = {"mag_db": [-26.5], "heard_offset_db": -34.8}
     assert abs(L.margin_of(old)[0] - 8.3) < 1e-9

@@ -883,6 +883,18 @@ def margin_of(rec, n=None):
     floor = rec.get("floor_db")
     if floor:
         fl = np.asarray([np.nan if v is None else v for v in floor], float)
+        # WHERE THE HARMONIC MEASUREMENT STOPS, THE FLOOR DOES NOT
+        # LEAP. Harmonics of the top octave fall past the band's edge,
+        # so the floor is not measured there -- 97 bins of 958 above
+        # 12 kHz -- and reading "not measured" as "not heard" blanked
+        # the top of every line on every rung, which is the blindness
+        # this floor was brought in to end. The nearest measured
+        # floor stands in: the noise does not change character at
+        # the bin where the measurement ran out of room.
+        good = np.isfinite(fl)
+        if good.any() and not good.all():
+            idx = np.arange(len(fl))
+            fl = np.interp(idx, idx[good], fl[good])
         m = min(len(mag), len(fl))
         out = np.full(len(mag), np.nan)
         out[:m] = -fl[:m]
