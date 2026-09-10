@@ -1759,7 +1759,12 @@ def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
     assert knee is not None and knee < top
     lvl, _ = L.working_level({"FL": bent}, 96, {"FL": 0.90})
     assert abs(lvl - knee * 10.0 ** (-L.KNEE_MARGIN_DB / 60.0)) < 1e-9
-    # and the quieter channel decides
+    # one fader for both channels, and with no knee the louder wins
     lvl, who = L.working_level({"FL": clean, "FR": clean}, 96,
-                               {"FL": 0.19, "FR": 0.17})
-    assert abs(lvl - 0.17) < 1e-9 and who == "FR"
+                               {"FL": 0.19, "FR": 0.20})
+    assert abs(lvl - 0.20) < 1e-9 and who == "FR"
+    # but a knee on either side caps the whole fader
+    lvl, who = L.working_level({"FL": clean, "FR": bent}, 96,
+                               {"FL": 0.90, "FR": 0.90})
+    assert abs(lvl - knee * 10.0 ** (-L.KNEE_MARGIN_DB / 60.0)) < 1e-9
+    assert who == "FR"

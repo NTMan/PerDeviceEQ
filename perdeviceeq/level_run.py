@@ -619,11 +619,26 @@ def working_level(maps, ppo=None, settled=None):
         lvl = (settled or {}).get(ch)
         knee = knee_of(rungs, ppo=ppo)
         if lvl is None:
-            lvl = top
-        elif knee is not None:
-            lvl = min(lvl, knee * 10.0 ** (-KNEE_MARGIN_DB / 60.0))
-        if best is None or lvl < best:
+            # no search remembered: the top, as before, and the
+            # quieter channel decides as it always did
+            if best is None or top < best:
+                best, who = top, ch
+            continue
+        # ONE FADER FOR ALL CHANNELS, AND WITH NO KNEE THE LOUDER WINS.
+        # Each channel's search found the level that puts ITS capture
+        # in the window; his Origin answers 19% on one side and 20% on
+        # the other. The window is a range, not a point, so the louder
+        # answer keeps both sides inside it and buys the quieter side
+        # a decibel of SNR. The quieter answer would buy nothing. Only
+        # a knee below a channel's answer overrules, and then it is
+        # that channel's knee, with a fine step of margin, that caps
+        # the whole fader.
+        if best is None or lvl > best:
             best, who = lvl, ch
+        if knee is not None:
+            cap = knee * 10.0 ** (-KNEE_MARGIN_DB / 60.0)
+            if cap < best:
+                best, who = cap, ch
     return best, who
 
 
