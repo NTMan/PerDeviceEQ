@@ -5967,7 +5967,15 @@ class MeasureWindow(Adw.Window):
             self._store_headroom(self.ch_keys[ch], rungs)
             # the choice is spent: what it named has been measured
             self._map_pick = None
-            self._map_partial = []
+            # THE WALK'S RUNGS STAY WITH THE WALK UNTIL IT ENDS. They
+            # were emptied here, on the worker, while _walk_live still
+            # said a walk was in progress -- so between this line and
+            # _measure_done both canvases read "a walk with no rungs":
+            # the map said there was no map yet and the passport lost
+            # every rung it had just drawn, for the second it takes
+            # the moratorium to let go. _measure_done hands the canvas
+            # back to what is on disk, and does so on the thread that
+            # draws.
             GLib.idle_add(self._sync_relevel)
         got = level_run.working_level(
             {self.ch_keys[ch]: rungs} if rungs else {},
@@ -6124,6 +6132,7 @@ class MeasureWindow(Adw.Window):
     def _measure_done(self, ch, result):
         self._busy = False
         self._walk_live = False
+        self._map_partial = []
         # AND THE FRAME, for the third time in this window and by the
         # same law. The rungs move from the walk's own stack back to
         # what is on disk here, and nothing told the canvas: the last

@@ -189,3 +189,36 @@ def test_the_end_of_a_walk_asks_for_the_frame():
                 "found": None, "word": None})
     assert not win._walk_live
     assert win.drawn, "the canvas was never asked to repaint"
+
+
+# ---- the walk's rungs stay on the canvas until the walk ends -------
+
+def test_the_walk_keeps_its_rungs_until_it_ends(monkeypatch):
+    """His screenshot: the moment the last rung landed, the map said
+    "no level map for this channel yet", the passport canvas lost
+    every rung it had just drawn, and a second later everything was
+    back. _walk_map emptied the walk's live rungs on the worker while
+    _walk_live still said a walk was on, so a frame drawn in that
+    second read a walk with no rungs. The rungs stay with the walk;
+    _measure_done hands the canvas back to the disk, on the thread
+    that draws."""
+    win = _win()
+    monkeypatch.setattr(mw, "GLib", _Idle)
+    rungs = [{"level": 0.12, "mag_db": [0.0]},
+             {"level": 0.15, "mag_db": [0.0]}]
+
+    def walk(*a, **k):
+        k["on_step"](list(rungs))        # handed over as it is taken
+        return list(rungs)
+    monkeypatch.setattr(level_run, "headroom_map", walk)
+    monkeypatch.setattr(level_run, "working_level",
+                        lambda *a, **k: (0.15, None))
+    win._map_live = lambda r: setattr(win, "_map_partial", list(r))
+    win._walk_live = True
+    mw.MeasureWindow._walk_map(win, 0, lambda *a: None, 0.12, None)
+    # the worker has returned and the walk is still on: a frame drawn
+    # now sees the rungs it saw a moment ago
+    assert win._walk_live and win._map_partial == rungs
+    _done(win, {"error": None, "outcome": None, "level": 0.15,
+                "found": None, "word": "FL: level 15%"})
+    assert not win._walk_live and win._map_partial == []
