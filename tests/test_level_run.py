@@ -1690,3 +1690,25 @@ def test_the_event_scale_is_local_not_a_constant():
     top = f > 6000
     assert not gone[top].any(), "smooth drift is not an event"
     assert int(gone.sum()) < 20
+
+
+def test_a_search_is_remembered_as_records_in_the_order_played():
+    """A search whose sweeps left no record was a black box. Each
+    probe now carries its curve, and the search rides to the passport
+    beside the rungs, in the order it was played."""
+    from perdeviceeq import level_run as L
+
+    ps = [L.Probe(volume=0.15, peak_dbfs=-30.0, snr_db=40.0, thd_pct=0.2,
+                  thd_bound=1.0, margin_db=12.0, clipped=False,
+                  phase="up", step=1, verdict="quiet",
+                  mag_db=[-30.0, -30.5], heard_offset_db=-70.0),
+          L.Probe(volume=0.30, peak_dbfs=-12.0, snr_db=48.0, thd_pct=2.0,
+                  thd_bound=1.0, margin_db=6.0, clipped=False,
+                  phase="up", step=2, verdict="loud",
+                  mag_db=[-12.0, -12.4], heard_offset_db=-70.0)]
+    rec = L.probe_records(ps)
+    assert [r["step"] for r in rec] == [1, 2]
+    assert [r["verdict"] for r in rec] == ["quiet", "loud"]
+    assert rec[0]["mag_db"] == [-30.0, -30.5]
+    assert rec[1]["level"] == 0.30 and rec[1]["peak_dbfs"] == -12.0
+    assert L.probe_records(None) == []

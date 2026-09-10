@@ -464,6 +464,7 @@ class MeasureWindow(Adw.Window):
         self._walk_live = False
         self._walk_keep = None
         self._walk_old = []
+        self._walk_probes = []
         pick = Gtk.GestureClick()
         pick.set_button(1)
         pick.connect("released", self._on_map_pick)
@@ -5470,6 +5471,7 @@ class MeasureWindow(Adw.Window):
         # a rebuild never searches, and the previous search's picture
         # is still the answer to "where did this level come from".
         GLib.idle_add(self._hunt_reset)
+        self._walk_probes = []
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
             self.session.cfg.channels,
@@ -5483,6 +5485,10 @@ class MeasureWindow(Adw.Window):
             should_stop=lambda: self._stop_asked)
 
         GLib.idle_add(self._hunt_settled, vol)
+        # REMEMBERED WITH THE MAP. The probes ride to the passport on
+        # the same write as the rungs, so a walk with no map still
+        # leaves its search behind.
+        self._walk_probes = level_run.probe_records(probes)
         # THE EPILOGUE. The search stops as soon as it can name a safe
         # level; the map has to go UP until something gives, and the
         # two want opposite things. But the tedious half -- the quiet
@@ -5609,6 +5615,7 @@ class MeasureWindow(Adw.Window):
         src = self.session.source_ident or {}
         book[str(ch_key)] = {
             "rungs": list(rungs),
+            "probes": list(getattr(self, "_walk_probes", None) or []),
             # WHERE THE FINE STEP BEGAN, as an observation. Nothing
             # reads it to decide anything -- coarse or fine follows
             # from a rung's POSITION in the ladder, which needs no

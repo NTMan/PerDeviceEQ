@@ -773,6 +773,26 @@ ODD_K = 4.0              # times the walk's own median residual before
                          # in a room, and one number cannot serve both
 
 
+def probe_records(probes):
+    """The search's sweeps as passport records, in the order played.
+
+    Each is a sweep with a known level, a known peak and a measured
+    curve -- the same kind of thing a rung is -- and is stored beside
+    the rungs so a search is remembered: what it played, in what
+    order, and what it made of each.
+    """
+    out = []
+    for p in probes or []:
+        out.append({"step": int(getattr(p, "step", 0) or 0),
+                    "level": float(p.volume),
+                    "peak_dbfs": round(float(p.peak_dbfs), 2),
+                    "verdict": getattr(p, "verdict", None),
+                    "phase": getattr(p, "phase", None),
+                    "mag_db": list(getattr(p, "mag_db", None) or []),
+                    "heard_offset_db": getattr(p, "heard_offset_db", None)})
+    return out
+
+
 def passport_of(prof):
     """The maps a profile carries, {channel: record}.
 
@@ -1484,7 +1504,8 @@ class Probe:
     """One rung: what a sweep at one level said."""
 
     __slots__ = ("volume", "peak_dbfs", "snr_db", "thd_pct", "thd_bound",
-                 "margin_db", "clipped", "phase", "step", "verdict")
+                 "margin_db", "clipped", "phase", "step", "verdict",
+                 "mag_db", "heard_offset_db")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -1587,10 +1608,20 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
                    and math.isfinite(float(got.snr_db)) else None)
 
             verdict = ctl.observe(v, peak_db, snr, clipped, bound, margin)
+            # THE CURVE RIDES WITH THE PROBE. It was analysed in full
+            # and thrown away, and a search whose sweeps leave no
+            # record is a black box: a level was found and nothing
+            # could say what the sweeps that found it looked like.
             p = Probe(volume=v, peak_dbfs=peak_db, snr_db=snr,
                       thd_pct=pct, thd_bound=bound, margin_db=margin,
                       clipped=clipped, phase=ctl.phase(), step=step,
-                      verdict=verdict)
+                      verdict=verdict,
+                      mag_db=[None if not math.isfinite(x)
+                              else round(float(x), 2)
+                              for x in np.asarray(
+                                  getattr(got, "mag_db", []), float)],
+                      heard_offset_db=getattr(got, "heard_offset_db",
+                                              None))
             probes.append(p)
             if on_probe is not None:
                 on_probe(p)
