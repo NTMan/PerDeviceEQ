@@ -549,7 +549,18 @@ class MeasureWindow(Adw.Window):
         self._rebuild_map_slots()
 
         _t = time.monotonic()
-        b.get_object("channel_host").append(self._build_page())
+        # THE RIGHT COLUMN SCROLLS. The passport canvas grows a row
+        # per record and the takes list a row per take; the window
+        # does not grow with them, and a card that ran past its bottom
+        # edge lost its base row, its rule and every probe under it
+        # without a word. The fader and the buttons on the left stay
+        # put; this side scrolls.
+        page_sw = Gtk.ScrolledWindow()
+        page_sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        page_sw.set_propagate_natural_width(True)
+        page_sw.set_vexpand(True)
+        page_sw.set_child(self._build_page())
+        b.get_object("channel_host").append(page_sw)
         debug.timing("_build_page", _t)
         _t = time.monotonic()
         fa = self._build_fit_area()
@@ -2064,8 +2075,10 @@ class MeasureWindow(Adw.Window):
         card.add_css_class("card")
         card.append(face)
         card.append(rev)
-        col.append(card)
+        # THE PASSPORT FIRST: it is what a hand looks at while the rig
+        # is being walked, the takes come after
         col.append(self._build_ladder_card())
+        col.append(card)
         self._takes_open = True
         self._hl = cv.Highlight()
         self._face = None
@@ -2764,6 +2777,7 @@ class MeasureWindow(Adw.Window):
                                 takes, "" if takes == 1 else "s"))
 
     def _refresh_all(self):
+        self._ladder_repaint()
         ready = self.session is not None
         self._dress_tabs()
         self._refresh_cal_manage()
@@ -4915,6 +4929,7 @@ class MeasureWindow(Adw.Window):
         self._rebuild_ack = False
         self._sync_relevel()
         self._sync_level_fader()
+        self._ladder_repaint()
         # the capture row, its calibration AND its gain belong to the
         # tab in view, so they are redrawn with it -- and so does the
         # level map, which is per channel too. A DrawingArea repaints
