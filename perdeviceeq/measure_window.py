@@ -465,6 +465,7 @@ class MeasureWindow(Adw.Window):
         self._walk_keep = None
         self._walk_old = []
         self._walk_probes = []
+        self._walk_settled = None
         pick = Gtk.GestureClick()
         pick.set_button(1)
         pick.connect("released", self._on_map_pick)
@@ -803,7 +804,8 @@ class MeasureWindow(Adw.Window):
                 if self.edit_pid and getattr(self.parent, "store", None)
                 else {})
         ppo = ((prof.get("measurement") or {}).get("grid") or {}).get("ppo")
-        v, who = level_run.working_level(level_run.maps_of(prof), ppo)
+        v, who = level_run.working_level(level_run.maps_of(prof), ppo,
+                                         level_run.settled_of(prof))
         if v is None:
             self.vol_spin.set_sensitive(not gone)
             self.vol_spin.set_tooltip_text(
@@ -970,6 +972,8 @@ class MeasureWindow(Adw.Window):
         # had no business running.
         keep = self._map_pick
         self._walk_keep = keep
+        self._walk_probes = []
+        self._walk_settled = None
         self._walk_old = self._map_rungs()
         self._map_partial = (
             level_run.rolled_back(self._walk_old, keep)
@@ -1438,7 +1442,7 @@ class MeasureWindow(Adw.Window):
             cr.show_text("%.2f" % v)
 
     _MAP_ENDS = {
-        "capture": "complete: the capture ran out of room",
+        "capture": "linear at least this far: the capture ran out first",
         "knob": "complete: the volume reached its top",
         "rungs": "complete: the walk spent its rungs",
         "asked": "UNFINISHED: stopped by hand",
@@ -5489,6 +5493,7 @@ class MeasureWindow(Adw.Window):
         # the same write as the rungs, so a walk with no map still
         # leaves its search behind.
         self._walk_probes = level_run.probe_records(probes)
+        self._walk_settled = None if vol is None else float(vol)
         # THE EPILOGUE. The search stops as soon as it can name a safe
         # level; the map has to go UP until something gives, and the
         # two want opposite things. But the tedious half -- the quiet
@@ -5561,7 +5566,9 @@ class MeasureWindow(Adw.Window):
         got = level_run.working_level(
             {self.ch_keys[ch]: rungs} if rungs else {},
             (self.session.cfg.ppo if hasattr(self.session.cfg, "ppo")
-             else None))[0]
+             else None),
+            {self.ch_keys[ch]: self._walk_settled}
+            if self._walk_settled is not None else None)[0]
         return got, None
 
     def _store_headroom(self, ch_key, rungs):
@@ -5615,7 +5622,16 @@ class MeasureWindow(Adw.Window):
         src = self.session.source_ident or {}
         book[str(ch_key)] = {
             "rungs": list(rungs),
-            "probes": list(getattr(self, "_walk_probes", None) or []),
+            # a rebuild never searches, so it keeps the search it had
+            "probes": list(getattr(self, "_walk_probes", None)
+                           or (book.get(str(ch_key)) or {}).get("probes")
+                           or []),
+            # THE SEARCH'S ANSWER IS KEPT WITH THE MAP: it is the
+            # recording level, and a rebuild that never searches must
+            # still know it
+            "settled": (self._walk_settled
+                        if getattr(self, "_walk_settled", None) is not None
+                        else (book.get(str(ch_key)) or {}).get("settled")),
             # WHERE THE FINE STEP BEGAN, as an observation. Nothing
             # reads it to decide anything -- coarse or fine follows
             # from a rung's POSITION in the ladder, which needs no

@@ -1712,3 +1712,54 @@ def test_a_search_is_remembered_as_records_in_the_order_played():
     assert rec[0]["mag_db"] == [-30.0, -30.5]
     assert rec[1]["level"] == 0.30 and rec[1]["peak_dbfs"] == -12.0
     assert L.probe_records(None) == []
+
+
+def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
+    """Linear to 26%, no knee found, and the fader stood at 26 --
+    "checked this far" read as "may go this far". The level is the
+    search's answer, capped by a knee when the map found one below
+    it, with a fine step of margin."""
+    from perdeviceeq import level_run as L
+
+    n = 200
+    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
+
+    def ladder(steps, knee_after=None):
+        out, up = [], 0.0
+        for j, d in enumerate([0.0] + list(steps)):
+            up += d
+            # a rig that runs out in the bass first: the low half of
+            # the band falls behind while the peak, carried by the
+            # rest, still climbs -- the only kind of knee a step read
+            # from the capture peak can see
+            lost = (0.0 if knee_after is None or j <= knee_after
+                    else 1.5 * (j - knee_after))
+            r = {"level": 0.12 * 10.0 ** (up / 60.0), "peak_dbfs": -30.0 + up,
+                 "heard_offset_db": -40.0,
+                 "mag_db": [up + s - (lost if i < n // 2 else 0.0)
+                            for i, s in enumerate(slope)],
+                 "stopped_by": "capture" if j == len(steps) else None}
+            if j == 0:
+                r["scatter_db"] = [0.1] * n
+            out.append(r)
+        return out
+
+    clean = ladder([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    top = max(r["level"] for r in clean)
+    # no knee: the search's answer stands, and the top does not
+    lvl, who = L.working_level({"FL": clean}, 96, {"FL": 0.19})
+    assert abs(lvl - 0.19) < 1e-9 and who == "FL"
+    assert L.knee_of(clean, 96) is None
+    # no search remembered: the old behaviour, the top
+    lvl, _ = L.working_level({"FL": clean}, 96, None)
+    assert abs(lvl - top) < 1e-9
+    # a knee below the search's answer caps it, a fine step under
+    bent = ladder([6.0, 6.0, 2.0, 2.0, 2.0, 2.0], knee_after=2)
+    knee = L.knee_of(bent, 96)
+    assert knee is not None and knee < top
+    lvl, _ = L.working_level({"FL": bent}, 96, {"FL": 0.90})
+    assert abs(lvl - knee * 10.0 ** (-L.KNEE_MARGIN_DB / 60.0)) < 1e-9
+    # and the quieter channel decides
+    lvl, who = L.working_level({"FL": clean, "FR": clean}, 96,
+                               {"FL": 0.19, "FR": 0.17})
+    assert abs(lvl - 0.17) < 1e-9 and who == "FR"

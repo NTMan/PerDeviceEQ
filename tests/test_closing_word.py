@@ -67,6 +67,8 @@ def _win():
     w.said = []
     w._say = w.said.append
     w._walk_why = None
+    w._walk_settled = None
+    w._walk_probes = []
     w._stop_asked = False
     w._level_only = True
     w._busy = True

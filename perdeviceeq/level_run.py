@@ -576,7 +576,7 @@ def linear_top(rungs, ppo=None):
     return top
 
 
-def working_level(maps, ppo=None):
+def working_level(maps, ppo=None, settled=None):
     """The loudest level EVERY channel still follows. (level, why)
 
     This is what a passport is for. The takes of one canvas share one
@@ -600,9 +600,65 @@ def working_level(maps, ppo=None):
         top = linear_top(rungs, ppo=ppo)
         if top is None:
             continue
-        if best is None or top < best:
-            best, who = top, ch
+        # THE FADER CARRIES THE RECORDING LEVEL, NOT THE LOUDEST RUNG
+        # CHECKED. The search's answer is the level that puts the
+        # capture in its window -- SNR enough, headroom enough -- and
+        # that is what a take should be played at. The top of the map
+        # is something else: on a rig whose knee is out of reach it is
+        # simply where the microphone ran out, peak -2 dBFS, no margin
+        # for a click at all. His Origin: linear to 26%, no knee found,
+        # and the fader stood at 26 because "checked this far" had
+        # been read as "may go this far".
+        #
+        # So the level is the search's, capped by the knee when the
+        # map found one below it -- with a fine step of margin, since
+        # a take played on the knee itself is played where the rig
+        # has just begun to give up. A map with no knee caps nothing.
+        # Passports written before the search was remembered have no
+        # answer to use and fall back to the top, as before.
+        lvl = (settled or {}).get(ch)
+        knee = knee_of(rungs, ppo=ppo)
+        if lvl is None:
+            lvl = top
+        elif knee is not None:
+            lvl = min(lvl, knee * 10.0 ** (-KNEE_MARGIN_DB / 60.0))
+        if best is None or lvl < best:
+            best, who = lvl, ch
     return best, who
+
+
+KNEE_MARGIN_DB = 2.0     # a fine step below the knee, so a take is
+                         # never played where the rig has just begun
+                         # to give up
+
+
+def knee_of(rungs, ppo=None):
+    """Where the rig stopped following, or None when it never did.
+
+    The loudest rung that followed is the top of the map only when
+    the walk ended because the CAPTURE ran out; then nothing above it
+    was refused and there is no knee -- only "linear at least this
+    far". When a rung above the loudest followed one exists, that rung
+    did not follow, and the loudest followed one is the knee.
+    """
+    rs = sorted((r for r in rungs or [] if r.get("level") is not None),
+                key=lambda r: r["level"])
+    if len(rs) < 2:
+        return None
+    top = linear_top(rs, ppo=ppo)
+    if top is None:
+        return None
+    return top if top < rs[-1]["level"] - 1e-9 else None
+
+
+def settled_of(prof):
+    """The level each channel's search settled at, from the passport."""
+    out = {}
+    for ch, rec in (prof.get(PASSPORT) or {}).items():
+        v = (rec or {}).get("settled")
+        if v is not None:
+            out[ch] = float(v)
+    return out
 
 
 def rolled_back(rungs, keep):
