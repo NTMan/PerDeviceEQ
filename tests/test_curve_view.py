@@ -930,7 +930,9 @@ def test_the_base_rung_has_to_be_heard_itself():
 
 MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes",
                "_ladder_rows", "_draw_ladder", "_ladder_record",
-               "_ladder_k", "_ladder_word_for", "_wrapped", "_walk_here")
+               "_ladder_first", "_ladder_k", "_pick_rung", "_pick_step",
+               "_on_ladder_pick", "_ladder_word_for", "_wrapped",
+               "_walk_here")
 
 
 def map_fake():
@@ -997,7 +999,10 @@ def map_window(rungs, partial=None, pick=2, probes=None):
     f.ch_keys = ["FL"]
     f._selected_ch = 0
     f.edit_pid = "p"
-    f._map_pick = pick
+    # THE CHOICE IS A SLOT; `pick` is given as a rung index here, the
+    # way the courts have always spoken, and translated
+    first = max((int(p.get("step") or 0) for p in probes or []), default=0)
+    f._map_pick = None if pick is None else pick + first + 1
     f._busy = False
     f._map_announce = None
     f._walk_probes = []
@@ -1327,3 +1332,45 @@ def test_a_walk_is_shown_on_its_own_channel_only():
     f._rebuild_ack = True
     f._arm_walk(True)
     assert f._walk_ch == 1
+
+
+def test_a_step_of_the_search_can_be_chosen_and_resumed_from():
+    """The choice is a SLOT of the command, not a rung: on a probe
+    row it means "resume the search from this step" -- the steps
+    before it are kept and replayed to the controller without a
+    sound, the rest of the search is played again, and every rung is
+    a later slot than any probe, so the whole ladder goes with it."""
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0])
+    probes = [{"step": k, "level": lv, "verdict": "quiet",
+               "mag_db": rungs[1]["mag_db"]}
+              for k, lv in ((1, 0.15), (2, 0.17), (3, 0.19))]
+    f = map_window(rungs, probes=probes, pick=None)
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 400)
+    f._draw_ladder(None, cairo.Context(surf), 700, 400)
+    rows = f._ladder_geom[0]
+    # a click on the row of step 2
+    at = [i for i, r in enumerate(rows) if r[0] == "probe" and r[1] == 2][0]
+    f._sync_relevel = lambda: None
+    f._ladder_repaint = lambda: None
+    f._on_ladder_pick(None, 1, 0.0, 8 + at * 26 + 13)
+    assert f._map_pick == 2
+    assert f._pick_step() == 2 and f._pick_rung() is None
+    # a click on a rung row is still a rung
+    top = [i for i, r in enumerate(rows) if r[0] == "rung"][0]
+    f._on_ladder_pick(None, 1, 0.0, 8 + top * 26 + 13)
+    assert f._pick_rung() == len(rungs) - 1 and f._pick_step() is None
+    f._on_ladder_pick(None, 1, 0.0, 8 + at * 26 + 13)
+    assert f._pick_step() == 2
+    # armed: step 1 is kept for the replay, the ladder is gone
+    f._rebuild_ack = True
+    f._arm_walk(True)
+    assert f._walk_keep is None
+    assert [p["step"] for p in f._walk_replay] == [1]
+    assert [p["step"] for p in f._walk_probes] == [1]
+    assert f._probes_fresh and f._map_partial == []
+    assert f._map_pick is None
+    # and the canvas shows the kept step alone under the rule
+    f._busy = True
+    assert [r[1] for r in f._ladder_rows() if r[0] == "probe"] == [1]
+    assert [r for r in f._ladder_rows() if r[0] == "rung"] == []

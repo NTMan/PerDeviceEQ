@@ -755,9 +755,8 @@ class MeasureWindow(Adw.Window):
         btn = getattr(self, "relevel_btn", None)
         if btn is None:
             return
-        k = self._map_pick
         img = btn.get_child()
-        if k is None:
+        if self._map_pick is None:
             if isinstance(img, Gtk.Image):
                 img.set_from_icon_name("pde-level-symbolic")
             btn.set_tooltip_text(
@@ -765,12 +764,21 @@ class MeasureWindow(Adw.Window):
             return
         if isinstance(img, Gtk.Image):
             img.set_from_icon_name("pde-map-rebuild-symbolic")
-        got = self._map_rungs()
+        k = self._pick_rung()
+        if k is not None:
+            got = self._map_rungs()
+            btn.set_tooltip_text(
+                "Rebuild the map from the rung at %d%%: the %d rung(s) "
+                "below it are kept, that one and everything above it are "
+                "measured again"
+                % (round(100.0 * got[k]["level"]) if k < len(got) else 0, k))
+            return
+        st = self._pick_step()
         btn.set_tooltip_text(
-            "Rebuild the map from the rung at %d%%: the %d rung(s) "
-            "below it are kept, that one and everything above it are "
-            "measured again"
-            % (round(100.0 * got[k]["level"]) if k < len(got) else 0, k))
+            "Resume the search from step %d: the %d step(s) before it "
+            "are kept and replayed to the search without a sound, the "
+            "search goes on from there, and the map is walked again"
+            % (st, st - 1))
 
     def _arm_walk(self, level_only):
         """Hand the canvas to the walk, before a sound is played.
@@ -799,7 +807,13 @@ class MeasureWindow(Adw.Window):
         # whole walk against a ladder that no longer had them -- and
         # the same falsy zero sent the rebuild into a level search it
         # had no business running.
-        keep = self._map_pick
+        # THE CHOICE WAS MADE ON WHAT THE CANVAS SHOWED, and the rows
+        # it showed are read here before anything below changes what
+        # the canvas shows -- the slot's meaning and the probes a
+        # resumed search keeps both come from that picture.
+        keep = self._pick_rung()
+        st = self._pick_step()
+        shown = self._ladder_probes()
         self._walk_keep = keep
         # A WALK BELONGS TO ONE CHANNEL. Its probes, its rungs so far
         # and its announce used to hang on the window, and the canvas
@@ -808,13 +822,21 @@ class MeasureWindow(Adw.Window):
         # until the next press. What the walk left on disk was always
         # that channel's; only the picture was borrowed.
         self._walk_ch = self._selected_ch
-        self._walk_probes = []
+        # A SEARCH RESUMED FROM A STEP keeps the probes before it:
+        # they are replayed to the controller, not to the room, and
+        # they stay on the canvas as what they are -- records.
+        self._walk_replay = ([p for p in shown
+                              if int(p.get("step") or 0) < st]
+                             if st is not None else [])
+        self._walk_probes = list(self._walk_replay)
         self._walk_settled = None
         # A FRESH SEARCH STARTS WITH AN EMPTY BAND. Until its first
         # probe lands the canvas used to fall back to the record and
         # show the LAST search's probes under a new one's announce,
-        # which read as the search doing nothing. A rebuild never
-        # searches and keeps the record's probes, as it keeps the rest.
+        # which read as the search doing nothing. A rebuild from a
+        # rung never searches and keeps the record's probes, as it
+        # keeps the rest; a search resumed from a step starts with
+        # the steps it kept.
         self._probes_fresh = keep is None
         self._walk_phase = None
         self._walk_old = self._map_rungs()
@@ -1137,13 +1159,13 @@ class MeasureWindow(Adw.Window):
                 rule_y = y
                 y += 24
             mid = y + LADDER_ROW_H / 2.0
-            # THE CHOICE, ON THIS CANVAS TOO. The chosen rung's row is
-            # tinted, and every rung above it -- the ones a rebuild
-            # from it replays -- is faded, so what the click means is
-            # visible where the click landed and not only on the map.
-            k = self._ladder_k(slot) if kind == "rung" else None
-            chosen = pick is not None and k == pick
-            gone = pick is not None and k is not None and k > pick
+            # THE CHOICE, ON THE ROWS. The chosen slot's row is tinted
+            # and every later slot -- what a rebuild from it re-records
+            # -- is faded, so what the click means is visible where
+            # the click landed. On a probe that is the rest of the
+            # search and the whole ladder.
+            chosen = pick is not None and slot == pick
+            gone = pick is not None and slot is not None and slot > pick
             if chosen:
                 cr.set_source_rgba(0.20, 0.45, 0.85, 0.12)
                 cr.rectangle(ml, y, pw_, LADDER_ROW_H)
@@ -1220,26 +1242,53 @@ class MeasureWindow(Adw.Window):
         return ("linear at least to %d%% -- the capture ran out first"
                 % round(100 * top))
 
+    def _ladder_first(self):
+        """How many slots the search holds: the last probe's step."""
+        return max((int(p.get("step") or 0)
+                    for p in self._ladder_probes()), default=0)
+
     def _ladder_k(self, slot):
         """A rung's slot number back to its index in the map."""
-        first = max((int(p.get("step") or 0)
-                     for p in self._ladder_probes()), default=0)
-        return slot - first - 1
+        return slot - self._ladder_first() - 1
+
+    def _pick_rung(self):
+        """The chosen slot as a rung index, or None when nothing is
+        chosen or a probe is."""
+        pick = self._map_pick
+        if pick is None or pick <= self._ladder_first():
+            return None
+        return self._ladder_k(pick)
+
+    def _pick_step(self):
+        """The chosen slot as a search step, or None when nothing is
+        chosen or a rung is."""
+        pick = self._map_pick
+        if pick is None or pick > self._ladder_first():
+            return None
+        return pick
 
     def _on_ladder_pick(self, _g, _n, _x, y):
-        """A row chosen on the ladder is the same choice as on the map:
-        the rung to rebuild from. Probes are not choosable yet."""
+        """A row chosen on the canvas is the slot to rebuild from.
+
+        THE CHOICE IS A SLOT, not a rung: the passport is one command
+        -- the search's probes, then the pair, then the rungs -- and
+        what a rebuild does is re-record the chosen slot and every
+        slot after it. On a rung that is the ladder above it; on a
+        probe it is the rest of the search, resumed from that step
+        with the probes before it replayed to the controller, and
+        then the whole ladder -- every rung is a later slot than any
+        probe. The same operation, wherever it starts.
+        """
         if self._busy:
             return
         rows = getattr(self, "_ladder_geom", ([], None))[0] or []
         idx = int((y - 8) // LADDER_ROW_H)
-        if not 0 <= idx < len(rows) or rows[idx][0] != "rung":
+        if not 0 <= idx < len(rows) or rows[idx][0] not in ("rung", "probe"):
             return
-        rungs = self._map_rungs()
-        k = self._ladder_k(rows[idx][1])
-        if not 0 <= k < len(rungs):
+        slot = rows[idx][1]
+        if slot is None:
             return
-        self._map_pick = None if self._map_pick == k else k
+        self._map_pick = None if self._map_pick == slot else slot
         self._sync_relevel()
         self._ladder_repaint()
 
@@ -5068,7 +5117,8 @@ class MeasureWindow(Adw.Window):
                 # a question that a count does not raise.
                 keep_top = max(r["level"] for r in got)
                 return self._walk_map(ch, about_to, keep_top, got)
-        self._walk_probes = []
+        replay = list(getattr(self, "_walk_replay", None) or [])
+        self._walk_probes = list(replay)
         self._walk_phase = "search"
         vol, probes = level_run.hunt(
             self.session.sink, self.session.source,
@@ -5080,12 +5130,14 @@ class MeasureWindow(Adw.Window):
             post_silence=self.session.cfg.post_silence,
             play_map=self.session._channel_map(ch),
             on_probe=said, on_level=about_to,
-            should_stop=lambda: self._stop_asked)
+            should_stop=lambda: self._stop_asked,
+            replay=replay)
 
         # REMEMBERED WITH THE MAP. The probes ride to the passport on
         # the same write as the rungs, so a walk with no map still
-        # leaves its search behind.
-        self._walk_probes = level_run.probe_records(probes)
+        # leaves its search behind -- the replayed steps first, then
+        # the ones this search played.
+        self._walk_probes = replay + level_run.probe_records(probes)
         self._walk_settled = None if vol is None else float(vol)
         # THE EPILOGUE. The search stops as soon as it can name a safe
         # level; the map has to go UP until something gives, and the
@@ -5671,7 +5723,8 @@ class MeasureWindow(Adw.Window):
                 "they are not on the rig.")
         go = "Play sweep"
         got = self._map_rungs() if level_only else []
-        k = getattr(self, "_map_pick", None)
+        k = self._pick_rung() if level_only else None
+        st = self._pick_step() if level_only else None
         if got and k is not None and len(got) - k > 0:
             body += (
                 "\n\nThe level map of this channel will also be "
@@ -5680,6 +5733,14 @@ class MeasureWindow(Adw.Window):
                 "%d below are kept."
                 % (round(100.0 * got[k]["level"]), len(got) - k, k))
             go = "Play and rebuild"
+        elif st is not None:
+            body += (
+                "\n\nThe search of this channel will be resumed from "
+                "step %d: the %d step(s) before it are kept, the rest "
+                "of the search is measured again, and all %d rung(s) "
+                "of the level map are discarded and walked again."
+                % (st, st - 1, len(got)))
+            go = "Play and resume"
         elif got:
             body += (
                 "\n\nThe level map of this channel will also be "

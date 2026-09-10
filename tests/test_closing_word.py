@@ -221,3 +221,34 @@ def test_the_walk_keeps_its_rungs_until_it_ends(monkeypatch):
     _done(win, {"error": None, "outcome": None, "level": 0.15,
                 "found": None, "word": "FL: level 15%"})
     assert not win._walk_live and win._map_partial == []
+
+
+# ---- a search resumed from a step ------------------------------------
+
+def test_a_resumed_search_keeps_the_steps_it_replayed(monkeypatch):
+    """A rebuild chosen on a probe row resumes the search from that
+    step: the steps before it go to the controller as replay, not to
+    the room, and the record written afterwards holds them first and
+    the played ones after -- one search, in the order it stands."""
+    win = _win()
+    monkeypatch.setattr(mw, "GLib", _Idle)
+    seen = {}
+
+    def hunt(*a, **k):
+        seen.update(k)
+        p = level_run.Probe(volume=0.19, peak_dbfs=-10.0, step=3,
+                            verdict="ok", phase="closing",
+                            mag_db=[0.0], floor_db=[-60.0])
+        return 0.19, [p]
+    monkeypatch.setattr(level_run, "hunt", hunt)
+    win._walk_map = lambda *a, **k: (0.19, None)
+    win._post_status = lambda *a: None
+    win._probe_judged = lambda p: False
+    win._ladder_announce = lambda *a: False
+    win._walk_keep = None
+    win._walk_replay = [{"step": 1, "level": 0.15, "peak_dbfs": -17.0},
+                        {"step": 2, "level": 0.17, "peak_dbfs": -14.0}]
+    mw.MeasureWindow._hunt_level(win, 0)
+    assert seen["replay"] == win._walk_replay
+    assert [p["step"] for p in win._walk_probes] == [1, 2, 3]
+    assert win._walk_settled == 0.19

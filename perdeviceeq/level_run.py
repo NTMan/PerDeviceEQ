@@ -741,19 +741,67 @@ def _check_seating(base, again, k=SEATING_K):
 
 
 
+def sweep_record(v, peak_db, got):
+    """What one sweep of a walk leaves behind, whichever half of the
+    walk it served.
+
+    A probe and a rung are the same kind of thing -- a sweep at a
+    known level with a known peak, a measured curve and the floor it
+    was measured over -- and were built in two places with two copies
+    of the same rounding, one of which had lost the broadband offset
+    along the way. One record, and whatever else a sweep says (the
+    search's observation, the base's pair) is added to it.
+
+    ROUNDING IS FOR STORAGE, NOT FOR ARITHMETIC: a walk that has to
+    decide something from a level or a peak keeps the exact number.
+    """
+    floor = getattr(got, "thd_noise_db", None)
+    # the response is relative and the noise absolute, so one offset
+    # turns the whole curve into a margin over this take's own floor
+    noise, signal = (getattr(got, "noise_dbfs", None),
+                     getattr(got, "signal_dbfs", None))
+    off = (float(noise) - float(signal)
+           if noise is not None and signal is not None else None)
+    return {"level": round(float(v), 4),
+            "peak_dbfs": round(float(peak_db), 2),
+            "heard_offset_db": None if off is None else round(off, 2),
+            # THE FLOOR, PER BIN: the harmonic measurement's own noise
+            # floor re the response, which is the margin with its sign
+            # flipped. One number for the whole band called a base
+            # deaf across its middle.
+            "floor_db": [None if not math.isfinite(x) else round(float(x), 1)
+                         for x in np.asarray(
+                             floor if floor is not None else [], float)],
+            "mag_db": [None if not math.isfinite(x) else round(float(x), 2)
+                       for x in np.asarray(
+                           getattr(got, "mag_db", []), float)]}
+
+
 def probe_records(probes):
     """The search's sweeps as passport records, in the order played.
 
-    Each is a sweep with a known level, a known peak and a measured
-    curve -- the same kind of thing a rung is -- and is stored beside
-    the rungs so a search is remembered: what it played, in what
-    order, and what it made of each.
+    Each is the sweep's record with the search's observation on it --
+    peak, SNR, clipping, the THD bound and the margin the controller
+    was shown, and what it made of them -- so a search is remembered
+    whole: what it played, in what order, what it saw and what it
+    judged. That is what lets a search be RESUMED from its record
+    rather than replayed through the speakers.
     """
     out = []
     for p in probes or []:
+        # EXACT, NOT ROUNDED: the level and the peak are what the
+        # controller is shown again when a search is resumed, and a
+        # peak rounded to two places asked for 0.4654 where the
+        # search had asked 0.4653. What decides must be stored as it
+        # was decided on.
         out.append({"step": int(getattr(p, "step", 0) or 0),
                     "level": float(p.volume),
-                    "peak_dbfs": round(float(p.peak_dbfs), 2),
+                    "peak_dbfs": float(p.peak_dbfs),
+                    "snr_db": getattr(p, "snr_db", None),
+                    "clipped": bool(getattr(p, "clipped", False)),
+                    "thd_pct": getattr(p, "thd_pct", None),
+                    "thd_bound": getattr(p, "thd_bound", None),
+                    "margin_db": getattr(p, "margin_db", None),
                     "verdict": getattr(p, "verdict", None),
                     "phase": getattr(p, "phase", None),
                     "mag_db": list(getattr(p, "mag_db", None) or []),
@@ -1109,13 +1157,6 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # the caller's.
             if on_rung is not None:
                 on_rung(i + 1, v, chan, sweep)
-            mag = np.asarray(got.mag_db, float)
-            # the response is relative and the noise absolute, so one
-            # offset turns the whole curve into a margin over this
-            # take's own floor -- a number rather than a second curve
-            off = (float(got.noise_dbfs) - float(got.signal_dbfs)
-                   if got.noise_dbfs is not None
-                   and got.signal_dbfs is not None else None)
             # ROUNDING IS FOR STORAGE, NOT FOR ARITHMETIC. The walk
             # keeps exact levels and peaks for its own decisions: with
             # a 2 dB step and a peak rounded to two places, the step
@@ -1123,36 +1164,16 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
             # asks for MIN_READABLE_STEP throws it away -- so no
             # bracket ever forms and the walk marches to the top.
             exact.append((float(v), float(peak_db)))
-            rungs.append({"level": round(float(v), 4),
-                          "scatter_db": (
-                              [None if not math.isfinite(x)
-                               else round(float(x), 3)
-                               for x in scatter]
-                              # only a FRESH base carries it: a
-                              # rebuild adds rungs above one that
-                              # already has a scatter, and a second
-                              # one halfway up would put two floors
-                              # in one map
-                              if i == 0 and not have else None),
-                          "peak_dbfs": round(peak_db, 2),
-                          "spl_db": None,
-                          "heard_offset_db": (None if off is None
-                                              else round(off, 2)),
-                          # THE FLOOR, PER BIN: the harmonic
-                          # measurement's own noise floor re the
-                          # response, which is the margin with its
-                          # sign flipped. One number for the whole
-                          # band called a base deaf across its middle.
-                          "floor_db": [None if not math.isfinite(x)
-                                       else round(float(x), 1)
-                                       for x in np.asarray(
-                                           getattr(got, "thd_noise_db",
-                                                   None) if getattr(
-                                               got, "thd_noise_db", None)
-                                           is not None else [], float)],
-                          "mag_db": [None if not math.isfinite(x)
-                                     else round(float(x), 2)
-                                     for x in mag]})
+            rung = sweep_record(v, peak_db, got)
+            # only a FRESH base carries the pair: a rebuild adds rungs
+            # above one that already has a scatter, and a second one
+            # halfway up would put two floors in one map
+            rung["scatter_db"] = ([None if not math.isfinite(x)
+                                   else round(float(x), 3)
+                                   for x in scatter]
+                                  if i == 0 and not have else None)
+            rung["spl_db"] = None
+            rungs.append(rung)
             # HANDED OVER AS IT IS TAKEN. A map used to appear all at
             # once when the walk ended, so a hand watching a rig climb
             # had a blank canvas and a status line for a minute -- and
@@ -1525,7 +1546,8 @@ def _local_scale(apart, w=33):
 
 
 class Probe:
-    """One rung: what a sweep at one level said."""
+    """One sweep of the search: its record and what the controller
+    was shown and made of it, while the search is running."""
 
     __slots__ = ("volume", "peak_dbfs", "snr_db", "thd_pct", "thd_bound",
                  "margin_db", "clipped", "phase", "step", "verdict",
@@ -1562,7 +1584,8 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
          pre_silence=mc.DEFAULT_PRE_SILENCE,
          post_silence=mc.DEFAULT_POST_SILENCE, play_map=None,
          on_probe=None, on_level=None, should_stop=None,
-         start=AUTO_START_VOLUME, max_adjust=AUTO_MAX_ADJUST):
+         start=AUTO_START_VOLUME, max_adjust=AUTO_MAX_ADJUST,
+         replay=None):
     """Sweep at rising levels until the rig can see under the device.
 
     Returns (volume, probes). The volume is the walk's whole product;
@@ -1570,6 +1593,16 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
     measurement volume as a parameter and whoever measures next passes
     this number to their own claim. A lock is not a finding, and
     neither is a borrowed volume.
+
+    `replay` RESUMES A SEARCH FROM ITS RECORD. The controller is a
+    pure function of what it has been shown -- a peak, an SNR, a
+    clipping flag, a THD bound and a margin per probe -- so the
+    probes of a recorded search, shown to a fresh controller in
+    order, put it exactly where it stood after them, and the search
+    goes on from the step after the last one replayed, with the
+    speakers hearing nothing of the replay. A choice on the passport
+    canvas of "from step 3" keeps steps 1 and 2 this way. The probes
+    returned are the NEW ones only; the caller keeps what it replayed.
 
     `on_probe(probe)` is called after each sweep and `should_stop()` is
     asked before each, so a caller can narrate and interrupt.
@@ -1584,15 +1617,30 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
     """
     sweep = sweep or mc.default_sweep()
     freqs = mc.log_grid() if freqs is None else freqs
-    outdir = tempfile.mkdtemp(prefix="pdeq-level-")
-    wav = write_sweep_files(outdir, sweep, pre_silence, post_silence)
-    duration = pre_silence + sweep.duration_s + post_silence
     name = sink_name or (sink.get("name") if isinstance(sink, dict)
                          else sink)
     if not name:
         raise ValueError("the moratorium needs the sink's node name")
     ctl = AutoLevel()
     v = start_volume(start)
+    first = 1
+    for r in replay or []:
+        v = float(r["level"])
+        ctl.observe(v, float(r["peak_dbfs"]), r.get("snr_db"),
+                    bool(r.get("clipped")), r.get("thd_bound"),
+                    r.get("margin_db"))
+        first += 1
+    if replay:
+        # the record may already hold the answer; then nothing plays
+        if ctl.settled():
+            return _clamp(ctl.ok[0]), []
+        nv = ctl.next_volume(v)
+        if abs(nv - v) < 1e-3:            # nowhere left to go
+            return _clamp(ctl.ok[0] if ctl.ok is not None else v), []
+        v = nv
+    outdir = tempfile.mkdtemp(prefix="pdeq-level-")
+    wav = write_sweep_files(outdir, sweep, pre_silence, post_silence)
+    duration = pre_silence + sweep.duration_s + post_silence
     probes = []
     back = pw_backend.backend()
     # A SEARCH THAT WAS INTERRUPTED IS NOT A SEARCH, and the caller
@@ -1604,7 +1652,7 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
     interrupted = False
 
     try:
-        for step in range(1, int(max_adjust) + 1):
+        for step in range(first, int(max_adjust) + 1):
             if should_stop is not None and should_stop():
                 interrupted = True
                 break
@@ -1636,22 +1684,13 @@ def hunt(sink, source, channels, sink_name=None, analyze=0,
             # and thrown away, and a search whose sweeps leave no
             # record is a black box: a level was found and nothing
             # could say what the sweeps that found it looked like.
+            rec = sweep_record(v, peak_db, got)
             p = Probe(volume=v, peak_dbfs=peak_db, snr_db=snr,
                       thd_pct=pct, thd_bound=bound, margin_db=margin,
                       clipped=clipped, phase=ctl.phase(), step=step,
-                      verdict=verdict,
-                      mag_db=[None if not math.isfinite(x)
-                              else round(float(x), 2)
-                              for x in np.asarray(
-                                  getattr(got, "mag_db", []), float)],
-                      heard_offset_db=getattr(got, "heard_offset_db",
-                                              None),
-                      floor_db=[None if not math.isfinite(x)
-                                else round(float(x), 1)
-                                for x in np.asarray(
-                                    getattr(got, "thd_noise_db", None)
-                                    if getattr(got, "thd_noise_db", None)
-                                    is not None else [], float)])
+                      verdict=verdict, mag_db=rec["mag_db"],
+                      heard_offset_db=rec["heard_offset_db"],
+                      floor_db=rec["floor_db"])
             probes.append(p)
             if on_probe is not None:
                 on_probe(p)

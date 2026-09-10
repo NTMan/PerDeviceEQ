@@ -1,6 +1,7 @@
 """The level search: its policy, and the field runs that shaped it."""
 
 import math
+import types
 import random
 
 import numpy as np
@@ -1668,3 +1669,73 @@ def test_the_margin_is_per_bin_from_the_floor():
     assert abs(L.margin_of(old)[0] - 8.3) < 1e-9
     # padded to a requested width with nothing
     assert len(L.margin_of(rec, 6)) == 6 and np.isnan(L.margin_of(rec, 6)[5])
+
+
+def _knob_rig(played, start=0.15):
+    """A rig that follows its knob: peak, SNR and curve all rise with
+    the level, the distortion floor stays far under the signal, so
+    the search brackets and closes on its own."""
+    def play(back, name, sink, source, wav, duration, channels,
+             sweep, fr, analyze, v, play_map):
+        played.append(round(float(v), 4))
+        db = 60.0 * math.log10(v / start)
+        n = len(fr)
+        got = types.SimpleNamespace(
+            mag_db=np.full(n, db), thd_db=np.full(n, -60.0 + db),
+            thd_noise_db=np.full(n, -95.0), snr_db=45.0 + db,
+            noise_dbfs=-85.0, signal_dbfs=-40.0 + db)
+        peak = -40.0 + db
+        return None, peak, peak >= 0.0, got
+    return play
+
+
+def test_a_search_resumed_from_its_record_goes_on_where_it_stood(
+        monkeypatch):
+    """His ask: rebuild from a step of the search, the way a ladder
+    is rebuilt from a rung. The controller is a pure function of what
+    it was shown, so the probes of a recorded search, shown to a
+    fresh one in order, put it where it stood after them -- and the
+    speakers hear nothing of that. From step 3 the search plays
+    exactly the levels it played from step 3 the first time and
+    settles where it settled; replayed whole, it settles without a
+    sound."""
+    freqs = np.asarray(mc.log_grid())
+    played = []
+    _fake_backend(monkeypatch, _knob_rig(played))
+    args = ({"name": "x"}, {"name": "y"}, 2)
+    kw = dict(sink_name="x", freqs=freqs)
+    vol, probes = level_run.hunt(*args, **kw)
+    assert vol is not None and len(probes) >= 3
+    whole = list(played)
+    recs = level_run.probe_records(probes)
+    # the record carries what the controller was shown
+    assert all(k in recs[0] for k in
+               ("snr_db", "clipped", "thd_bound", "margin_db"))
+
+    played.clear()
+    vol2, rest = level_run.hunt(*args, replay=recs[:2], **kw)
+    assert played == whole[2:]
+    assert [p.step for p in rest] == list(range(3, len(recs) + 1))
+    assert abs(vol2 - vol) < 1e-9
+    assert level_run.probe_records(rest) == recs[2:]
+
+    played.clear()
+    vol3, none = level_run.hunt(*args, replay=recs, **kw)
+    assert played == [] and none == []
+    assert abs(vol3 - vol) < 1e-9
+
+
+def test_a_probe_and_a_rung_are_one_record():
+    """Two builders with two copies of the same rounding, one of
+    which had lost the broadband offset: a probe never carried
+    heard_offset_db because the analysis has no such attribute. One
+    record now, and both halves of a walk read it."""
+    got = types.SimpleNamespace(
+        mag_db=np.array([1.234, float("nan"), -2.0]),
+        thd_noise_db=np.array([-70.04, -71.0, float("nan")]),
+        noise_dbfs=-80.0, signal_dbfs=-30.5)
+    rec = level_run.sweep_record(0.123456, -12.345, got)
+    assert rec == {"level": 0.1235, "peak_dbfs": -12.35,
+                   "heard_offset_db": -49.5,
+                   "floor_db": [-70.0, -71.0, None],
+                   "mag_db": [1.23, None, -2.0]}
