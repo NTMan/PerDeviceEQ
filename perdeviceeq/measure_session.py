@@ -82,6 +82,7 @@ import numpy as np
 
 from scipy.stats import chi2
 
+from . import level_run
 from . import measure_build as mb
 from . import measure_core as mc
 # THE FLOOR, imported by name so the call sites read the same as before
@@ -323,6 +324,60 @@ def take_quality(rec):
     if rec.snr_db is not None and rec.snr_db < mc.SNR_WARN_DB:
         return TAKE_FLAGGED
     return TAKE_CLEAN
+
+
+def odd_takes(takes, shifts=None, ppo=mc.GRID_PPO, thresh=SPREAD_MAX_DB):
+    """{take id: [(f_lo, f_hi, dev_db, bar_db), ...]}: the takes that
+    stand apart from the channel's others, and where.
+
+    take_quality judges a take alone -- silence, clipping, a hot
+    peak, a low SNR -- and never whether the takes agree. So a take
+    recorded with the device in another STATE counted as clean: his
+    Liberty's leakage compensation switched on in the middle of the
+    third take of three, 3.2 dB below 300 Hz, the three read "3/3
+    clean", and the mean carried a third of it. The spread knew --
+    it is what the fit trusts by -- but nothing said WHICH take, and
+    the trust doctrine's own remedy, "restored by deleting the
+    outlier", needs the outlier named.
+
+    Named against the fit's own tolerance: the takes are three
+    SEATINGS by design, so their disagreement is the spread and not
+    a fault, and the pair scatter of the walk -- what two sweeps of
+    one seating differ by -- is the wrong scale for them by a factor
+    of a hundred on the Origin. A take is odd where its distance from
+    the median of the channel's takes, read as the median of a third
+    of an octave over the bins it heard, exceeds SPREAD_MAX_DB --
+    exactly the disagreement that would cost the band the fit's
+    trust, now with the take's name on it. Takes are aligned onto
+    the quietest recorded gain first, as the mean is.
+
+    With two takes the median is their mean, so a disagreement names
+    both: nothing says which is right until a third arrives.
+    """
+    recs = [r for r in takes if testified(r)]
+    if len(recs) < 2:
+        return {}
+    shift = shifts or {}
+    mags = np.array([np.asarray(r.mag_db, float) + float(shift.get(r.id, 0.0))
+                     for r in recs])
+    ref = np.nanmedian(mags, axis=0)
+    n = mags.shape[1]
+    out = {}
+    for i, r in enumerate(recs):
+        floor = getattr(r, "thd_noise_db", None)
+        marg = level_run.margin_of(
+            {"mag_db": [None if not np.isfinite(v) else float(v)
+                        for v in np.asarray(r.mag_db, float)],
+             "floor_db": ([None if not np.isfinite(v) else float(v)
+                           for v in np.asarray(floor, float)]
+                          if floor is not None else [])}, n)
+        heard = np.isfinite(marg) & (marg >= level_run.HEARD_OVER_NOISE_DB)
+        bands = level_run.disagreement(mags[i] - ref, heard,
+                                       np.zeros(n), ppo, k=0.0,
+                                       floor=thresh)
+        if bands:
+            out[r.id] = bands
+    return out
 
 
 @dataclass

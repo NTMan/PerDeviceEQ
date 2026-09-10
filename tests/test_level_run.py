@@ -1739,3 +1739,65 @@ def test_a_probe_and_a_rung_are_one_record():
                    "heard_offset_db": -49.5,
                    "floor_db": [-70.0, -71.0, None],
                    "mag_db": [1.23, None, -2.0]}
+
+
+# ---- where two sweeps that should be the same are not ----------------
+
+def _shelf(freqs, db=3.9, corner=300.0, top=400.0):
+    """A plateau below `corner`, gone by `top`: the shape his Liberty's
+    leakage compensation switches on and off."""
+    f = np.asarray(freqs, float)
+    return np.where(f < corner, db,
+                    np.where(f < top, db * np.log(top / f) / np.log(top / corner),
+                             0.0))
+
+
+def test_a_shelf_a_quarter_of_the_band_wide_is_named():
+    """One median over the whole band ignores a shelf that three
+    quarters of the bins know nothing about; read by thirds of an
+    octave the shelf is named, band by band, and the bands are called
+    by their names."""
+    freqs = np.asarray(mc.log_grid())
+    n = len(freqs)
+    diff = _shelf(freqs) + np.random.default_rng(2).normal(0, 0.02, n)
+    heard = np.ones(n, bool)
+    scatter = np.full(n, 0.05)
+    # the whole-band median does not see it
+    assert abs(float(np.median(diff))) < 0.5
+    bands = level_run.disagreement(diff, heard, scatter, 96)
+    assert bands and bands[0][0] == 20.0
+    # the plateau and the transition band both clear a bar of 0.15
+    assert level_run.band_words(bands) == "20\u2013400 Hz"
+    assert all(abs(b[2]) > b[3] for b in bands)
+    # nothing is named where the sweeps agree to their own scatter
+    quiet = np.random.default_rng(3).normal(0, 0.02, n)
+    assert level_run.disagreement(quiet, heard, scatter, 96) == []
+    # the caller's floor holds the bar up where the scale is tiny
+    assert level_run.disagreement(diff * 0.4, heard, scatter, 96,
+                                  floor=2.0) == []
+    # bins not heard do not vote
+    deaf = np.zeros(n, bool)
+    assert level_run.disagreement(diff, deaf, scatter, 96) == []
+    # names join their neighbours
+    assert level_run.band_words([(100.0, 125.0, 1, 0), (125.0, 160.0, 1, 0),
+                                 (1000.0, 1250.0, 1, 0)]) == \
+        "100\u2013160 Hz, 1\u20131.25 kHz"
+    assert level_run.band_words([(800.0, 1000.0, 1, 0)]) == "800 Hz\u20131 kHz"
+
+
+def test_the_seating_check_reads_by_thirds():
+    """A base replayed with the device in its other state -- 3.9 dB
+    below 300 Hz, nothing above -- passed the old check: the median
+    of all its bins moved by a tenth. It is refused now, and the
+    refusal says where; a replay a decibel off everywhere, under the
+    map's own readable step, is still the same seating."""
+    freqs = np.asarray(mc.log_grid())
+    n = len(freqs)
+    base = {"level": 0.12, "mag_db": [0.0] * n, "scatter_db": [0.05] * n,
+            "heard_offset_db": -40.0}
+    other = _shelf(freqs)
+    with pytest.raises(level_run.SeatingChanged) as why:
+        level_run._check_seating(base, other, ppo=96)
+    assert "20\u2013315 Hz" in str(why.value)
+    level_run._check_seating(base, np.full(n, 1.0), ppo=96)   # a decibel: the map's floor
+    level_run._check_seating(base, np.zeros(n), ppo=96)

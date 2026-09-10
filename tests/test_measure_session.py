@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
+from perdeviceeq import measure_core as mc
 from perdeviceeq import measure_session as ms
 from perdeviceeq import sweep_io
 
@@ -908,3 +909,50 @@ def test_a_take_that_heard_nothing_is_not_a_clean_take():
     # testified() has known this all along; the judge just never asked
     assert ms.testified(_q_rec(snr_db=None)) is False
     assert ms.testified(_q_rec(snr_db=40.0)) is True
+
+
+# ---- a take apart from the others ------------------------------------
+
+def _take_rec(i, mag, snr=50.0):
+    from types import SimpleNamespace
+    n = len(mag)
+    return SimpleNamespace(id=i, mag_db=np.asarray(mag, float),
+                           thd_noise_db=np.full(n, -70.0), snr_db=snr,
+                           peak_dbfs=-10.0, clipped=False, noise_dbfs=-80.0,
+                           delay_ms=1.0)
+
+
+def test_a_take_in_another_state_of_the_device_is_named():
+    """Three takes read 3/3 clean while the third carried 3.9 dB below
+    300 Hz -- the device's leakage compensation, switched on between
+    takes -- because a take is judged alone. Against the median of the
+    channel's takes, by thirds of an octave, at the fit's own trust
+    tolerance, the third is named and the band is called."""
+    freqs = np.asarray(mc.log_grid())
+    n = len(freqs)
+    shape = -12.0 + 3.0 * np.sin(np.log(freqs))
+    shelf = np.where(freqs < 300.0, 3.9,
+                     np.where(freqs < 400.0,
+                              3.9 * np.log(400.0 / freqs) / np.log(400.0 / 300.0),
+                              0.0))
+    rng = np.random.default_rng(5)
+    takes = [_take_rec(1, shape + rng.normal(0, 0.03, n)),
+             _take_rec(2, shape + rng.normal(0, 0.03, n)),
+             _take_rec(3, shape + shelf + rng.normal(0, 0.03, n))]
+    odd = ms.odd_takes(takes)
+    assert list(odd) == [3]
+    assert odd[3][0][0] == 20.0 and abs(odd[3][0][2] - 3.9) < 0.2
+    # three seatings that differ the way seatings do -- a tilt of
+    # two decibels at the bottom, the resonances at the top -- are
+    # not odd: that disagreement is the spread the fit trusts by
+    tilt = 1.8 * np.clip(np.log(2000.0 / freqs) / np.log(100.0), 0.0, 1.0)
+    seats = [_take_rec(1, shape), _take_rec(2, shape - 0.3),
+             _take_rec(3, shape + tilt)]
+    assert ms.odd_takes(seats) == {}
+    # two takes eight decibels apart: both are named, nothing says which
+    two = [_take_rec(1, shape), _take_rec(2, shape + 8.0)]
+    assert sorted(ms.odd_takes(two)) == [1, 2]
+    # a take that heard nothing is no witness and is not judged
+    silent = _take_rec(4, shape + 30.0, snr=None)
+    silent.peak_dbfs = -240.0
+    assert ms.odd_takes(takes + [silent]) == odd

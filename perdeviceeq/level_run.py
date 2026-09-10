@@ -384,6 +384,88 @@ SEATING_K = 3.0          # how many times its own scatter a rung may
                          # be missed by and still be the same seating
 
 
+# The third-octave series, 20 Hz to 20 kHz: the names a band is
+# called by when it is named.
+THIRDS_HZ = (20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0,
+             160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0,
+             1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0,
+             5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0)
+
+
+def disagreement(diff, heard, scatter, ppo, k=SEATING_K, floor=0.0):
+    """Where two sweeps that should be the same are not.
+
+    ONE RULE FOR EVERY PLACE THAT ASKS IT. The two sweeps of the base,
+    the kept rung played again for a rebuild, the takes of a channel
+    -- each is a set of sweeps meant to be identical, and each place
+    had judged them by a median over the whole band, which a shelf a
+    quarter of the band wide does not move: his Liberty's leakage
+    compensation put 3.9 dB below 300 Hz into one take of three and
+    the three counted as clean, and a base replayed in the other
+    state would have passed the seating check by the same arithmetic.
+
+    Read the way the map reads a step: `diff` per bin on the walk's
+    grid, `ppo` bins to the octave from 20 Hz, taken as the median of
+    each third of an octave -- an event lasts a region, one bin is
+    the spread between sweeps -- over the bins `heard` says are worth
+    reading. A band disagrees when that median is more than `k` times
+    what two undisturbed sweeps of the same rig disagree by in it
+    (`scatter`, per bin, from the walk's own pair) and never by less
+    than `floor`, which is the caller's business: the map's tolerance
+    is a readable step, the takes' is nothing.
+
+    Returns [(f_lo, f_hi, median_db, bar_db), ...] for the bands over
+    the bar, in frequency order; empty when nothing disagrees.
+    """
+    d = np.asarray(diff, float)
+    h = np.asarray(heard, bool)
+    sc = np.asarray(scatter, float)
+    n = min(len(d), len(h), len(sc))
+    w = max(3, int(round(float(ppo) / 3.0)))
+    out = []
+    for j in range(len(THIRDS_HZ) - 1):
+        lo, hi = j * w, min((j + 1) * w, n)
+        if lo >= n:
+            break
+        idx = np.arange(lo, hi)
+        idx = idx[h[idx] & np.isfinite(d[idx])]
+        if idx.size < max(2, w // 3):
+            continue
+        med = float(np.median(d[idx]))
+        own = sc[idx]
+        own = own[np.isfinite(own)]
+        bar = max(float(floor),
+                  k * (float(np.median(own)) if own.size else 0.0))
+        if abs(med) > bar:
+            out.append((THIRDS_HZ[j], THIRDS_HZ[j + 1], med, bar))
+    return out
+
+
+def band_words(bands):
+    """'100-315 Hz, 1.25-2 kHz': the disagreeing bands named, with
+    neighbours joined into one range."""
+    runs = []
+    for lo, hi, _m, _b in bands:
+        if runs and abs(runs[-1][1] - lo) < 1e-9:
+            runs[-1][1] = hi
+        else:
+            runs.append([lo, hi])
+
+    def hz(f):
+        if f >= 1000.0:
+            return ("%g" % (f / 1000.0))
+        return "%g" % f
+    words = []
+    for lo, hi in runs:
+        if hi >= 1000.0 and lo >= 1000.0:
+            words.append("%s\u2013%s kHz" % (hz(lo), hz(hi)))
+        elif hi >= 1000.0:
+            words.append("%s Hz\u2013%s kHz" % (hz(lo), hz(hi)))
+        else:
+            words.append("%s\u2013%s Hz" % (hz(lo), hz(hi)))
+    return ", ".join(words)
+
+
 # What ended a walk, and whether the map it left is finished. The
 # walk itself records only one word on its loudest rung.
 FINISHED = ("capture", "knob", "rungs")
@@ -701,15 +783,34 @@ def rolled_back(rungs, keep):
     return sorted(rungs or [], key=lambda r: r["level"])[:keep]
 
 
-def _check_seating(base, again, k=SEATING_K):
+def _ppo_of(freqs):
+    """Bins per octave of a log grid, from its first two points."""
+    f = np.asarray(freqs, float)
+    if f.size < 2 or f[0] <= 0 or f[1] <= f[0]:
+        return mc.GRID_PPO
+    return max(1, int(round(1.0 / math.log2(f[1] / f[0]))))
+
+
+def _check_seating(base, again, k=SEATING_K, ppo=None):
     """Raise SeatingChanged if the kept top rung no longer answers as
     it did. Compared only where it was heard and only against its own
     scatter -- a threshold of ours would be a number nobody measured.
 
-    By MEDIANS rather than a count of offending points: a count needs
-    a fraction to compare against, any fraction here would be
-    invented, and a median is scale-free and ignores the spikes one
-    sweep always has.
+    BY THIRDS OF AN OCTAVE, not one median over the whole band. The
+    whole-band median was chosen to ignore the spikes one sweep
+    always has, and it does -- and it also ignores a shelf a quarter
+    of the band wide: his Liberty's leakage compensation put 3.9 dB
+    below 300 Hz into one state of the bud and not the other, and a
+    base replayed in the other state would have passed, with
+    three-quarters of its bins agreeing to a tenth. A region is what
+    an event or a state lasts; a bin is the spread between sweeps.
+
+    The scale is the base's own measured scatter in each band, not a
+    model of it by SNR: on the Origin the pair disagrees by 0.3 dB at
+    20 Hz and by 0.02 at a kilohertz with the margin over noise the
+    same in both, so a global floor would refuse every walk at the
+    bottom of the band. The map's tolerance, a readable step, stays
+    as the floor of the bar.
 
     A rung with no scatter of its own predates the second base sweep.
     Nothing can be checked then and nothing is claimed.
@@ -720,24 +821,21 @@ def _check_seating(base, again, k=SEATING_K):
         return
     new_mag = np.asarray(getattr(again, "mag_db", again), float)
     n = min(len(old), len(sc), len(new_mag))
-    miss, spread = [], []
-    for i in range(n):
-        a, w = old[i], sc[i]
-        if a is None or w is None or not math.isfinite(new_mag[i]):
-            continue
-        miss.append(abs(new_mag[i] - a))
-        spread.append(float(w))
-    if not miss:
-        return
-    got = sorted(miss)[len(miss) // 2]
-    own = sorted(spread)[len(spread) // 2]
-    bar = max(MIN_READABLE_STEP, k * own)
-    if got > bar:
+    old_mag = np.asarray([np.nan if v is None else v
+                          for v in old[:n]], float)
+    own = np.asarray([np.nan if v is None else v for v in sc[:n]], float)
+    marg = margin_of(base, n)
+    heard = np.isfinite(marg) & (marg >= HEARD_OVER_NOISE_DB)
+    bands = disagreement(new_mag[:n] - old_mag, heard, own,
+                         ppo or mc.GRID_PPO, k, floor=MIN_READABLE_STEP)
+    if bands:
+        worst = max(bands, key=lambda b: abs(b[2]))
         raise SeatingChanged(
-            "the kept rungs answer %.1f dB differently now, against "
-            "%.1f dB of their own scatter: the rig is not sitting "
-            "where they were measured, so nothing may be built on "
-            "top of them" % (got, bar))
+            "the kept rungs answer %.1f dB differently at %s now, "
+            "against %.1f dB of their own scatter: the rig is not "
+            "sitting where they were measured, so nothing may be "
+            "built on top of them"
+            % (abs(worst[2]), band_words(bands), worst[3]))
 
 
 
@@ -1019,7 +1117,7 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         except Exception:
             again = None
         if again is not None:
-            _check_seating(top, again)
+            _check_seating(top, again, ppo=_ppo_of(freqs))
         max_rungs = max(0, int(max_rungs) - len(rungs))
         # AND THE FIRST NEW RUNG GOES ABOVE THE KEPT ONE, not on top
         # of it. The loop plays wherever v stands, so seeding v with

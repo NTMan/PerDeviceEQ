@@ -1651,8 +1651,12 @@ class MeasureWindow(Adw.Window):
             row.set_header(None)
 
     def _make_take_row(self, ch, rec, lo, hi, driver=None,
-                       mean=None, shift=0.0):
+                       mean=None, shift=0.0, odd=None):
         q = ms.take_quality(rec)
+        # a take apart from the others wears the flagged colour: its
+        # own numbers may be fine, the set it belongs to is not
+        if odd and q == ms.TAKE_CLEAN:
+            q = ms.TAKE_FLAGGED
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         body.set_margin_top(6)
         body.set_margin_bottom(6)
@@ -1677,6 +1681,10 @@ class MeasureWindow(Adw.Window):
             info = "%s  %.1f dBFS" % (snr, rec.peak_dbfs)
             if rec.noise_dbfs is not None:
                 info += "  noise %.0f" % rec.noise_dbfs
+            if odd:
+                worst = max(odd, key=lambda b: abs(b[2]))
+                info += "  \u00b7 differs from the others at %s (%+.1f dB)" % (
+                    level_run.band_words(odd), worst[2])
         if rec.wav_path is None and rec.created_utc:
             info = "%s  \u00b7  %s" % (str(rec.created_utc)[:10],
                                        info)
@@ -2130,11 +2138,29 @@ class MeasureWindow(Adw.Window):
         self._refresh_all()
         self._start_measure(self._selected_ch, level_only=True)
 
+    def _odd_takes(self, ch):
+        """{take id: bands} for the takes that stand apart from this
+        channel's others -- ms.odd_takes over the session's takes,
+        aligned onto the quietest recorded gain as the mean is."""
+        if self.session is None:
+            return {}
+        takes = self.session.takes_of(ch)
+        sh = self.session.comp_shift_db(ch)
+        shifts = ({r.id: v for r, v in zip(takes, sh)}
+                  if sh is not None else {})
+        return ms.odd_takes(takes, shifts,
+                            getattr(self.session.cfg, "ppo", mc.GRID_PPO))
+
     def _clean_count(self, ch):
+        """Takes that are clean on their own AND stand with the
+        others: a take in another state of the device is not one of
+        the three, however clean its own numbers."""
         if self.session is None:
             return 0
+        odd = self._odd_takes(ch)
         return sum(1 for r in self.session.takes_of(ch)
-                   if ms.take_quality(r) == ms.TAKE_CLEAN)
+                   if ms.take_quality(r) == ms.TAKE_CLEAN
+                   and r.id not in odd)
 
     def _refresh_cal_manage(self):
         """The Manage row states the canvas's cal reality --
@@ -2229,16 +2255,26 @@ class MeasureWindow(Adw.Window):
             self._refresh_summary(ch, [])
             return
         n = self._clean_count(ch)
-        has_bad = self.session is not None and any(
+        odd = self._odd_takes(ch)
+        has_bad = self.session is not None and (bool(odd) or any(
             ms.take_quality(r) != ms.TAKE_CLEAN
-            for r in self.session.takes_of(ch))
+            for r in self.session.takes_of(ch)))
         mark = " \u2713" if n >= CLEAN_TARGET else ""
         warn = " \u26a0" if has_bad else ""
+        # THE ODD TAKE IS NAMED HERE, where "3/3 clean" used to stand
+        # over a mean carrying a third of another state of the device
+        apart = ""
+        if odd:
+            where = level_run.band_words(sorted(
+                {b[:2] + (0.0, 0.0) for bs in odd.values() for b in bs}))
+            apart = (" \u00b7 one take differs at %s" % where
+                     if len(odd) == 1 else
+                     " \u00b7 %d takes differ at %s" % (len(odd), where))
         self._page["title"].set_text(
             "Takes %s" % self.ch_keys[ch])
         self._page["header"].set_markup(
-            "%d/%d clean%s%s%s"
-            % (n, CLEAN_TARGET, mark, warn, self._thd_word(ch)))
+            "%d/%d clean%s%s%s%s"
+            % (n, CLEAN_TARGET, mark, warn, apart, self._thd_word(ch)))
         for row in self._page["take_rows"]:
             lb.remove(row)
         self._page["take_rows"].clear()
@@ -2256,7 +2292,8 @@ class MeasureWindow(Adw.Window):
             row = self._make_take_row(ch, rec, lo, hi,
                                       driver=self._spread_driver,
                                       mean=mean,
-                                      shift=shifts.get(rec.id, 0.0))
+                                      shift=shifts.get(rec.id, 0.0),
+                                      odd=odd.get(rec.id))
             rows.append(row)
             lb.append(row)
             self._page["take_rows"].append(row)
