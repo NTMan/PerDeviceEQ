@@ -1293,13 +1293,16 @@ class MeasureWindow(Adw.Window):
         self._ladder_repaint()
 
     def _map_steps(self, rungs):
-        """Each rung against the one below it, minus what the step asked.
+        """Each rung against the one below it, minus what the step
+        delivered.
 
-            line_k(f) = (mag_k(f) - mag_k-1(f)) - (knob_k - knob_k-1)
+            line_k(f) = (mag_k(f) - mag_k-1(f)) - asked_db(k-1, k)
 
-        knob is the requested level in decibels, 60 log10 of the cubic
-        volume. Zero means the step delivered exactly what it asked
-        for; a line below zero lost that much of it at that frequency.
+        asked_db is the step as the verdict reads it: the change in the
+        capture peak, the knob's ratio only where a peak is missing.
+        Zero means the rung's curve moved everywhere by what the rung
+        as a whole moved; a line below zero lost that much of it at
+        that frequency.
 
         NO REFERENCE RUNG, AND THAT IS THE POINT. Every previous
         picture subtracted one chosen recording from all the others --
@@ -1317,10 +1320,16 @@ class MeasureWindow(Adw.Window):
         one. That is a detector which uses nothing but the ladder, and
         it is blind nowhere except at the top rung, which has no next.
 
-        The knob is subtracted, not the capture peak: the knob delivers
-        what it promises to hundredths on this rig, and the peak was
-        measured to wander by a quarter of a decibel between identical
-        sweeps, which would land in every line as a flat offset.
+        THE PEAK IS SUBTRACTED, NOT THE KNOB. The knob was, on the
+        ground that it delivers what it promises to hundredths on a
+        wired rig -- and it does, the Origin's peaks follow it to a
+        few hundredths. Over Bluetooth a knob decibel is not a decibel:
+        his Liberty answered 8.0, 0.0 and 3.1 dB to asks of 6, 2 and 2,
+        and the picture read the difference as two decibels of loss on
+        every other rung of a ladder the verdict called linear -- the
+        verdict having read the step from the peak all along. One
+        arithmetic for the picture and the verdict, and a knob step the
+        device did not take is not a failure on either.
 
         Each line is drawn only where both rungs of its step were heard
         over their own noise. Row zero is the base and has no step, so
@@ -1335,19 +1344,17 @@ class MeasureWindow(Adw.Window):
                     if i < len(marg) and not math.isnan(marg[i])
                     else False for i in range(n)]
 
-        def knob(r):
-            lv = float(r.get("level") or 0.0)
-            return 60.0 * math.log10(lv) if lv > 0 else None
-
         rows = [[None] * n]
         for k in range(1, len(rungs)):
             lo, hi = rungs[k - 1], rungs[k]
             ok = [a and b for a, b in zip(heard(lo), heard(hi))]
-            ka, kb = knob(lo), knob(hi)
-            if ka is None or kb is None:
+            la, lb = (float(lo.get("level") or 0.0),
+                      float(hi.get("level") or 0.0))
+            if la <= 0 or lb <= 0:
                 rows.append([None] * n)
                 continue
-            asked = kb - ka
+            asked = level_run.asked_db((la, lo.get("peak_dbfs")),
+                                       (lb, hi.get("peak_dbfs")))
             ml, mh = lo.get("mag_db") or [], hi.get("mag_db") or []
             rows.append([
                 (mh[i] - ml[i]) - asked if ok[i] else None

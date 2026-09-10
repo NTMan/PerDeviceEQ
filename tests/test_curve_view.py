@@ -1374,3 +1374,34 @@ def test_a_step_of_the_search_can_be_chosen_and_resumed_from():
     f._busy = True
     assert [r[1] for r in f._ladder_rows() if r[0] == "probe"] == [1]
     assert [r for r in f._ladder_rows() if r[0] == "rung"] == []
+
+
+def test_the_step_subtracted_is_the_step_the_rig_took():
+    """His Liberty over Bluetooth: the knob asked 6, 2 and 2 dB and the
+    device answered 8.0, 0.0 and 3.1 -- AVRCP's own scale, not the
+    cubic law -- and the picture read the difference as two decibels
+    of loss on every other rung of a ladder the verdict called linear.
+    The verdict subtracts the step the capture peak reports; so does
+    the picture now, and a knob step the device did not take is not a
+    failure on either. Without a peak the knob is all there is."""
+    rungs = map_rungs([2.0, 2.0, 2.0])
+    f = map_window(rungs)
+    # the device answered 0 then 4 to two asks of 2: curve and peak
+    # move together, the knob does not
+    bent = [dict(r) for r in rungs]
+    bent[1]["peak_dbfs"] = rungs[0]["peak_dbfs"]          # took nothing
+    bent[1]["mag_db"] = list(rungs[0]["mag_db"])
+    bent[2]["peak_dbfs"] = rungs[0]["peak_dbfs"] + 4.0    # took both
+    bent[2]["mag_db"] = [v + 4.0 for v in rungs[0]["mag_db"]]
+    rows = f._map_steps(bent)
+    for k in (1, 2, 3):
+        assert max(abs(v) for v in rows[k] if v is not None) < 1e-9
+    # a real loss still reads: the curve fell short of the peak's step
+    bent[3]["mag_db"] = [v - 1.5 if i > 500 else v
+                         for i, v in enumerate(bent[3]["mag_db"])]
+    rows = f._map_steps(bent)
+    assert abs(rows[3][700] + 1.5) < 1e-9 and abs(rows[3][100]) < 1e-9
+    # no peak on record: the knob is the ask, as before
+    plain = [dict(r, peak_dbfs=None) for r in rungs]
+    rows = f._map_steps(plain)
+    assert max(abs(v) for row in rows[1:] for v in row if v is not None) < 1e-9
