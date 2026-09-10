@@ -928,7 +928,7 @@ def test_the_base_rung_has_to_be_heard_itself():
     assert pick([(0.41, 0.70), (0.44, 0.80)]) == 0.41
 
 
-MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes", "_ladder_rows", "_draw_ladder", "_wrapped", "_map_state_line", "_map_ref",
+MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes", "_ladder_rows", "_draw_ladder", "_ladder_record", "_ladder_k", "_ladder_word_for", "_draw_hunt", "_wrapped", "_map_state_line", "_map_ref",
                "_map_mask", "_draw_map", "_walking", "_draw_fan",
                "_draw_check", "_map_band", "_map_at")
 
@@ -962,7 +962,8 @@ def map_fake():
     ns = {"math": math, "np": np, "level_run": level_run,
           "FMIN_PLOT": 20.0, "FMAX_PLOT": 20000.0,
           "MAP_MUTE_DB": 1.0, "MAP_ODD_FLOOR_DB": 0.15, "MAP_H": 230,
-          "LADDER_ROW_H": 26, "LADDER_SPAN_DB": 2.0}
+          "LADDER_ROW_H": 26, "LADDER_SPAN_DB": 2.0,
+          "HUNT_SLOTS": 8, "HUNT_FLOOR_DB": -60.0}
     body = "".join(grab(n) for n in MAP_METHODS)
     body += ("\n    _MAP_ENDS = " +
              re.search(r"_MAP_ENDS = (\{.*?\})", src, re.S).group(1) +
@@ -1011,6 +1012,14 @@ def map_window(rungs, on=False, partial=None, pick=2, hover=1,
     f._map_announce = None
     f._walk_probes = []
     f._ladder_repaint = lambda: False
+    class _Lbl:
+        def __init__(self): self.t = ""
+        def get_text(self): return self.t
+        def set_text(self, t): self.t = t
+    f.ladder_word = _Lbl()
+    f.ladder_title = _Lbl()
+    f._hunt_dots = []
+    f._hunt_found = None
     f._map_partial = rungs[:partial] if partial is not None else []
     f._walk_live = partial is not None
     f.map_area = types.SimpleNamespace(get_height=lambda: 230)
@@ -1297,6 +1306,7 @@ def test_the_search_is_drawn_as_a_search():
     ns = {"math": math, "HUNT_SLOTS": 8, "HUNT_FLOOR_DB": -60.0}
     exec("class Fake:\n" + m.group(0), ns)
     f = ns["Fake"]()
+    f._ladder_record = lambda: {}    # no search on record here
     f._hunt_found = None
     f._hunt_dots = [(1, 0.15, "quiet"), (2, 0.30, "quiet"),
                     (3, 0.60, "loud"), (4, 0.42, "ok")]
@@ -1345,3 +1355,25 @@ def test_the_passport_canvas_draws_every_row_it_has():
     # nothing at all is a sentence, not an error
     g = map_window([], on=False)
     g._draw_ladder(None, cairo.Context(surf), 700, 400)
+
+
+def test_the_passport_card_speaks_and_shows_its_choice():
+    """The verdict is written when the record is read; the strip draws
+    the stored search when none is running; the chosen rung is drawn
+    on this canvas too."""
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    probes = [{"step": 1, "level": 0.15, "verdict": "quiet",
+               "mag_db": rungs[1]["mag_db"]},
+              {"step": 2, "level": 0.20, "verdict": "ok",
+               "mag_db": rungs[3]["mag_db"]}]
+    f = map_window(rungs, on=False, probes=probes, pick=4)
+    f.parent.store.get(f.edit_pid)["passport"]["FL"]["settled"] = 0.20
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 400)
+    f._draw_ladder(None, cairo.Context(surf), 700, 400)
+    assert f.ladder_title.get_text() == "FL"
+    assert f.ladder_word.get_text().startswith("linear at least to")
+    # the strip has something to draw from the record alone
+    f._draw_hunt(None, cairo.Context(surf), 700, 48)
+    # a slot goes back to its rung
+    assert f._ladder_k(f._ladder_rows()[0][1]) == len(rungs) - 1

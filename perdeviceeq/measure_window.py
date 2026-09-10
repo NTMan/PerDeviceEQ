@@ -1551,6 +1551,18 @@ class MeasureWindow(Adw.Window):
         like one that bounced. Where the search settled, a line.
         """
         dots = self._hunt_dots
+        found = self._hunt_found
+        if not dots:
+            # THE STRIP IS NOT BLANK BETWEEN SEARCHES. The dots of the
+            # last search are on record with the passport, step,
+            # level and verdict, and where it settled; an empty band
+            # of 48 pixels at the top of the card read as space kept
+            # for a button nobody had promised.
+            rec = self._ladder_record()
+            dots = [(int(p.get("step") or 0), float(p.get("level") or 0.0),
+                     p.get("verdict"))
+                    for p in (rec.get("probes") or [])]
+            found = rec.get("settled")
         if not dots:
             return
         ml, mr, mt, mb = 30, 44, 6, 6
@@ -1571,15 +1583,15 @@ class MeasureWindow(Adw.Window):
         cr.move_to(ml, mt + ph + 0.5)
         cr.line_to(ml + pw_, mt + ph + 0.5)
         cr.stroke()
-        if self._hunt_found is not None:
-            y = py(self._hunt_found)
+        if found is not None:
+            y = py(found)
             cr.set_source_rgba(0.20, 0.45, 0.85, 0.9)
             cr.set_line_width(1.5)
             cr.move_to(ml, y)
             cr.line_to(ml + pw_, y)
             cr.stroke()
             cr.move_to(ml + pw_ + 4, y + 3)
-            cr.show_text("%d%%" % round(100 * self._hunt_found))
+            cr.show_text("%d%%" % round(100 * found))
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
         cr.set_line_width(1)
         for i, (step, v, _verdict) in enumerate(dots):
@@ -1594,10 +1606,25 @@ class MeasureWindow(Adw.Window):
                 cr.set_source_rgba(0.20, 0.60, 0.30, 0.95)
             cr.arc(px(i + 1), py(v), 3.5, 0, 2 * math.pi)
             cr.fill()
-        step, v, _verdict = dots[-1]
+        # ONLY THE SETTLED LEVEL IS LABELLED ON THE AXIS. The last
+        # probe's percent used to sit at the far left, level with its
+        # dot, and read as a second answer: 18% on one end and 19% on
+        # the other. The dots carry their own numbers.
         cr.set_source_rgba(0.4, 0.4, 0.4, 0.9)
-        cr.move_to(4, py(v) + 3)
-        cr.show_text("%d%%" % round(100 * v))
+        for i, (step, v, _verdict) in enumerate(dots):
+            cr.move_to(px(i + 1) - 6, mt + ph + 0.5 + 9)
+            cr.show_text("%d" % (i + 1))
+
+    def _ladder_record(self):
+        """This channel's passport record on disk, or {}."""
+        store = getattr(self.parent, "store", None)
+        prof = (store.get(self.edit_pid)
+                if store is not None and self.edit_pid else None) or {}
+        book = prof.get(level_run.PASSPORT) or {}
+        keys = self.ch_keys or []
+        if not (0 <= self._selected_ch < len(keys)):
+            return {}
+        return book.get(keys[self._selected_ch]) or {}
 
     def _build_ladder_card(self):
         """The passport, drawn: every sweep of one command on one canvas.
@@ -1668,14 +1695,8 @@ class MeasureWindow(Adw.Window):
         return False
 
     def _ladder_probes(self):
-        prof = ((self.parent.store.get(self.edit_pid) or {})
-                if self.edit_pid and getattr(self.parent, "store", None)
-                else {})
-        book = prof.get(level_run.PASSPORT) or {}
-        rec = (book.get(self.ch_keys[self._selected_ch])
-               if self.ch_keys else None)
         live = getattr(self, "_walk_probes", None)
-        return list(live or (rec or {}).get("probes") or [])
+        return list(live or self._ladder_record().get("probes") or [])
 
     def _ladder_rows(self):
         """Every row of the canvas, top to bottom, as
@@ -1730,6 +1751,16 @@ class MeasureWindow(Adw.Window):
         ml, mr, mt = 70, 48, 8
         pw_ = max(1, w - ml - mr)
         cr.set_font_size(10)
+        # THE VERDICT IS WRITTEN WHEN THE RECORD IS READ, here, not at
+        # a refresh that may run before the profile is bound; set only
+        # when it changes, so the relayout does not chase its own tail
+        if self.ch_keys and 0 <= self._selected_ch < len(self.ch_keys):
+            word = self._ladder_word_for(self._map_rungs())
+            if self.ladder_word.get_text() != word:
+                self.ladder_word.set_text(word)
+            name = self.ch_keys[self._selected_ch]
+            if self.ladder_title.get_text() != name:
+                self.ladder_title.set_text(name)
         if not rows:
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.85)
             cr.move_to(ml, mt + 24)
@@ -1748,10 +1779,22 @@ class MeasureWindow(Adw.Window):
             return ml + (math.log10(max(fhz, 1e-6)) - lo) / (hi - lo) * pw_
 
         n_up = sum(1 for r in rows if r[0] != "probe")
+        field_h = LADDER_ROW_H * len(rows) + (24 if n_up < len(rows) else 0)
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.08)
+        cr.rectangle(ml, mt, pw_, field_h)
+        cr.fill()
+        cr.set_source_rgba(0.5, 0.5, 0.5, 0.25)
+        cr.set_line_width(1)
+        for fhz in (100, 1000, 10000):
+            gx = ml + (math.log10(fhz) - lo) / (hi - lo) * pw_
+            cr.move_to(round(gx) + 0.5, mt)
+            cr.line_to(round(gx) + 0.5, mt + field_h)
+            cr.stroke()
+        pick = self._map_pick
         y = mt
         rule_y = None
         scale = (LADDER_ROW_H / 2.0 - 2) / LADDER_SPAN_DB
-        for idx, (kind, _slot, _lv, row, label, note) in enumerate(rows):
+        for idx, (kind, slot, _lv, row, label, note) in enumerate(rows):
             if idx == n_up and idx < len(rows):
                 cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
                 cr.set_line_width(1)
@@ -1765,12 +1808,23 @@ class MeasureWindow(Adw.Window):
                 rule_y = y
                 y += 24
             mid = y + LADDER_ROW_H / 2.0
+            # THE CHOICE, ON THIS CANVAS TOO. The chosen rung's row is
+            # tinted, and every rung above it -- the ones a rebuild
+            # from it replays -- is faded, so what the click means is
+            # visible where the click landed and not only on the map.
+            k = self._ladder_k(slot) if kind == "rung" else None
+            chosen = pick is not None and k == pick
+            gone = pick is not None and k is not None and k > pick
+            if chosen:
+                cr.set_source_rgba(0.20, 0.45, 0.85, 0.12)
+                cr.rectangle(ml, y, pw_, LADDER_ROW_H)
+                cr.fill()
             cr.set_source_rgba(0.5, 0.5, 0.5, 0.18)
             cr.set_line_width(1)
             cr.move_to(ml, mid + 0.5)
             cr.line_to(ml + pw_, mid + 0.5)
             cr.stroke()
-            cr.set_source_rgba(0.35, 0.35, 0.35, 0.95)
+            cr.set_source_rgba(0.35, 0.35, 0.35, 0.3 if gone else 0.95)
             cr.move_to(4, mid + 3.5)
             cr.show_text(label)
             if kind == "announce":
@@ -1790,8 +1844,10 @@ class MeasureWindow(Adw.Window):
             else:
                 if kind == "probe":
                     cr.set_source_rgba(0.55, 0.55, 0.55, 0.95)
+                elif chosen:
+                    cr.set_source_rgba(0.16, 0.40, 0.85, 1.0)
                 else:
-                    cr.set_source_rgba(0.12, 0.12, 0.12, 0.95)
+                    cr.set_source_rgba(0.12, 0.12, 0.12, 0.3 if gone else 0.95)
                 cr.set_line_width(1.0)
                 pen = False
                 for i, v in enumerate(row):
@@ -1835,6 +1891,12 @@ class MeasureWindow(Adw.Window):
         return ("linear at least to %d%% -- the capture ran out first"
                 % round(100 * top))
 
+    def _ladder_k(self, slot):
+        """A rung's slot number back to its index in the map."""
+        first = max((int(p.get("step") or 0)
+                     for p in self._ladder_probes()), default=0)
+        return slot - first - 1
+
     def _on_ladder_pick(self, _g, _n, _x, y):
         """A row chosen on the ladder is the same choice as on the map:
         the rung to rebuild from. Probes are not choosable yet."""
@@ -1845,9 +1907,7 @@ class MeasureWindow(Adw.Window):
         if not 0 <= idx < len(rows) or rows[idx][0] != "rung":
             return
         rungs = self._map_rungs()
-        k = rows[idx][1] - 1 - max(
-            (int(p.get("step") or 0) for p in self._ladder_probes()),
-            default=0)
+        k = self._ladder_k(rows[idx][1])
         if not 0 <= k < len(rungs):
             return
         self._map_pick = None if self._map_pick == k else k
