@@ -1127,11 +1127,12 @@ def test_a_step_is_read_against_what_it_asked():
     assert abs(rows[4][305] - 3.0) < 1e-6           # mirrored on the next
     for k in (1, 2, 5, 6):
         assert abs(rows[k][305]) < 1e-9             # and nowhere else
-    # a real loss does not mirror: a rung that falls behind and stays
-    # behind reads once and the next step reads zero
+    # a real loss does not mirror: a rung that falls behind in a
+    # region and stays behind reads once and the next step reads zero
     lost = [dict(r) for r in rungs]
     for k in range(3, len(lost)):
-        lost[k]["mag_db"] = [v - 3.0 for v in lost[k]["mag_db"]]
+        lost[k]["mag_db"] = [v - 3.0 if 200 <= i < 400 else v
+                             for i, v in enumerate(lost[k]["mag_db"])]
     rows = f._map_steps(lost)
     assert abs(rows[3][305] + 3.0) < 1e-6
     assert abs(rows[4][305]) < 1e-9
@@ -1381,9 +1382,10 @@ def test_the_step_subtracted_is_the_step_the_rig_took():
     device answered 8.0, 0.0 and 3.1 -- AVRCP's own scale, not the
     cubic law -- and the picture read the difference as two decibels
     of loss on every other rung of a ladder the verdict called linear.
-    The verdict subtracts the step the capture peak reports; so does
-    the picture now, and a knob step the device did not take is not a
-    failure on either. Without a peak the knob is all there is."""
+    The verdict subtracts the step the rig took, the rise of the
+    rung's own curve; so does the picture, and a knob step the device
+    did not take is not a failure on either. Without a curve to read
+    the knob is all there is."""
     rungs = map_rungs([2.0, 2.0, 2.0])
     f = map_window(rungs)
     # the device answered 0 then 4 to two asks of 2: curve and peak
@@ -1401,7 +1403,9 @@ def test_the_step_subtracted_is_the_step_the_rig_took():
                          for i, v in enumerate(bent[3]["mag_db"])]
     rows = f._map_steps(bent)
     assert abs(rows[3][700] + 1.5) < 1e-9 and abs(rows[3][100]) < 1e-9
-    # no peak on record: the knob is the ask, as before
-    plain = [dict(r, peak_dbfs=None) for r in rungs]
-    rows = f._map_steps(plain)
+    # the peak is not consulted: a peak a quarter over the curve's
+    # rise -- the harmonics it carries -- changes no line
+    hot = [dict(r) for r in rungs]
+    hot[2]["peak_dbfs"] = rungs[2]["peak_dbfs"] + 0.25
+    rows = f._map_steps(hot)
     assert max(abs(v) for row in rows[1:] for v in row if v is not None) < 1e-9

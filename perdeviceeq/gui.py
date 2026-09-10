@@ -848,9 +848,7 @@ class EqWindow(Adw.ApplicationWindow):
                 continue
             steps = []
             for r in rungs[rungs.index(base) + 1:]:
-                rise = level_run.asked_db(
-                    (base["level"], base.get("peak_dbfs")),
-                    (r["level"], r.get("peak_dbfs")))
+                rise = level_run.asked_db(base, r)
                 off = r.get("heard_offset_db")
                 if off is None or rise < level_run.MIN_READABLE_STEP:
                     continue

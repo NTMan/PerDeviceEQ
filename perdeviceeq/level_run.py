@@ -612,9 +612,11 @@ def linear_top(rungs, ppo=None):
     otherwise the difference of two rungs is the difference of two
     noises.
 
-    THE STEP IS TAKEN FROM THE CAPTURE PEAK, not the knob. A knob
-    decibel is not a decibel: his JBL answered 8 and 11 dB to a 4 dB
-    ask, and a fictitious ask makes a fictitious verdict.
+    THE STEP IS THE CURVE'S OWN RISE, not the knob and not the capture
+    peak. A knob decibel is not a decibel: his JBL answered 8 and 11
+    dB to a 4 dB ask, and a fictitious ask makes a fictitious
+    verdict; and the peak over-reads by the harmonics the curve is
+    cleaned of (see asked_db).
 
     Returned as the LEVEL, because the level is what a fader is set
     to and what both channels share.
@@ -646,8 +648,7 @@ def linear_top(rungs, ppo=None):
     # until the asking adds up.
     ref = got[0]
     for cur in got[1:]:
-        ask = asked_db((ref["level"], ref.get("peak_dbfs")),
-                       (cur["level"], cur.get("peak_dbfs")))
+        ask = asked_db(ref, cur)
         if ask < MIN_READABLE_STEP:
             top = cur["level"]
             continue
@@ -1407,29 +1408,63 @@ WORTH_A_LINE_DB = 0.5 * MIN_READABLE_STEP
 
 
 def asked_db(prev, cur):
-    """How much louder a rung ACTUALLY got, in decibels.
+    """How much louder a rung ACTUALLY got, in decibels: the rise of
+    its own curve.
 
-    The knob's own ratio is only an intention. Over Bluetooth it is
-    not even that: his JBL Tour Pro 3 answers AVRCP's 128-step scale,
-    and a rung the walk asked 4.0 dB of arrived 8.0 and 11.0 dB
-    louder. Everything downstream compares what came back against
-    what was asked, so a fictitious ask makes a fictitious verdict --
-    where twice the step arrived and one step was taken, the band is
-    a step short and the walk called it "answered in full".
+    The knob's ratio is only an intention. Over Bluetooth it is not
+    even that: his JBL Tour Pro 3 answers AVRCP's 128-step scale, and
+    a rung the walk asked 4.0 dB of arrived 8.0 and 11.0 dB louder.
+    Everything downstream compares what came back against what was
+    asked, so a fictitious ask makes a fictitious verdict -- where
+    twice the step arrived and one step was taken, the band is a step
+    short and the walk called it "answered in full".
 
-    The capture peak follows the level one for one on every wired rig
-    in this project, which is what makes it the honest witness: it
-    reports what the rig was actually given, whoever set the volume
-    and by whatever scale. Fall back to the knob only when a peak is
-    missing.
+    THE CAPTURE PEAK WAS THE WITNESS, AND IT OVER-READS. On every rig
+    he owns, wired Origin included, the peak of the recording rose a
+    few tenths of a decibel more than the curve at the peak's own
+    frequency, and more the louder the rung: 0.14 dB at the top of
+    the Origin's walk, 0.29 on the Denon. The mechanism is the one
+    the whole method rests on (Farina, 2000): the exponential sweep
+    puts each harmonic order at its own time in the deconvolved
+    response, ahead of the linear one, and the curve is read after
+    them -- so the curve carries no harmonic; the raw recording has
+    them all in the same samples as the fundamental, and its largest
+    sample is the instant where they add. The peak carries every
+    harmonic the curve was cleaned of, and their share grows about a
+    decibel per decibel of level. From each take's own harmonics at
+    the frequency where its recording peaks, grown to the top rung,
+    the excess comes out 0.08 to 0.20 dB against 0.00 to 0.29
+    observed: the right sign on every linear rig, the size within a
+    factor of two. Every reading against the peak was short by that
+    everywhere, and the loss curve went red on it.
 
-    `prev` and `cur` are (level, peak_dbfs) pairs.
+    The fundamental's own level is the honest witness, and the curve
+    already is it: the sweep file is the same at every rung, so a
+    rung rose by what its curve rose, read as the median over the
+    bins both rungs heard. Over Bluetooth that is still the device's
+    own scale -- the Liberty's curves rose 8.00, 0.01 and 3.06 dB to
+    knob asks of 6, 2 and 2. What neither this nor the peak can see
+    is a rig compressing the whole band alike; the peak compresses
+    with it. The knob's ratio is the fallback where no curve can
+    speak. The peak keeps its one real job, the capture ceiling.
+
+    `prev` and `cur` are rung records: level, mag_db and the floor.
     """
-    lv0, pk0 = prev
-    lv1, pk1 = cur
-    if pk0 is not None and pk1 is not None:
-        return float(pk1) - float(pk0)
-    return 60.0 * math.log10(float(lv1) / float(lv0))
+    pm = np.asarray([np.nan if v is None else v
+                     for v in prev.get("mag_db") or []], float)
+    cm = np.asarray([np.nan if v is None else v
+                     for v in cur.get("mag_db") or []], float)
+    n = min(len(pm), len(cm))
+    if n:
+        mp, mq = margin_of(prev, n), margin_of(cur, n)
+        with np.errstate(invalid="ignore"):
+            ok = (np.isfinite(pm[:n]) & np.isfinite(cm[:n])
+                  & np.isfinite(mp) & np.isfinite(mq)
+                  & (mp >= HEARD_OVER_NOISE_DB)
+                  & (mq >= HEARD_OVER_NOISE_DB))
+        if ok.sum() >= max(1, n // 8):
+            return float(np.median((cm[:n] - pm[:n])[ok]))
+    return 60.0 * math.log10(float(cur["level"]) / float(prev["level"]))
 
 
 def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo,

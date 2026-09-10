@@ -439,18 +439,31 @@ def test_the_step_is_what_arrived_not_what_the_knob_promised():
     Everything downstream compares what came back against what was
     asked, so a fictitious ask makes a fictitious verdict: where twice
     the step arrived and one step was taken, the band is a step short
-    and the walk called it answered in full. The capture peak follows
-    the level one for one on every wired rig here, which is what makes
-    it the honest witness -- it reports what the rig was given,
-    whoever set the volume and by whatever scale."""
-    # the knob says 4 dB and the peak agrees: a wired rig
-    assert abs(level_run.asked_db((0.40, -20.0), (0.50, -16.1))
-               - 3.9) < 1e-9
+    and the walk called it answered in full. The capture peak was the
+    witness and over-read by the harmonics the curve is cleaned of;
+    the curve's own rise is what arrived."""
+    def rung(level, rise, peak):
+        n = 200
+        return {"level": level, "peak_dbfs": peak, "heard_offset_db": -40.0,
+                "mag_db": [rise + 20.0 * math.sin(i / 7.0) for i in range(n)]}
+    # the knob says 4 dB and the curve rose 3.9: a wired rig
+    assert abs(level_run.asked_db(rung(0.40, 0.0, -20.0),
+                                  rung(0.50, 3.9, -16.1)) - 3.9) < 1e-9
     # the knob says 4 dB and twice that arrived: his Bluetooth JBL
-    assert abs(level_run.asked_db((0.59, -22.4), (0.69, -14.4))
-               - 8.0) < 1e-9
-    # no peak to ask, so the knob is all there is
-    got = level_run.asked_db((0.40, None), (0.50, None))
+    assert abs(level_run.asked_db(rung(0.59, 0.0, -22.4),
+                                  rung(0.69, 8.0, -14.4)) - 8.0) < 1e-9
+    # THE PEAK IS NOT THE WITNESS: a peak that rose a quarter more
+    # than the curve -- the harmonics it carries and the curve does
+    # not -- changes nothing
+    assert abs(level_run.asked_db(rung(0.40, 0.0, -20.0),
+                                  rung(0.50, 3.9, -15.8)) - 3.9) < 1e-9
+    # no curve to ask, so the knob is all there is
+    got = level_run.asked_db({"level": 0.40}, {"level": 0.50})
+    assert abs(got - 60.0 * math.log10(0.5 / 0.4)) < 1e-9
+    # nor where nothing was heard
+    deaf = rung(0.40, 0.0, -20.0)
+    deaf["heard_offset_db"] = 60.0
+    got = level_run.asked_db(deaf, rung(0.50, 3.9, -16.1))
     assert abs(got - 60.0 * math.log10(0.5 / 0.4)) < 1e-9
 
 
@@ -1605,15 +1618,15 @@ def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
         out, up = [], 0.0
         for j, d in enumerate([0.0] + list(steps)):
             up += d
-            # a rig that runs out in the bass first: the low half of
-            # the band falls behind while the peak, carried by the
-            # rest, still climbs -- the only kind of knee a step read
-            # from the capture peak can see
+            # a rig that runs out in the bass first: the low third of
+            # the band falls behind while the rest still climbs -- the
+            # only kind of knee a step read from the curve's own rise
+            # can see, and the kind every rig here has shown
             lost = (0.0 if knee_after is None or j <= knee_after
                     else 1.5 * (j - knee_after))
             r = {"level": 0.12 * 10.0 ** (up / 60.0), "peak_dbfs": -30.0 + up,
                  "heard_offset_db": -40.0,
-                 "mag_db": [up + s - (lost if i < n // 2 else 0.0)
+                 "mag_db": [up + s - (lost if i < n // 3 else 0.0)
                             for i, s in enumerate(slope)],
                  "stopped_by": "capture" if j == len(steps) else None}
             if j == 0:
