@@ -930,7 +930,7 @@ def test_the_base_rung_has_to_be_heard_itself():
 
 MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes",
                "_ladder_rows", "_draw_ladder", "_ladder_record",
-               "_ladder_k", "_ladder_word_for", "_wrapped")
+               "_ladder_k", "_ladder_word_for", "_wrapped", "_walk_here")
 
 
 def map_fake():
@@ -1013,6 +1013,7 @@ def map_window(rungs, partial=None, pick=2, probes=None):
     f._ladder_split = 0
     f._map_partial = rungs[:partial] if partial is not None else []
     f._walk_live = partial is not None
+    f._walk_ch = 0
     f.parent = types.SimpleNamespace(
         store=types.SimpleNamespace(get=lambda _p: prof))
     return f
@@ -1286,3 +1287,43 @@ def test_the_search_is_read_against_itself():
     f._map_partial = rungs
     later = {r[1]: r[3] for r in f._ladder_rows() if r[0] == "probe"}
     assert later == rows
+
+
+def test_a_walk_is_shown_on_its_own_channel_only():
+    """After a walk on FL he switched to FR and saw FL's search under
+    FR's rungs: the walk's probes, its rungs so far and its announce
+    hung on the window, and whichever channel was on screen wore
+    them. What the walk wrote to disk was always FL's; the picture
+    was borrowed. A walk belongs to the channel it was armed on."""
+    rungs = map_rungs([6.0, 6.0, 2.0])
+    mine = [{"step": 1, "level": 0.15, "verdict": "quiet",
+             "mag_db": rungs[1]["mag_db"]}]
+    theirs = [{"step": 1, "level": 0.30, "verdict": "ok",
+               "mag_db": rungs[2]["mag_db"]}]
+    f = map_window(rungs, partial=2, probes=mine)
+    f.ch_keys = ["FL", "FR"]
+    f._busy = True
+    f._walk_probes = list(mine)
+    f._probes_fresh = True
+    f._map_announce = (0.2, "playing")
+    book = f.parent.store.get(f.edit_pid)["passport"]
+    book["FR"] = {"rungs": rungs[:1], "probes": theirs}
+    # FL, the walked channel: the live picture
+    assert [p["level"] for p in f._ladder_probes()] == [0.15]
+    assert len(f._map_rungs()) == 2
+    assert any(r[0] == "announce" for r in f._ladder_rows())
+    # FR, while FL walks and after: FR's own record, nothing borrowed
+    f._selected_ch = 1
+    assert [p["level"] for p in f._ladder_probes()] == [0.30]
+    assert len(f._map_rungs()) == 1
+    assert not any(r[0] == "announce" for r in f._ladder_rows())
+    f._busy = False
+    f._walk_live = False
+    assert [p["level"] for p in f._ladder_probes()] == [0.30]
+    # and arming a walk binds it to the channel on screen
+    f._sync_relevel = lambda: None
+    f._ladder_repaint = lambda: None
+    f._map_pick = None
+    f._rebuild_ack = True
+    f._arm_walk(True)
+    assert f._walk_ch == 1

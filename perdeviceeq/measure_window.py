@@ -418,6 +418,7 @@ class MeasureWindow(Adw.Window):
         # walk that has not produced a rung yet and a window with no
         # walk look identical in it.
         self._walk_live = False
+        self._walk_ch = None
         self._walk_keep = None
         self._walk_old = []
         self._walk_probes = []
@@ -800,6 +801,13 @@ class MeasureWindow(Adw.Window):
         # had no business running.
         keep = self._map_pick
         self._walk_keep = keep
+        # A WALK BELONGS TO ONE CHANNEL. Its probes, its rungs so far
+        # and its announce used to hang on the window, and the canvas
+        # of whichever channel was on screen wore them: after a walk
+        # on FL, the FR tab showed FL's search under FR's own rungs
+        # until the next press. What the walk left on disk was always
+        # that channel's; only the picture was borrowed.
+        self._walk_ch = self._selected_ch
         self._walk_probes = []
         self._walk_settled = None
         # A FRESH SEARCH STARTS WITH AN EMPTY BAND. Until its first
@@ -845,9 +853,10 @@ class MeasureWindow(Adw.Window):
         if not (0 <= self._selected_ch < len(keys)):
             return []
         # A WALK IN PROGRESS OUTRANKS WHAT IS ON DISK, for as long as
-        # it runs: the canvas should show the rungs being taken, not
-        # the ones the last walk left.
-        got = (self._map_partial if self._busy and self._walk_live
+        # it runs and on its own channel: the canvas should show the
+        # rungs being taken, not the ones the last walk left.
+        got = (self._map_partial
+               if self._busy and self._walk_live and self._walk_here()
                else level_run.maps_of(prof or {})
                .get(keys[self._selected_ch]))
         return sorted(got or [], key=lambda r: r["level"])
@@ -967,9 +976,17 @@ class MeasureWindow(Adw.Window):
         self._ladder_repaint()
         return False
 
+    def _walk_here(self):
+        """Whether the walk -- running, or the last one -- is this
+        channel's. Its live state is shown on its own canvas only;
+        every other channel reads its record."""
+        return getattr(self, "_walk_ch", None) == self._selected_ch
+
     def _ladder_probes(self):
-        live = getattr(self, "_walk_probes", None)
-        if live or getattr(self, "_probes_fresh", False):
+        live = getattr(self, "_walk_probes", None) if self._walk_here() \
+            else None
+        if live or (getattr(self, "_probes_fresh", False)
+                    and self._walk_here()):
             return list(live or [])
         return list(self._ladder_record().get("probes") or [])
 
@@ -1006,8 +1023,9 @@ class MeasureWindow(Adw.Window):
                 row = list(sc) if sc else None
                 label += " pair"
             out.append(("rung", slot, float(r["level"]), row, label, None))
-        ann = getattr(self, "_map_announce", None)
-        searching = getattr(self, "_walk_phase", None) == "search"
+        here = self._walk_here()
+        ann = getattr(self, "_map_announce", None) if here else None
+        searching = here and getattr(self, "_walk_phase", None) == "search"
         if ann is not None and not searching:
             lv, what = ann
             row = ("announce", None, float(lv), None,
