@@ -147,6 +147,8 @@ def describe(w, in_bar=False):
                          w.get_margin_end()]}
     if isinstance(w, Gtk.Box):
         props["spacing"] = w.get_spacing()
+        props["vertical"] = (w.get_orientation()
+                             == Gtk.Orientation.VERTICAL)
     if isinstance(w, Adw.PreferencesRow):
         props["title"] = w.get_title()
         if hasattr(w, "get_subtitle"):

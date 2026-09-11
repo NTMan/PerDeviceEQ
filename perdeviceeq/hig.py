@@ -146,6 +146,12 @@ def _findings_h2(node, path, out):
     may sit in the middle. Widening the rule to bless every centred
     group would have un-caught round one, which its own court still
     guards.
+
+    A COLUMN of buttons is not a group, it is a menu: the popover that
+    adds a capture column lists eighteen targets one under the other,
+    and fill there is the width of the list, each button one line of
+    it -- what a menu item is. The half-window slabs the rule exists
+    for are a row's fault, so the rule reads rows.
     """
     kids = node.get("children") or []
     if len(kids) < 2 or not node.get("class", "").endswith("Box"):
@@ -155,6 +161,8 @@ def _findings_h2(node, path, out):
         return
     css = node.get("props", {}).get("css") or []
     if "linked" in css or node.get("props", {}).get("in_bar"):
+        return
+    if node.get("props", {}).get("vertical"):
         return
     halign = node.get("props", {}).get("halign")
     worded = [k for k in kids

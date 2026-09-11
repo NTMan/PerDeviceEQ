@@ -16,10 +16,11 @@ def _btn(label=None, css=(), icon_only=False, tooltip=None,
 
 
 def _box(children, css=(), halign="fill", spacing=6,
-         in_bar=False):
+         in_bar=False, vertical=False):
     return {"class": "GtkBox",
             "props": {"css": list(css), "halign": halign,
-                      "spacing": spacing, "in_bar": in_bar},
+                      "spacing": spacing, "in_bar": in_bar,
+                      "vertical": vertical},
             "children": list(children)}
 
 
@@ -117,6 +118,20 @@ def test_h2_a_button_group_is_never_stretched():
                    _btn("B", in_bar=True)],
                   halign="center", in_bar=True)
     assert hig.lint(in_bar) == []
+
+
+def test_h2_a_column_of_buttons_is_a_menu():
+    """The popover that adds a capture column lists eighteen targets
+    one under the other, each a flat menu button filling the list's
+    width -- what a menu item is. The audit called it a stretched
+    group of eighteen; the slabs the rule exists for are a row's
+    fault, and a column is not a row."""
+    menu = [{"class": "GtkMenuButton",
+             "props": {"label": k, "css": ["flat"], "icon_only": False},
+             "children": []} for k in ("FL", "FR", "FC", "LFE")]
+    assert hig.lint(_box(menu, halign="fill", vertical=True)) == []
+    # laid out as a row the same buttons are a group, and stretched
+    assert _rules(hig.lint(_box(menu, halign="fill"))) == ["H2"]
 
 
 def test_h2_centre_is_a_place_a_page_action_may_take():
