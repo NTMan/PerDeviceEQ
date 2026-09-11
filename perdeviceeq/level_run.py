@@ -625,12 +625,29 @@ def linear_top(rungs, ppo=None):
     if len(got) < 2:
         return None
     ppo = float(ppo or 96.0)
-    # NO MODEL, NO READING. The scatter of this walk's own sweeps is
-    # what says whether a bin can be read at all, and a map that
-    # cannot supply it is not a map this code knows how to read.
-    model = scatter_model(got[0])
-    if model is None:
+    w = max(3, int(round(ppo / 3.0)))
+    # NO SCATTER, NO READING. What two sweeps of this walk's own base
+    # disagree by, bin by bin, is what says whether a bin can be read
+    # at all, and a map that cannot supply it is not a map this code
+    # knows how to read.
+    #
+    # THE MEASURED SCATTER, NOT A MODEL OF IT BY SNR. The model was
+    # fitted to extrapolate the base's scatter to louder rungs by
+    # their margin over noise, and at the bottom of a room it reads
+    # wrong: his iLoud's base pair disagrees by 2.8 dB at 20 Hz with
+    # a margin of fourteen, the model said 1.4, the bins were asked,
+    # and a sliver at the band's own edge -- five bins at 20 Hz where
+    # a three-inch monitor has nothing but its port and the room --
+    # was called a shortfall and broke the ladder at the base. The
+    # working level fell to 30%, the takes to an SNR of 35, and the
+    # correction refused. The base's own scatter, read over a third
+    # of an octave, is larger where the room is loud and the rig is
+    # not, which is exactly where nothing should be asked.
+    base_sc = np.asarray([np.nan if v is None else v
+                          for v in got[0].get("scatter_db") or []], float)
+    if base_sc.size == 0 or not np.isfinite(base_sc).any():
         return None
+    scatter = running_median(base_sc, w)
     top = got[0]["level"]
     # A STEP THE KNOB TOOK AND THE DEVICE DID NOT IS NOT A FAILURE.
     # Liberty 5 answers Bluetooth's own scale in jumps: ten rungs
@@ -662,11 +679,29 @@ def linear_top(rungs, ppo=None):
             break
         heard = margin_of(cur, n)[:n]
         short, ok = shortfall(pmag[:n], mag[:n], heard, ask, None, ppo,
-                              expected_scatter(model, heard))
-        if not ok.any() or short.any():
+                              scatter[:n])
+        # A REGION IS A THIRD OF AN OCTAVE, and one short median is not
+        # one: the median is taken over a third of an octave, so a
+        # single short bin already speaks for its neighbours -- but
+        # at the band's edges the window is one-sided and half a
+        # region wide, and nine bins of a Bluetooth codec's roll-off
+        # at 18 kHz capped his ATVEL at 76% where its other channel
+        # read 99%. The rig has to be short over a whole third of an
+        # octave of medians before the ladder is called.
+        if not ok.any() or _longest_run(short) >= w:
             break
         top, ref = cur["level"], cur
     return top
+
+
+def _longest_run(mask):
+    """The longest run of consecutive True in a boolean array."""
+    best = run = 0
+    for v in np.asarray(mask, bool):
+        run = run + 1 if v else 0
+        if run > best:
+            best = run
+    return best
 
 
 def working_level(maps, ppo=None, settled=None):
@@ -1527,13 +1562,16 @@ def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
     traffic are not rejected, and a log sweep dwells longest where
     they live.
 
-    So the gate is the EXPECTED DISAGREEMENT of this walk's own
-    sweeps, when the caller can supply it -- a bin is worth asking
-    about while two sweeps of it would land closer together than the
-    shortfall being looked for. That is stricter than ten decibels in
-    a room and wide open on a coupler, which is the whole point: one
-    rule, measured each time, instead of a constant that can only suit
-    one of them.
+    So the gate is the DISAGREEMENT of this walk's own sweeps, as the
+    caller supplies it per bin -- a bin is worth asking about while
+    SEATING_K times what two sweeps of it disagree by is under the
+    shortfall being looked for: the finding has to clear the noise by
+    the same margin the seating check and the takes hold theirs to,
+    not by a hair. His iLoud's bottom third-octave disagreed by 2.8 dB
+    and was asked for a 3 dB shortfall; a coin toss called it short.
+    That is stricter than ten decibels in a room and wide open on a
+    coupler, which is the whole point: one rule, measured each time,
+    instead of a constant that can only suit one of them.
 
     THERE IS NO SECOND RULE. A map walked before the scatter was
     recorded everywhere cannot be read by this one, and keeping the
@@ -1549,7 +1587,8 @@ def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
     got = cur - prev
     w = max(3, int(round(ppo / 3.0)))
     sm = running_median(got, w, need=max(2, w // 3))
-    keep = np.asarray(scatter, float) < ANSWER_SHORT * asked_db
+    sc = np.asarray(scatter, float)
+    keep = np.isfinite(sc) & (SEATING_K * sc < ANSWER_SHORT * asked_db)
     ok = np.isfinite(sm) & keep
     return ok & (sm < ANSWER_SHORT * asked_db), ok
 

@@ -1846,3 +1846,52 @@ def test_the_running_median_is_the_loop_it_replaced():
     assert (level_run.running_median(np.full(6, np.nan), 3, fill=1.0)
             == 1.0).all()
     assert level_run.running_median(np.array([]), 3).size == 0
+
+
+def test_a_room_speaker_is_not_read_at_the_edge_of_its_own_band():
+    """His iLoud, walked in a room: the base pair disagrees by 2.8 dB
+    below 25 Hz -- a three-inch monitor has nothing there but its
+    port and the room -- and the scatter model by SNR said 1.4, so
+    the bins were asked, five of them at 20 Hz read short on the
+    first step, and the ladder broke at the base: working level 30%,
+    takes at an SNR of 35, the correction refused. Read against the
+    base's own measured scatter, three times over, the bottom is not
+    asked; a real knee in the bass -- ninety bins short between 50
+    and 100 Hz -- still ends the ladder where it should, and a sliver
+    of nine bins at the top edge does not."""
+    freqs = np.asarray(mc.log_grid())
+    n = len(freqs)
+    rng = np.random.default_rng(4)
+    noisy = freqs < 25.0                      # the room, not the rig
+    codec = freqs > 18000.0                   # nine bins of roll-off
+    knee_lo = (freqs > 50.0) & (freqs < 100.0)
+    levels = [0.30, 0.38, 0.48, 0.56, 0.65, 0.73]
+    rungs = []
+    for j, lv in enumerate(levels):
+        up = 60.0 * math.log10(lv / levels[0])
+        mag = np.full(n, -30.0) + up
+        mag[noisy] += rng.normal(0, 2.0, noisy.sum())       # noise, every rung
+        mag[:12] -= 8.0 * j                                 # a notch deepening at 20 Hz
+        if j >= 4:
+            mag[knee_lo] -= 3.0 * (j - 3)                     # the limiter
+        if j >= 2:
+            mag[codec] -= 1.2 * (j - 1)                       # the codec's edge
+        r = {"level": lv, "peak_dbfs": -25.0 + up, "heard_offset_db": -50.0,
+             "mag_db": list(mag),
+             "stopped_by": "capture" if j == len(levels) - 1 else None}
+        if j == 0:
+            sc = np.full(n, 0.03)
+            sc[noisy] = np.abs(rng.normal(0, 2.8, noisy.sum()))
+            r["scatter_db"] = list(sc)
+        rungs.append(r)
+    assert level_run.linear_top(rungs) == 0.56
+    # and with a quiet bottom the same sliver of five short bins at
+    # 20 Hz is a sliver, not a region
+    quiet = [dict(r) for r in rungs]
+    quiet[0] = dict(quiet[0], scatter_db=[0.03] * n)
+    for j, r in enumerate(quiet):
+        m = np.array(r["mag_db"])
+        m[noisy] = -30.0 + 60.0 * math.log10(r["level"] / levels[0])
+        m[:12] -= 8.0 * j
+        r["mag_db"] = list(m)
+    assert level_run.linear_top(quiet) == 0.56
