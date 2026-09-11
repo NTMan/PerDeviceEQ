@@ -362,31 +362,40 @@ def odd_takes(takes, shifts=None, ppo=mc.GRID_PPO, thresh=SPREAD_MAX_DB):
     stand apart from the channel's others, and where.
 
     take_quality judges a take alone -- silence, clipping, a hot
-    peak, a low SNR -- and never whether the takes agree. So a take
-    recorded with the device in another STATE counted as clean: his
-    Liberty's leakage compensation switched on in the middle of the
-    third take of three, 3.2 dB below 300 Hz, the three read "3/3
-    clean", and the mean carried a third of it. The spread knew --
-    it is what the fit trusts by -- but nothing said WHICH take, and
-    the trust doctrine's own remedy, "restored by deleting the
-    outlier", needs the outlier named.
+    peak, a curve in its own noise -- and never whether the takes
+    agree. So a take recorded with the device in another STATE
+    counted as clean: his Liberty's leakage compensation switched on
+    in the middle of the third take of three, 3.2 dB below 300 Hz,
+    the three read "3/3 clean", and the mean carried a third of it.
+    The spread knew -- it is what the fit trusts by -- but nothing
+    said WHICH take, and the trust doctrine's own remedy, "restored
+    by deleting the outlier", needs the outlier named.
 
-    Named against the fit's own tolerance: the takes are three
-    SEATINGS by design, so their disagreement is the spread and not
-    a fault, and the pair scatter of the walk -- what two sweeps of
-    one seating differ by -- is the wrong scale for them by a factor
-    of a hundred on the Origin. A take is odd where its distance from
-    the median of the channel's takes, read as the median of a third
-    of an octave over the bins it heard, exceeds SPREAD_MAX_DB --
-    exactly the disagreement that would cost the band the fit's
-    trust, now with the take's name on it. Takes are aligned onto
-    the quietest recorded gain first, as the mean is.
+    AN OUTLIER EXISTS ONLY AGAINST A CONSENSUS. The first cut named a
+    take wherever it stood further from the median of the set than
+    the fit tolerates, and his Adam in a room paid for it: below
+    25 Hz, where a small monitor has nothing but the room, the takes
+    wander by four decibels either way, and the judge named one, then
+    another, then none, as each new take moved the median -- the
+    conditions between takes never changed, the verdicts did. Where
+    the others disagree among themselves there is no one to stand
+    apart from; that band is the spread's, and the spread already
+    withholds trust there. So a take is odd in a band only where the
+    OTHER takes agree -- the upper trust bound on their own spread,
+    the statistic the trust mask lives by, under the tolerance -- and
+    where its own curve is worth reading: SEATING_K times the noise
+    its margin over its floor implies is under the tolerance, the
+    standard the ladder holds its gate to. Judged as the median of a
+    third of an octave, from at least half the band's bins, against
+    SPREAD_MAX_DB -- exactly the disagreement that would cost the
+    band the fit's trust, now with the take's name on it. Takes are
+    aligned onto the quietest recorded gain first, as the mean is.
 
-    With two takes the median is their mean, so a disagreement names
-    both: nothing says which is right until a third arrives.
+    With two takes there is no consensus and no one is named: nothing
+    says which is right until a third arrives.
     """
     recs = [r for r in takes if testified(r)]
-    if len(recs) < 2:
+    if len(recs) < 3:
         return {}
     shift = shifts or {}
     mags = np.array([np.asarray(r.mag_db, float) + float(shift.get(r.id, 0.0))
@@ -402,7 +411,15 @@ def odd_takes(takes, shifts=None, ppo=mc.GRID_PPO, thresh=SPREAD_MAX_DB):
              "floor_db": ([None if not np.isfinite(v) else float(v)
                            for v in np.asarray(floor, float)]
                           if floor is not None else [])}, n)
-        heard = np.isfinite(marg) & (marg >= level_run.HEARD_OVER_NOISE_DB)
+        others = np.delete(mags, i, axis=0)
+        with np.errstate(all="ignore"):
+            bound = spread_trust_bound(np.nanstd(others, axis=0, ddof=1),
+                                       len(others))
+            noise = level_run.noise_of(np.where(np.isfinite(marg), marg,
+                                                -200.0))
+            heard = (np.isfinite(marg)
+                     & (level_run.SEATING_K * noise < thresh)
+                     & np.isfinite(bound) & (bound < thresh))
         bands = level_run.disagreement(mags[i] - ref, heard,
                                        np.zeros(n), ppo, k=0.0,
                                        floor=thresh)

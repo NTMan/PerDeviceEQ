@@ -392,6 +392,18 @@ THIRDS_HZ = (20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0,
              5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0)
 
 
+def noise_of(margin_db):
+    """The error a curve carries at a given margin over its own
+    floor, in dB: what a noise that many decibels down does to the
+    reading where it adds in phase -- 2.4 dB at 10, 0.8 at 20, 0.27
+    at 30. Not a threshold: the arithmetic of two signals summing.
+    Takes a number or an array."""
+    m = np.asarray(margin_db, float)
+    with np.errstate(over="ignore", invalid="ignore"):
+        out = 20.0 * np.log10(1.0 + 10.0 ** (-m / 20.0))
+    return float(out) if out.ndim == 0 else out
+
+
 def disagreement(diff, heard, scatter, ppo, k=SEATING_K, floor=0.0):
     """Where two sweeps that should be the same are not.
 
@@ -414,6 +426,11 @@ def disagreement(diff, heard, scatter, ppo, k=SEATING_K, floor=0.0):
     than `floor`, which is the caller's business: the map's tolerance
     is a readable step, the takes' is nothing.
 
+    A BAND IS JUDGED FROM AT LEAST HALF ITS BINS. A third of an
+    octave read from ten bins at the bottom of a room is a third of
+    a region -- the sliver the ladder stopped being called on -- and
+    what it says is the noise of those ten bins.
+
     Returns [(f_lo, f_hi, median_db, bar_db), ...] for the bands over
     the bar, in frequency order; empty when nothing disagrees.
     """
@@ -429,7 +446,7 @@ def disagreement(diff, heard, scatter, ppo, k=SEATING_K, floor=0.0):
             break
         idx = np.arange(lo, hi)
         idx = idx[h[idx] & np.isfinite(d[idx])]
-        if idx.size < max(2, w // 3):
+        if idx.size < max(2, w // 2):
             continue
         med = float(np.median(d[idx]))
         own = sc[idx]

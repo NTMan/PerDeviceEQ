@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
+from perdeviceeq import level_run
 from perdeviceeq import measure_core as mc
 from perdeviceeq import measure_session as ms
 from perdeviceeq import sweep_io
@@ -950,9 +951,10 @@ def test_a_take_in_another_state_of_the_device_is_named():
     seats = [_take_rec(1, shape), _take_rec(2, shape - 0.3),
              _take_rec(3, shape + tilt)]
     assert ms.odd_takes(seats) == {}
-    # two takes eight decibels apart: both are named, nothing says which
+    # two takes eight decibels apart: no consensus, no one is named --
+    # nothing says which is right until a third arrives
     two = [_take_rec(1, shape), _take_rec(2, shape + 8.0)]
-    assert sorted(ms.odd_takes(two)) == [1, 2]
+    assert ms.odd_takes(two) == {}
     # a take that heard nothing is no witness and is not judged
     silent = _take_rec(4, shape + 30.0, snr=None)
     silent.peak_dbfs = -240.0
@@ -990,3 +992,38 @@ def test_low_snr_is_read_per_bin_where_the_take_carries_its_floor():
                             thd_noise_db=np.full(n, -5.0))
     assert ms.take_quality(drowned) == ms.TAKE_FLAGGED
     assert level_run.HEARD_OVER_NOISE_DB < 50.0
+
+
+def test_a_band_the_takes_all_wander_in_names_no_one():
+    """His Adam D3V in a room: below 25 Hz, where a small monitor has
+    nothing but the room, the takes wander by four decibels either
+    way -- the room, not the rig -- and the judge named one, then
+    another, then none, as each new take moved the median, with
+    nothing between the takes changed. An outlier exists only
+    against a consensus: where the others disagree among themselves
+    the band is the spread's, and no take is named at any count."""
+    freqs = np.asarray(mc.log_grid())
+    n = len(freqs)
+    rng = np.random.default_rng(6)
+    shape = -12.0 + 3.0 * np.sin(np.log(freqs))
+    bottom = freqs < 25.0
+    takes = []
+    # the room's rumble sat at a different level in each take,
+    # coherently across the bottom: his record's own offsets at 20 Hz
+    for k, rumble in enumerate((4.0, 3.8, 0.6, -4.4, -4.2, 1.3), 1):
+        mag = shape + rng.normal(0, 0.03, n)
+        mag[bottom] += rumble + rng.normal(0, 0.5, bottom.sum())
+        r = _take_rec(k, mag)
+        # the floor at the bottom is the room: fifteen under the curve
+        r.thd_noise_db = np.where(bottom, -15.0, -70.0)
+        takes.append(r)
+    for k in range(2, 7):
+        assert ms.odd_takes(takes[:k]) == {}, k
+    # and a take that stands apart where the others DO agree is still
+    # named, whatever the bottom does
+    apart = takes[:3]
+    apart[2].mag_db = apart[2].mag_db + np.where(
+        (freqs > 100.0) & (freqs < 300.0), 3.9, 0.0)
+    odd = ms.odd_takes(apart)
+    assert list(odd) == [3]
+    assert level_run.band_words(odd[3]).startswith("100")

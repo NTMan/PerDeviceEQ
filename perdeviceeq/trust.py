@@ -29,6 +29,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from . import level_run
+from .level_run import noise_of                      # noqa: F401
 from . import measure_session as ms
 from . import refit
 
@@ -40,14 +41,6 @@ AGE_FRESH_DAYS = 90.0    # younger than this: no cost
 AGE_STALE_DAYS = 730.0   # this old or older: the full age penalty
 AGE_MIN_FACTOR = 0.8
 FIT_COVER_MIN_FACTOR = 0.5
-
-
-def noise_of(margin_db):
-    """The error a curve carries at a given margin over its own
-    floor, in dB: what a noise that many decibels down does to the
-    reading where it adds in phase -- 2.4 dB at 10, 0.8 at 20, 0.27
-    at 30. Not a threshold: the arithmetic of two signals summing."""
-    return 20.0 * math.log10(1.0 + 10.0 ** (-float(margin_db) / 20.0))
 
 
 def _linear_factor(x, good, bad, floor):
