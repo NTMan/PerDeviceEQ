@@ -1814,3 +1814,35 @@ def test_the_seating_check_reads_by_thirds():
     assert "20\u2013315 Hz" in str(why.value)
     level_run._check_seating(base, np.full(n, 1.0), ppo=96)   # a decibel: the map's floor
     level_run._check_seating(base, np.zeros(n), ppo=96)
+
+
+def test_the_running_median_is_the_loop_it_replaced():
+    """A third-octave median bin by bin -- a Python loop over 958 bins
+    calling np.median on a slice -- ran eleven thousand times on every
+    repaint of the passport canvas, and the measure window waited on
+    it to open and to switch a channel. One sort of an (n, w) view is
+    the same arithmetic at once, bin for bin, NaN and short windows
+    included."""
+    rng = np.random.default_rng(11)
+
+    def loop(got, w, need):
+        sm = np.full(len(got), np.nan)
+        for k in range(len(got)):
+            seg = got[max(0, k - w // 2):k + w // 2 + 1]
+            seg = seg[np.isfinite(seg)]
+            if seg.size >= need:
+                sm[k] = float(np.median(seg))
+        return sm
+    for n, w, need in ((958, 32, 10), (958, 33, 2), (5, 3, 1), (40, 64, 4),
+                       (1, 3, 1)):
+        x = rng.normal(0, 3, n)
+        x[rng.random(n) < 0.3] = np.nan
+        a = loop(x, w, need)
+        b = level_run.running_median(x, w, need=need)
+        assert (np.isnan(a) == np.isnan(b)).all()
+        m = ~np.isnan(a)
+        assert np.allclose(a[m], b[m], atol=0, rtol=0)
+    # the fill value stands where the window is empty
+    assert (level_run.running_median(np.full(6, np.nan), 3, fill=1.0)
+            == 1.0).all()
+    assert level_run.running_median(np.array([]), 3).size == 0

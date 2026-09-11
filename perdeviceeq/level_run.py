@@ -1467,6 +1467,41 @@ def asked_db(prev, cur):
     return 60.0 * math.log10(float(cur["level"]) / float(prev["level"]))
 
 
+def running_median(x, w, need=1, fill=np.nan):
+    """The median of a window of `w` bins centred on each bin, over
+    the finite values in it; `fill` where fewer than `need` are.
+
+    THE LOOP THIS REPLACES COST THE WINDOW ITS SPEED. Four places
+    took a third-octave median bin by bin -- a Python loop over 958
+    bins calling np.median on a slice, thirty microseconds a call --
+    and the passport's verdict runs it once per step of the ladder
+    for linear_top and once again for the knee: eleven thousand
+    calls, a third of a second, on every repaint of the passport
+    canvas and again at every draw. Opening the measure window and
+    switching a channel waited on it.
+
+    One sort of an (n, w) view does the same arithmetic at once: NaN
+    sorts last, so the median of each row's finite values is the
+    middle of its first `count` entries -- exactly what np.median of
+    the filtered slice returned, bin for bin.
+    """
+    x = np.asarray(x, float)
+    n = x.size
+    if n == 0:
+        return np.full(0, fill)
+    h = int(w) // 2
+    padded = np.concatenate([np.full(h, np.nan), x, np.full(h, np.nan)])
+    win = np.lib.stride_tricks.sliding_window_view(padded, 2 * h + 1)
+    srt = np.sort(win, axis=1)                    # NaN sorts to the end
+    cnt = np.isfinite(win).sum(axis=1)
+    lo = np.take_along_axis(srt, np.maximum(cnt - 1, 0)[:, None] // 2,
+                            axis=1)[:, 0]
+    hi = np.take_along_axis(srt, (np.maximum(cnt, 1)[:, None] // 2),
+                            axis=1)[:, 0]
+    med = 0.5 * (lo + hi)
+    return np.where(cnt >= max(1, int(need)), med, fill)
+
+
 def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
               scatter):
     """Where a rung bought less than half of what was asked.
@@ -1513,12 +1548,7 @@ def shortfall(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
     cur = np.asarray(cur_mag, float)
     got = cur - prev
     w = max(3, int(round(ppo / 3.0)))
-    sm = np.full(len(got), np.nan)
-    for k in range(len(got)):
-        seg = got[max(0, k - w // 2):k + w // 2 + 1]
-        seg = seg[np.isfinite(seg)]
-        if seg.size >= max(2, w // 3):
-            sm[k] = float(np.median(seg))
+    sm = running_median(got, w, need=max(2, w // 3))
     keep = np.asarray(scatter, float) < ANSWER_SHORT * asked_db
     ok = np.isfinite(sm) & keep
     return ok & (sm < ANSWER_SHORT * asked_db), ok
@@ -1549,12 +1579,7 @@ def shortfall_db(prev_mag, cur_mag, heard, asked_db, freqs, ppo,
     cur = np.asarray(cur_mag, float)
     got = cur - prev
     w = max(3, int(round(ppo / 3.0)))
-    sm = np.full(len(got), np.nan)
-    for k in range(len(got)):
-        seg = got[max(0, k - w // 2):k + w // 2 + 1]
-        seg = seg[np.isfinite(seg)]
-        if seg.size >= max(2, w // 3):
-            sm[k] = float(np.median(seg))
+    sm = running_median(got, w, need=max(2, w // 3))
     ok = np.isfinite(sm) & (np.asarray(scatter, float)
                             < ANSWER_SHORT * asked_db)
     return np.where(ok, np.maximum(0.0, asked_db - sm), np.nan)

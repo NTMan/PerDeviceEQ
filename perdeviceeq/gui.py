@@ -790,12 +790,7 @@ class EqWindow(Adw.ApplicationWindow):
                 own = a if own is None else np.fmax(own, a[:len(own)])
         if own is not None and len(own) >= n:
             w = max(3, int(round(ppo / 3.0)))
-            sm = np.full(n, 1.0)
-            for k in range(n):
-                seg = own[max(0, k - w // 2):k + w // 2 + 1]
-                seg = seg[np.isfinite(seg)]
-                if seg.size:
-                    sm[k] = float(np.median(seg))
+            sm = level_run.running_median(own[:n], w, fill=1.0)
             gate = 2.0 * sm
         else:
             gate = 2.0 * self._spread(ppo, n)
@@ -944,13 +939,7 @@ class EqWindow(Adw.ApplicationWindow):
             best = sp if best is None else np.fmax(best, sp)
         if best is None:
             return 1.0
-        out = np.full(n, 1.0)
-        for i in range(n):
-            seg = best[max(0, i - w // 2):i + w // 2 + 1]
-            seg = seg[np.isfinite(seg)]
-            if seg.size:
-                out[i] = float(np.median(seg))
-        return out
+        return level_run.running_median(best[:n], w, fill=1.0)
 
     def _overlay_curve(self):
         """(freqs, measured, spread, trust_band) for the slot on
