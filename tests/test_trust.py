@@ -23,10 +23,11 @@ NOW = datetime.fromisoformat(T0) + timedelta(days=1)
 
 
 def _take(tid, key, mag, snr=45.0, peak=-6.0, clipped=0,
-          created=T0, col=0):
+          created=T0, col=0, floor=-65.0):
     return {"id": tid, "session": "s1", "channel": key,
             "capture_channel": col, "created_utc": created,
             "mag_db_uncal": [float(v) for v in mag],
+            "thd_noise_db": [floor] * len(mag),
             "delay_ms": 5.0, "snr_db": snr, "peak_dbfs": peak,
             "noise_dbfs": -80.0, "clipped": clipped, "repaired": 0,
             "chan_vol": 0.3, "soft_vol": 0.3}
@@ -118,17 +119,31 @@ def test_clipped_take_drops_the_clean_count():
     assert any("clipped" in r for r in ch["reasons"])
 
 
-def test_low_snr_flags_and_penalizes():
+def test_a_take_in_its_own_noise_flags_and_costs_what_the_noise_costs():
+    """A take whose curve sits eight decibels over its own floor is
+    flagged, and the channel pays for it by what that noise does to
+    the reading -- 2.9 dB against the fit's 3 -- not by a warn line
+    on a broadband number that charged his room measurements a fifth
+    of their trust for rumble the fit never uses."""
     takes = _clean_trio()
-    takes[2]["snr_db"] = 25.0            # flagged AND the worst SNR
+    takes[2]["thd_noise_db"] = [-8.0] * N   # flagged AND the worst margin
     rep = trust.assess({"measurement": _meas(takes)}, now=NOW)
     ch = rep["channels"]["FL"]
     assert ch["n_clean"] == 2 and ch["n_flagged"] == 1
-    f = trust._linear_factor(25.0, mc.SNR_WARN_DB,
-                             mc.SNR_WARN_DB - trust.SNR_SPAN_DB,
-                             trust.SNR_MIN_FACTOR)
-    assert ch["score"] == int(round(70 * f))
-    assert any("SNR" in r for r in ch["reasons"])
+    noise = trust.noise_of(8.0)
+    assert abs(noise - 2.91) < 0.01
+    assert abs(trust.noise_of(10.0) - 2.39) < 0.01
+    assert ch["score"] == int(round(70 * (1.0 - noise / ms.SPREAD_MAX_DB)))
+    assert ch["margin_min_db"] == 8.0
+    assert any("over its floor" in r for r in ch["reasons"])
+    # a broadband number under the old warn line, with the curve
+    # fifty over its floor, costs nothing and flags nothing
+    takes = _clean_trio()
+    takes[2]["snr_db"] = 25.0
+    rep = trust.assess({"measurement": _meas(takes)}, now=NOW)
+    ch = rep["channels"]["FL"]
+    assert ch["n_clean"] == 3 and ch["score"] == 100
+    assert not any("floor" in r for r in ch["reasons"])
 
 
 def test_age_decays_gently():
@@ -172,7 +187,7 @@ def test_profile_band_is_the_worst_channel():
     assert rep["band"][1] <= 8000.0     # combined by max, like live
     assert rep["score"] == 100          # both channels clean in-band
     # profile reasons carry the channel prefix
-    fr[0]["snr_db"] = 25.0
+    fr[0]["thd_noise_db"] = [-8.0] * N
     rep = trust.assess({"measurement": _meas(fl + fr)}, now=NOW)
     assert any(r.startswith("FR: ") for r in rep["reasons"])
     assert rep["score"] == rep["channels"]["FR"]["score"]

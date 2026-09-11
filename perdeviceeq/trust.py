@@ -28,7 +28,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from . import measure_core as mc
+from . import level_run
 from . import measure_session as ms
 from . import refit
 
@@ -36,12 +36,18 @@ BASE_BY_CLEAN = {0: 25, 1: 45, 2: 70}   # >= 3 clean takes -> 100
 SPREAD_GOOD_DB = 0.5     # median spread at or under this: no cost
 SPREAD_BAD_DB = 2.0      # this or worse: the full spread penalty
 SPREAD_MIN_FACTOR = 0.6
-SNR_SPAN_DB = 15.0       # full SNR penalty this far under the warn
-SNR_MIN_FACTOR = 0.5
 AGE_FRESH_DAYS = 90.0    # younger than this: no cost
 AGE_STALE_DAYS = 730.0   # this old or older: the full age penalty
 AGE_MIN_FACTOR = 0.8
 FIT_COVER_MIN_FACTOR = 0.5
+
+
+def noise_of(margin_db):
+    """The error a curve carries at a given margin over its own
+    floor, in dB: what a noise that many decibels down does to the
+    reading where it adds in phase -- 2.4 dB at 10, 0.8 at 20, 0.27
+    at 30. Not a threshold: the arithmetic of two signals summing."""
+    return 20.0 * math.log10(1.0 + 10.0 ** (-float(margin_db) / 20.0))
 
 
 def _linear_factor(x, good, bad, floor):
@@ -132,7 +138,7 @@ def assess(prof, now=None, thresh=ms.SPREAD_MAX_DB):
     Returns {"score", "band", "spread_max_db", "reasons",
     "newest_utc", "channels"}; channels maps a key to its own
     {"score", "band", "coverage", "n_takes", "n_clean", "n_flagged",
-    "n_clipped", "spread_median_db", "snr_min_db", "age_days",
+    "n_clipped", "spread_median_db", "margin_min_db", "age_days",
     "reasons"}. `band` is None when the statistics cannot certify
     one (fewer than two takes, or the spread bound never holds a
     1/6-octave run inside the coverage). A canvas that cannot even
@@ -212,15 +218,36 @@ def assess(prof, now=None, thresh=ms.SPREAD_MAX_DB):
         if f_spread < 1.0:
             reasons.append("median in-band spread %.2f dB" % med)
 
-        known = [t.get("snr_db") for t in ch_takes
-                 if t.get("snr_db") is not None]
-        snr_min = min(known) if known else None
-        f_snr = _linear_factor(snr_min, mc.SNR_WARN_DB,
-                               mc.SNR_WARN_DB - SNR_SPAN_DB,
-                               SNR_MIN_FACTOR)
-        if f_snr < 1.0:
-            reasons.append("worst take SNR %.1f dB (warn at %g)"
-                           % (snr_min, mc.SNR_WARN_DB))
+        # NOISE, READ WHERE THE CURVE IS READ. The penalty was linear
+        # in the worst take's broadband SNR under a warn line, three
+        # constants of ours, and it charged his NUX and iLoud a fifth
+        # of their trust for the room's rumble at 20 Hz and the mic's
+        # hiss above 10 kHz -- both outside the band the fit trusts.
+        # The worst take's median margin over its own floor says what
+        # its curve is worth, and noise_of says what that costs the
+        # reading; the share of the fit's own tolerance that costs is
+        # the penalty. No constant but the one the fit already lives
+        # by. A take with no floor of its own is not read here.
+        margins = []
+        for t in ch_takes:
+            floor, mag = t.get("thd_noise_db"), t.get("mag_db_uncal")
+            if not floor or not mag:
+                continue
+            marg = level_run.margin_of({"mag_db": mag, "floor_db": floor},
+                                       len(mag))
+            good = marg[np.isfinite(marg)]
+            if good.size:
+                margins.append(float(np.median(good)))
+        margin_min = min(margins) if margins else None
+        f_noise = 1.0
+        if margin_min is not None:
+            noise = noise_of(margin_min)
+            f_noise = max(0.0, 1.0 - noise / float(thresh))
+            if int(round(base * f_noise)) < int(round(base)):
+                reasons.append(
+                    "worst take stands %.0f dB over its floor: "
+                    "\u00b1%.2f dB of noise against the fit's %g"
+                    % (margin_min, noise, thresh))
 
         age, newest = _newest(ch_takes, now)
         if newest is not None and (newest_all is None
@@ -237,7 +264,7 @@ def assess(prof, now=None, thresh=ms.SPREAD_MAX_DB):
                            "controlled band"
                            % (fitp.get("f_lo"), fitp.get("f_hi")))
 
-        score = int(round(base * f_spread * f_snr * f_age * f_fit))
+        score = int(round(base * f_spread * f_noise * f_age * f_fit))
         channels[key] = {
             "score": max(0, min(100, score)), "band": band,
             "coverage": ((cov_lo, cov_hi)
@@ -247,8 +274,8 @@ def assess(prof, now=None, thresh=ms.SPREAD_MAX_DB):
             "n_clipped": n_clip,
             "spread_median_db": (round(med, 2)
                                  if med is not None else None),
-            "snr_min_db": (round(snr_min, 1)
-                           if snr_min is not None else None),
+            "margin_min_db": (round(margin_min, 1)
+                              if margin_min is not None else None),
             "age_days": round(age, 1) if age is not None else None,
             "reasons": reasons,
         }
