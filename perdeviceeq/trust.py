@@ -61,7 +61,9 @@ def _grade(t):
         clipped=t.get("clipped"),
         peak_dbfs=(t.get("peak_dbfs")
                    if t.get("peak_dbfs") is not None else -200.0),
-        snr_db=t.get("snr_db")))
+        snr_db=t.get("snr_db"),
+        mag_db=t.get("mag_db_uncal"),
+        thd_noise_db=t.get("thd_noise_db")))
 
 
 def _coverage(takes, sessions):

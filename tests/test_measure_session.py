@@ -211,7 +211,8 @@ def test_take_quality_thresholds():
         _q_rec(peak_dbfs=ms.HOT_DBFS + 0.5)) == ms.TAKE_FLAGGED
     assert ms.take_quality(
         _q_rec(peak_dbfs=ms.HOT_DBFS - 0.5)) == ms.TAKE_CLEAN
-    # low SNR is flagged
+    # low SNR is flagged -- by the broadband number, for a take that
+    # carries no floor of its own
     assert ms.take_quality(
         _q_rec(snr_db=mc.SNR_WARN_DB - 1.0)) == ms.TAKE_FLAGGED
     assert ms.take_quality(_q_rec(snr_db=mc.SNR_WARN_DB)) == ms.TAKE_CLEAN
@@ -956,3 +957,36 @@ def test_a_take_in_another_state_of_the_device_is_named():
     silent = _take_rec(4, shape + 30.0, snr=None)
     silent.peak_dbfs = -240.0
     assert ms.odd_takes(takes + [silent]) == odd
+
+
+def test_low_snr_is_read_per_bin_where_the_take_carries_its_floor():
+    """His NUX in a room: takes at the rig's linear level read 35 to
+    41 dB of broadband SNR against a warn line of 40 and were flagged,
+    none counted, the correction refused -- while their curves stood
+    33 to 64 dB over their own floor from 40 Hz to 5 kHz. The number
+    was the room's rumble at 20 Hz and the mic's hiss above 10 kHz,
+    which the fit cuts by the spread anyway. A take that carries its
+    floor is judged where its curve is read: the median of its margin
+    over the floor against the walk's own heard bar."""
+    from perdeviceeq import level_run
+    n = 958
+    mag = np.full(n, -30.0)
+    # the floor is the harmonic measurement's own, re the response:
+    # fifty under it across the band, five under it below 30 Hz (the
+    # room), eight under it above 15 kHz (the mic)
+    floor = np.full(n, -50.0)
+    floor[:40] = -5.0
+    floor[-60:] = -8.0
+    rec = ms.TakeRecord(id=1, channel=0, freq_hz=None, mag_db=mag,
+                        delay_ms=0.0, snr_db=36.0, peak_dbfs=-17.0,
+                        clipped=0, repaired=0, wav_path="x",
+                        thd_noise_db=floor)
+    assert ms.take_quality(rec) == ms.TAKE_CLEAN
+    # and a curve that sits in its own noise across the band is
+    # flagged whatever the broadband number says
+    drowned = ms.TakeRecord(id=2, channel=0, freq_hz=None, mag_db=mag,
+                            delay_ms=0.0, snr_db=50.0, peak_dbfs=-17.0,
+                            clipped=0, repaired=0, wav_path="x",
+                            thd_noise_db=np.full(n, -5.0))
+    assert ms.take_quality(drowned) == ms.TAKE_FLAGGED
+    assert level_run.HEARD_OVER_NOISE_DB < 50.0

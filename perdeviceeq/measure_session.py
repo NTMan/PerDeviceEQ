@@ -310,17 +310,48 @@ def take_quality(rec):
     one", and this function simply never asked it. It asks now, first,
     before anything else can call the silence fine.
 
-    Then: clipping is unusable (red); a hot peak (>= HOT_DBFS) or low
-    SNR (< SNR_WARN_DB) is usable-but-flagged (amber) and does not
-    count; everything else is clean (green). A repaired single-sample
-    glitch stays clean -- the take is unaffected by an interpolated
-    sample."""
+    Then: clipping is unusable (red); a hot peak (>= HOT_DBFS) or a
+    curve not heard over its own floor is usable-but-flagged (amber)
+    and does not count; everything else is clean (green). A repaired
+    single-sample glitch stays clean -- the take is unaffected by an
+    interpolated sample.
+
+    LOW SNR IS READ WHERE THE CURVE IS READ, per bin. One broadband
+    number -- SNR_WARN_DB against signal over noise in the time
+    domain -- called his NUX's takes flagged at 37 dB while their
+    curves stood 33 to 64 dB over their own floor from 40 Hz to
+    5 kHz: the number was the room's rumble at 20 Hz and the mic's
+    hiss above 10 kHz, both of which the fit already cuts by the
+    spread. The walk learnt this first -- "one number for the whole
+    band called a base deaf across its middle" -- and its floor went
+    per bin; this was the last judge reading one number. A take is
+    flagged when the median of its margin over its own floor is
+    under the walk's heard bar; the noise it does carry lives in the
+    spread the fit trusts by, and in the trust score, which keeps
+    its penalty. A take with no floor of its own is judged by the
+    broadband number as before.
+    """
     if not testified(rec):
         return TAKE_SILENT
     if rec.clipped:
         return TAKE_CLIPPED
     if rec.peak_dbfs >= HOT_DBFS:
         return TAKE_FLAGGED
+    floor = getattr(rec, "thd_noise_db", None)
+    mag = getattr(rec, "mag_db", None)
+    if floor is not None and mag is not None \
+            and len(floor) and len(mag):
+        n = min(len(mag), len(floor))
+        marg = level_run.margin_of(
+            {"mag_db": [None if not np.isfinite(v) else float(v)
+                        for v in np.asarray(mag, float)[:n]],
+             "floor_db": [None if not np.isfinite(v) else float(v)
+                          for v in np.asarray(floor, float)[:n]]}, n)
+        heard = marg[np.isfinite(marg)]
+        if heard.size and float(np.median(heard)) \
+                < level_run.HEARD_OVER_NOISE_DB:
+            return TAKE_FLAGGED
+        return TAKE_CLEAN
     if rec.snr_db is not None and rec.snr_db < mc.SNR_WARN_DB:
         return TAKE_FLAGGED
     return TAKE_CLEAN
