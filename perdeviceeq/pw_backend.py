@@ -1553,8 +1553,19 @@ class PipeWireBackend(AudioBackend):
         # samples are exactly three frames, so the rotation is zero and
         # nobody noticed for as long as this code has existed. The
         # measurement capture in this same file always passed it.
+        # stream.monitor: the tap WATCHES, it does not consume. Without
+        # the mark PipeWire counts it as an ordinary reader of the sink
+        # and will not tear the device out from under it: with the
+        # window open a Bluetooth headset could not be put into
+        # Handsfree at all, 0 of 10 attempts, while 10 of 10 succeeded
+        # with the meter off. It is the same mark GNOME's own level bar
+        # carries -- its "Peak detect" stream asks pulse for
+        # PA_STREAM_PEAK_DETECT, and module-protocol-pulse turns that
+        # into exactly this property. Marked, the same bare pw-record
+        # lets the profile through.
         cmd = ["pw-record", "--raw", "--target", str(sink),
                "-P", "{ stream.capture.sink = true,"
+                     " stream.monitor = true,"
                      " node.name = per-device-eq-meter,"
                      " node.dont-reconnect = true,"
                      " application.name = \"Per-Device EQ\" }",

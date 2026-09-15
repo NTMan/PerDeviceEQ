@@ -143,6 +143,9 @@ def test_monitor_capture_command(monkeypatch):
     assert c[0] == "pw-record" and c[-1] == "-"
     assert any("stream.capture.sink = true" in a for a in c)
     assert any("per-device-eq-meter" in a for a in c)
+    # the tap must say it only watches, or the device cannot be taken
+    # away from under it and a Bluetooth profile switch never happens
+    assert any("stream.monitor = true" in a for a in c)
     assert c[c.index("--target") + 1] == "bluez_output.X.1"
     assert c[c.index("--channels") + 1] == "2"
     assert c[c.index("--format") + 1] == "f32"
