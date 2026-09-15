@@ -158,6 +158,7 @@ class EqWindow(Adw.ApplicationWindow):
         # tier-2 live meter (engine created lazily: scipy is optional)
         self._meter = None
         self._meter_dev = None
+        self._dev_seen = None
         self._meter_state = None
         self._meter_areas = {}
         self._bal = []
@@ -1811,6 +1812,7 @@ class EqWindow(Adw.ApplicationWindow):
             self._on_sink_pick(hit["node"], hit["desc"])
         self._maybe_follow(st.default_sink)
         self._reconcile_node()
+        self._follow_device()
         # the meter heartbeat: a tap that died with its pipe
         # (node.dont-reconnect) re-arms on the next poll even
         # when nothing else changed -- a profile fork can die
@@ -1818,6 +1820,37 @@ class EqWindow(Adw.ApplicationWindow):
         # gone machinery
         self._update_meter()
         return False
+
+    def _follow_device(self):
+        """A hole change is a DEVICE change, so the window rebinds.
+
+        Nothing reloads a profile when a headset goes from Headphones
+        to Handsfree: the node keeps its name, and the one place that
+        reads a device's channels is a profile load. The window went on
+        holding what it was opened with -- one tab and one meter row
+        after a switch to Handsfree, and after switching back the right
+        channel had no tab to carry its correction.
+
+        Re-reading the width alone would be worse than doing nothing:
+        the tabs would follow while current_pid stayed put, and the
+        next save would bind the Headphones profile to the Handsfree
+        device. What the hole change means is that this is another
+        device, so the answer is the one a device change already has --
+        ask the binding what belongs here and load that.
+
+        The heartbeat already hears the switch: a route's `active` flag
+        is part of the population signature. It simply had nothing to
+        do with it.
+        """
+        if not (self.live and self.node):
+            return
+        key = self._dev()
+        if key == self._dev_seen:
+            return
+        if self._dev_seen is None:        # first beat: adopt, do not reload
+            self._dev_seen = key
+            return
+        self._load_profile(self.store.binding_for(key) or CLEAN_ID)
 
     def _dev(self):
         """THE KEY EVERYTHING IS STORED AND PUBLISHED UNDER: the node
@@ -2234,6 +2267,9 @@ class EqWindow(Adw.ApplicationWindow):
                             if s.get("name") == self.node), [])
             pch = list(p.get("ch_keys") or list((p.get("channels") or {}).keys()))
             self.sink_keys = dev or pch or ["FL", "FR"]
+            # what this load was made FOR: the heartbeat compares
+            # against it and rebinds when the hole moves
+            self._dev_seen = self._dev()
             self._sync_map(widen=False)
 
             # the ride belongs to the app, not to the earphone: mode and
