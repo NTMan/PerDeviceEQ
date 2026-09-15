@@ -2153,7 +2153,13 @@ class EqWindow(Adw.ApplicationWindow):
                                              self._on_tab_pick)
         self._dress_tabs()
         self._dress_pair_controls()
-        self.channel_row.set_visible(len(self.sink_keys) > 1)
+        # SHOWN EVEN FOR ONE CHANNEL. Hiding the row took the x and
+        # the + away with it, and on a one-channel sink -- a
+        # Bluetooth headset in Handsfree -- those are the only way
+        # to point the tab at a different channel of the profile.
+        # The resolver picks the first one; a hand had no way to
+        # disagree.
+        self.channel_row.set_visible(bool(self.sink_keys))
         self._rebuild_meter_rows(show_meters)
 
     def _rebuild_meter_rows(self, show):
@@ -2483,7 +2489,7 @@ class EqWindow(Adw.ApplicationWindow):
         hand the pair back on the next reconcile. Add EQ sink is the way
         back."""
         ch = self.cur_ch
-        if not (ch and self.node) or len(self.ch_keys) <= 1:
+        if not (ch and self.node):
             return
         self.slots.pop(ch, None)
         getattr(self, "_tab_src", {}).pop(ch, None)
@@ -2524,11 +2530,18 @@ class EqWindow(Adw.ApplicationWindow):
             "Add EQ sink: play a profile channel on an output channel"
             if free else "Every output channel already has a tab")
         rm = self._pair_del
-        rm.set_sensitive(len(self.ch_keys) > 1 and bool(self.cur_ch))
+        # THE LAST TAB GOES LIKE ANY OTHER. It used to stay, on the
+        # doctrine that a profile feeding nothing is what No EQ is
+        # for -- which does not survive the question his field asked:
+        # eight channels of an M62 may hang with no correction and
+        # nobody calls it wrong, so the single channel of a headset is
+        # not a special case. Nothing is destroyed either way; the
+        # bands stay in the profile's channel and only the pairing is
+        # undone.
+        rm.set_sensitive(bool(self.cur_ch))
         rm.set_tooltip_text(
-            ("Remove the %s tab: that output channel plays dry"
-             % self.cur_ch) if len(self.ch_keys) > 1 else
-            "The last tab stays -- choose No EQ to play dry")
+            "Remove the %s tab: that output channel plays dry"
+            % self.cur_ch)
 
     def _dress_tabs(self):
         """Redraw the row: one tab per SINK channel, with the profile

@@ -232,3 +232,18 @@ def test_a_target_is_removable_only_while_it_is_empty():
     assert not empty(["take"], [])
     assert not empty([], [{"f": 100}])
     assert not empty(["take"], [{"f": 100}])
+
+
+def test_a_one_channel_sink_can_be_pointed_at_another_target():
+    """The resolver picks the FIRST profile channel for a one-channel
+    sink -- a headset in Handsfree gets FL and nothing said FR was
+    wanted. Re-pointing is unpair then pair, so both doors have to
+    exist on a sink that wide."""
+    from perdeviceeq import eq
+    # one hole, a profile with two sides: the guess is the first
+    assert eq.resolve_slots(["FL", "FR"], ["MONO"]) == ["FL"]
+    # a hand's answer overrides it, and that is a pin -- the same
+    # mechanism a wider sink uses, with no special case for width
+    assert eq.paired_tabs({"MONO": "FR"}, ["MONO"]) == ["MONO"]
+    # and unpaired, the sink keeps its channel with no tab on it
+    assert eq.paired_tabs({"MONO": None}, ["MONO"]) == []
