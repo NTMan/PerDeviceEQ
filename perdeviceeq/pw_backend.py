@@ -182,6 +182,38 @@ def active_port(routes):
                  if r.get("active")), None)
 
 
+def device_key(node, direction="Output", dump=None):
+    """WHAT THIS PROGRAM CALLS ONE DEVICE: a node and the hole in use.
+
+    A node name alone is not an identity. A Bluetooth headset answers
+    to one name in Headphones and in Handsfree, a CM106 answers to one
+    name on its microphone jack and its line jack, and a card with
+    several outputs answers to one name on all of them -- so a setting
+    stored under the name is applied to holes a hand never chose it
+    for. The desktop has never had this problem because it lists the
+    HOLE: "Handsfree - JBL Tour Pro 3" is a port and a device, and its
+    Configuration row is a separate fact underneath.
+
+    The key carries the port's own NAME (`headset-hf-output`), not its
+    description. Descriptions are translated and rewritten; names are
+    what the card calls its own wiring.
+
+    A node with no card behind it -- a null sink, a loopback, anything
+    virtual -- keys as its bare name. It has no holes to choose
+    between, so a suffix would say nothing and would have to be
+    migrated the day one appeared.
+
+    `direction` is "Output" for a sink and "Input" for a source, since
+    a card's routes are listed per direction and a node lives in one.
+    """
+    if not node:
+        return node
+    port = next((r.get("name")
+                 for r in _card_ports(node, direction, dump)
+                 if r.get("active")), None)
+    return "%s#%s" % (node, port) if port else str(node)
+
+
 def door_port(route):
     """The port's own name, without the card after it.
 

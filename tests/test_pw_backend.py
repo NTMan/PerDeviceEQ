@@ -951,3 +951,71 @@ def test_an_unmuted_sink_is_not_touched(monkeypatch):
     b.moratorium_begin("test_sink", None, mute_others=False)
     b.moratorium_end()
     assert not any(c[:2] == ["wpctl", "set-mute"] for c in calls)
+
+
+def _bt_card_dump():
+    """A Bluetooth headset: ONE sink node, two output holes, and the
+    profile decides which is in use. Headphones is playing."""
+    return [
+        {"id": 60, "type": "PipeWire:Interface:Node",
+         "info": {"props": {
+             "node.name": "bluez_output.24_C4_06_42_AE_2A.1",
+             "media.class": "Audio/Sink",
+             "device.id": 70, "card.profile.device": 1}}},
+        {"id": 70, "type": "PipeWire:Interface:Device",
+         "info": {"params": {
+             "EnumRoute": [
+                 {"index": 1, "direction": "Output",
+                  "name": "headset-output", "description": "Headphones",
+                  "devices": [1], "available": "yes"},
+                 {"index": 2, "direction": "Output",
+                  "name": "headset-hf-output", "description": "Handsfree",
+                  "devices": [1], "available": "yes"}],
+             "Route": [
+                 {"index": 1, "device": 1, "direction": "Output",
+                  "name": "headset-output"}]}}},
+    ]
+
+
+def test_one_device_is_a_node_and_the_hole_in_use():
+    """The identity the whole program keys on. A node name alone is
+    shared by holes a hand never chose together."""
+    d = _card_dump()
+    node = "alsa_input.usb-0d8c-00.analog-stereo"
+    assert pwb.device_key(node, "Input", d) == node + "#linein"
+    bt = _bt_card_dump()
+    sink = "bluez_output.24_C4_06_42_AE_2A.1"
+    assert pwb.device_key(sink, "Output", bt) == sink + "#headset-output"
+
+
+def test_the_key_carries_the_port_name_not_its_description():
+    """Descriptions are translated and rewritten; port names are what
+    the card calls its own wiring."""
+    d = _card_dump()
+    node = "alsa_input.usb-0d8c-00.analog-stereo"
+    assert pwb.device_key(node, "Input", d).endswith("#linein")
+    assert "Line In" not in pwb.device_key(node, "Input", d)
+
+
+def test_changing_the_hole_changes_the_device():
+    """The whole reason for the key: the node name does not move when
+    a headset goes from Headphones to Handsfree, and the device has."""
+    d = _bt_card_dump()
+    sink = "bluez_output.24_C4_06_42_AE_2A.1"
+    before = pwb.device_key(sink, "Output", d)
+    dev = [o for o in d if o["id"] == 70][0]
+    dev["info"]["params"]["Route"] = [
+        {"index": 2, "device": 1, "direction": "Output",
+         "name": "headset-hf-output"}]
+    after = pwb.device_key(sink, "Output", d)
+    assert before == sink + "#headset-output"
+    assert after == sink + "#headset-hf-output"
+    assert before != after
+
+
+def test_a_node_with_no_card_keys_as_its_bare_name():
+    """A null sink has no holes to choose between, so a suffix would
+    say nothing and would need migrating the day one appeared."""
+    d = _card_dump()
+    assert pwb.device_key("virtual-thing", "Input", d) == "virtual-thing"
+    assert pwb.device_key("no-such-node", "Output", d) == "no-such-node"
