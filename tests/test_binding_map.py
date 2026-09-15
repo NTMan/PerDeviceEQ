@@ -430,3 +430,34 @@ def test_the_map_is_kept_whichever_order_the_load_takes(tmp_path,
     st.reconcile_map("card#b", ["FL", "FR"], ["FL", "FR"])
     assert st.map_for("card#a") == st.map_for("card#b")
     assert st.map_for("card#a") == {"FL": "FL", "FR": "FR"}
+
+
+def test_an_unreadable_state_file_is_kept_not_erased(tmp_path, capsys):
+    """A stray comma in bindings.json used to cost every binding on the
+    machine, silently: the reader answered an unparsable file the way it
+    answered a missing one, and the next save wrote nothing over it."""
+    from perdeviceeq.config import read_state
+    p = tmp_path / "bindings.json"
+    p.write_text('{"a": {"map": {"FL": "FL",}}}', encoding="utf-8")
+    assert read_state(str(p), {}) == {}
+    assert not p.exists()                       # moved aside
+    kept = tmp_path / "bindings.json.bad"
+    assert kept.exists()
+    assert "FL" in kept.read_text(encoding="utf-8")
+    assert "not valid JSON" in capsys.readouterr().err
+
+
+def test_a_missing_state_file_is_not_an_error(tmp_path, capsys):
+    """Starting fresh is normal and says nothing."""
+    from perdeviceeq.config import read_state
+    assert read_state(str(tmp_path / "nope.json"), {}) == {}
+    assert capsys.readouterr().err == ""
+    assert not (tmp_path / "nope.json.bad").exists()
+
+
+def test_a_good_state_file_is_read_and_left_alone(tmp_path):
+    from perdeviceeq.config import read_state
+    p = tmp_path / "prefs.json"
+    p.write_text('{"k": 1}', encoding="utf-8")
+    assert read_state(str(p), {}) == {"k": 1}
+    assert p.exists()

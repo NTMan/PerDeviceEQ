@@ -44,7 +44,7 @@ import numpy as np
 from .picker import NodeMenu
 from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
                      load_ui_state, save_ui_state,
-                     UI_FILE_CANDIDATES)
+                     UI_FILE_CANDIDATES, read_state)
 from . import level_strip
 from .peq_view import CollapsibleCard, PeqView
 from .preferences import PreferenceLayers
@@ -91,12 +91,8 @@ def _fmt_hz(f):
 
 def _load_favorites():
     """Read the pinned built-in profile ids from FAVORITES_FILE."""
-    try:
-        with open(FAVORITES_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return list(data) if isinstance(data, list) else []
-    except Exception:
-        return []
+    data = read_state(FAVORITES_FILE, [])
+    return list(data) if isinstance(data, list) else []
 
 
 def _save_favorites(ids):

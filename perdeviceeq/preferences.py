@@ -20,7 +20,7 @@ import json
 import os
 import uuid
 
-from .config import PREF_LAYERS_FILE
+from .config import PREF_LAYERS_FILE, read_state
 
 
 def _sane_layer(d):
@@ -41,11 +41,7 @@ class PreferenceLayers:
         self.reload()
 
     def reload(self):
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            data = {}
+        data = read_state(self.path, {})
         raw = data.get("layers")
         self.layers = [_sane_layer(d) for d in raw
                        if isinstance(d, dict)] if isinstance(

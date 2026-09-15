@@ -21,7 +21,7 @@ import os
 import re
 import uuid
 
-from .config import MIC_PROFILES_FILE, MEASURE_STATE_FILE
+from .config import MIC_PROFILES_FILE, MEASURE_STATE_FILE, read_state
 
 
 def _new_id():
@@ -214,11 +214,7 @@ class MicProfileStore:
 
     def reload(self):
         self.profiles = {}
-        try:
-            with open(MIC_PROFILES_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            data = {}
+        data = read_state(MIC_PROFILES_FILE, {})
         if isinstance(data, dict):
             for pid, body in data.items():
                 if isinstance(body, dict):
@@ -381,11 +377,7 @@ class MeasureMemory:
         self.reload()
 
     def reload(self):
-        try:
-            with open(MEASURE_STATE_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            data = {}
+        data = read_state(MEASURE_STATE_FILE, {})
         self.state = data if isinstance(data, dict) else {}
 
     def for_sink(self, sink):

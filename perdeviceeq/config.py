@@ -7,6 +7,7 @@ GUI) without pulling in GTK.
 
 import json
 import os
+import sys
 
 FS = 48000.0
 FMIN, FMAX = 20.0, 20000.0   # audible range: FR plot grid + headroom curve scan
@@ -189,16 +190,52 @@ HOOK_CONF = (
 ) % {"meta": METADATA_NAME, "script": WP_SCRIPT_NAME}
 
 
+def read_state(path, default):
+    """READ A STATE FILE, AND NEVER LET A BAD ONE BE ERASED BY SILENCE.
+
+    Every file this program keeps -- bindings, profiles, preferences,
+    microphone rigs, the window's furniture -- used to answer an
+    unparsable file the same way it answered a missing one: with
+    nothing. Nothing then got saved back over it, so a single stray
+    comma in bindings.json cost every binding on the machine without
+    one word on the terminal. The file itself already says what the
+    rule should have been, about a row in an old shape: losing a
+    binding without a word is the one outcome not worth the tidiness.
+
+    A file that cannot be parsed is moved aside to <path>.bad and
+    named on stderr. The program then starts empty, as it did before,
+    but the hand's work is still on disk and a typo is a minute's
+    repair rather than an evening's.
+
+    A missing file is not an error and says nothing.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+    except ValueError:
+        bad = "%s.bad" % path
+        try:
+            os.replace(path, bad)
+            where = bad
+        except OSError:
+            where = path            # could not move it; it still stands
+        print("per-device-eq: %s is not valid JSON -- kept as %s, "
+              "starting empty" % (path, where), file=sys.stderr)
+        return default
+    except OSError as e:
+        print("per-device-eq: cannot read %s (%s), starting empty"
+              % (path, e), file=sys.stderr)
+        return default
+
+
 def load_ui_state():
     """App-level UI state (window furniture, and the preamp ride). Read by
     the window and by the hook path, which needs the preamp without a
     window to ask."""
-    try:
-        with open(UI_STATE_FILE, encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    d = read_state(UI_STATE_FILE, {})
+    return d if isinstance(d, dict) else {}
 
 
 def save_ui_state(d):

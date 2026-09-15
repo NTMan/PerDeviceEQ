@@ -20,7 +20,7 @@ import os, sys, json, uuid
 
 from .config import (SYS_PROFILE_DIRS, USER_PROFILES_DIR, BINDINGS_FILE,
                      CONFIG_DIR, CLEAN_ID, SCHEMA_VERSION, V3_BLOCKS,
-                     load_ui_state)
+                     load_ui_state, read_state)
 from .eq import (profile_graph, profile_has_content,
                  resolve_slots, auto_preamp_db)
 
@@ -173,10 +173,8 @@ class ProfileStore:
             if not fn.endswith(".json"):
                 continue
             path = os.path.join(d, fn)
-            try:
-                with open(path, encoding="utf-8") as f:
-                    p = json.load(f)
-            except Exception:
+            p = read_state(path, None)
+            if p is None:
                 continue
             if not isinstance(p, dict):
                 continue
@@ -306,11 +304,7 @@ class ProfileStore:
         self.maps and self.pins are node -> {sink channel: ...}.
         """
         binds, maps, pins = {}, {}, {}
-        try:
-            with open(BINDINGS_FILE, encoding="utf-8") as f:
-                b = json.load(f)
-        except Exception:
-            b = {}
+        b = read_state(BINDINGS_FILE, {})
         if isinstance(b, dict):
             for node, v in b.items():
                 if not isinstance(v, dict):
