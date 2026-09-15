@@ -439,7 +439,10 @@ def commit_take(store, pid, session, ch_index, key, take_id,
                     or ident.get("description")
                     or ident.get("name")),
            "serial": new_serial,
-           "node_match": ident.get("name"),
+           # the node AND the jack: a session built without resolving
+           # has only the bare name, and that still answers for any
+           # jack of that card until the next save writes it in full
+           "node_match": ident.get("key") or ident.get("name"),
            "route": ident.get("route"),
            "channels": session.cfg.channels}
     m = prof.get("measurement")

@@ -211,7 +211,10 @@ def key_from_routes(node, routes):
 def live_device_key(node):
     """The device key for a sink, off the heartbeat's own listing.
 
-    THE ONE DOOR every window uses. Both windows hold the same
+    THE ONE DOOR every window uses, outputs and inputs alike: a
+    microphone jack and a headphone jack are the same kind of fact,
+    and a rig measured through Line In is not the one measured
+    through the Microphone socket beside it. Both windows hold the same
     observed listing -- it is one poll feeding all of them -- and each
     sink in it carries its ports already, so going to the server for
     a fact the program is already holding would be a subprocess on the
@@ -220,9 +223,13 @@ def live_device_key(node):
     to have one, and a bound profile stopped being found the moment
     the output was changed.
     """
-    sinks = getattr(backend(), "sinks", None) or []
-    s = next((s for s in sinks if s.get("name") == node), None)
-    return key_from_routes(node, (s or {}).get("routes"))
+    b = backend()
+    for listing in (getattr(b, "sinks", None) or [],
+                    getattr(b, "sources", None) or []):
+        s = next((s for s in listing if s.get("name") == node), None)
+        if s is not None:
+            return key_from_routes(node, s.get("routes"))
+    return key_from_routes(node, None)
 
 
 def device_key(node, direction="Output", dump=None):

@@ -1080,3 +1080,19 @@ def test_a_node_names_the_hole_it_is_playing_through():
     # why `mine` cannot simply be dropped for `active`
     idle = [{"description": "Microphone", "mine": True, "active": False}]
     assert pwb.own_port(idle) == "Microphone"
+
+
+def test_the_one_door_answers_for_inputs_too(monkeypatch):
+    """A microphone jack and a headphone jack are the same kind of
+    fact. A CM106 answers to one node name on its Microphone socket
+    and its Line In socket, and a rig measured through one is not the
+    rig measured through the other."""
+    class _FakeBackend:
+        sinks = [{"name": "some.sink", "routes": []}]
+        sources = [{"name": "cm106.source",
+                    "routes": [{"name": "mic", "active": False},
+                               {"name": "linein", "active": True}]}]
+    monkeypatch.setattr(pwb, "backend", lambda: _FakeBackend())
+    assert pwb.live_device_key("cm106.source") == "cm106.source#linein"
+    assert pwb.live_device_key("some.sink") == "some.sink"
+    assert pwb.live_device_key("unknown") == "unknown"

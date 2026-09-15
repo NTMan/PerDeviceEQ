@@ -3065,7 +3065,7 @@ class MeasureWindow(Adw.Window):
         if not src:
             return
         self._recompute_mic()
-        prof = self.mic_store.match(src["name"])
+        prof = self.mic_store.match(pw_backend.live_device_key(src["name"]))
         self.cal = {}
         if prof:
             for i in range(self.mic_ch):
@@ -3217,7 +3217,7 @@ class MeasureWindow(Adw.Window):
         nothing said twice.
         """
         src = self._selected_source()
-        prof = self.mic_store.match(src["name"]) if src else None
+        prof = self.mic_store.match(pw_backend.live_device_key(src["name"])) if src else None
         if not prof:
             return []
         return [c for c in self.mic_store.columns_of(prof["id"])
@@ -3347,7 +3347,7 @@ class MeasureWindow(Adw.Window):
 
     def _stored_takes(self):
         src = self._selected_source()
-        prof = self.mic_store.match(src["name"]) if src else None
+        prof = self.mic_store.match(pw_backend.live_device_key(src["name"])) if src else None
         return self.mic_store.takes_of(prof["id"]) if prof else {}
 
 
@@ -4610,7 +4610,7 @@ class MeasureWindow(Adw.Window):
         ladder is a CHECK rather than a first acquaintance."""
         if not src or not src.get("name"):
             return
-        prof = self.mic_store.match(src["name"])
+        prof = self.mic_store.match(pw_backend.live_device_key(src["name"]))
         if not prof:
             return
         route = next((r.get("name") for r in src.get("routes") or []
@@ -5682,7 +5682,7 @@ class MeasureWindow(Adw.Window):
             debug.mic_trace("persist skip core=%r"
                          % self.mic_picker.core.node)
             return
-        existing = self.mic_store.match(src["name"])
+        existing = self.mic_store.match(pw_backend.live_device_key(src["name"]))
         # an empty set means "still loading" from a handler and
         # "take it off" from a hand -- measure_prefs decides which,
         # and only a hand may empty the block
@@ -5724,7 +5724,7 @@ class MeasureWindow(Adw.Window):
         name = self.mic_picker.core.node
         if not name:
             return None
-        existing = self.mic_store.match(name)
+        existing = self.mic_store.match(pw_backend.live_device_key(name))
         return {"name": self.mic_picker.core.desc,
                 "serial": ((existing or {}).get("serial", "")
                            or measure_prefs.serial_from_cal(

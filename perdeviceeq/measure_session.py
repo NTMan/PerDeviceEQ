@@ -574,6 +574,14 @@ class MeasureSession:
         # ports, and a passport must not be ambiguous about it
         self.source_ident["route"] = pw_backend.active_input_route(
             self.source_ident["name"], dump)
+        # and the same fact as an IDENTITY, which is what a rig is
+        # stored under. A CM106 answers to one node name on its
+        # microphone socket and its line socket, so a coupler's
+        # calibration and its working point were handed to whatever
+        # was plugged in beside it. Taken off this dump, already in
+        # hand here.
+        self.source_ident["key"] = pw_backend.device_key(
+            self.source_ident["name"], "Input", dump)
         # the ports, not audio.position: a sweep is aimed by NAME
         # and the name has to be one the sink's ports answer to
         self.sink_layout = _aim_layout(self.sink_ident["name"], dump)
@@ -795,6 +803,14 @@ class MeasureSession:
         # ports, and a passport must not be ambiguous about it
         self.source_ident["route"] = pw_backend.active_input_route(
             self.source_ident["name"], dump)
+        # and the same fact as an IDENTITY, which is what a rig is
+        # stored under. A CM106 answers to one node name on its
+        # microphone socket and its line socket, so a coupler's
+        # calibration and its working point were handed to whatever
+        # was plugged in beside it. Taken off this dump, already in
+        # hand here.
+        self.source_ident["key"] = pw_backend.device_key(
+            self.source_ident["name"], "Input", dump)
         # what the card's input gain IS at this sweep -- the window
         # sets it before calling in, and the session only witnesses
         self._gain_now = pw_backend.gain_of_node(self.source)
