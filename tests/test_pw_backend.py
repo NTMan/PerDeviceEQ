@@ -627,8 +627,13 @@ def test_an_output_behind_another_profile_gets_a_door():
     # a door names its CARD too: several cards have a port called
     # Speakers, and a row that says only "Speakers" is a coin toss
     assert doors[0]["desc"] == "Playback 1/2 - Topping M62"
+    # and a LIVE row names its own port and card the same way, so the
+    # list speaks one vocabulary: the M62's Direct port is described
+    # "Direct M62", which joined with the card reads a little
+    # repetitive and is still the right rule -- the port's description
+    # is the card's to choose, not ours to second-guess
     real = [r for r in rows if r["node"]]
-    assert [r["desc"] for r in real] == ["Direct M62"]
+    assert [r["desc"] for r in real] == ["Direct M62 - Topping M62"]
 
 
 def test_live_siblings_of_one_profile_are_not_doors():
@@ -689,7 +694,7 @@ def test_the_switch_says_what_to_watch_for():
     after = pw.list_playback_entries_from(
         pw.list_sinks(_m62_with_outputs(2), default=""))
     hit = pw.find_port_entry(after, want)
-    assert hit is not None and hit["desc"] == "Direct M62"
+    assert hit is not None and hit["desc"] == "Direct M62 - Topping M62"
 
 
 def test_a_sweep_is_aimed_with_the_port_names():
@@ -1033,3 +1038,45 @@ def test_the_window_and_the_hook_key_the_same_device():
     assert fetched == held == sink + "#headset-output"
     assert pwb.key_from_routes("null-sink", []) == "null-sink"
     assert pwb.key_from_routes("null-sink", None) == "null-sink"
+
+
+def test_a_live_row_reads_like_the_door_beside_it():
+    """One card, one vocabulary. A live sink used to wear its NODE's
+    description while the unreachable ports beside it wore their
+    port's, so the chooser answered in two languages and the header
+    named a card rather than a device."""
+    live = [{"name": "bluez_output.24_C4_06_42_AE_2A.1",
+             "desc": "JBL Tour Pro 3",
+             "port": "Headphones", "card_desc": "JBL Tour Pro 3",
+             "card": 70,
+             "routes": [{"device_id": 70, "index": 2,
+                         "name": "headset-hf-output",
+                         "description": "Handsfree",
+                         "card": "JBL Tour Pro 3",
+                         "reachable": False, "available": True}]}]
+    rows = pwb.list_playback_entries_from(live)
+    assert rows[0]["desc"] == "Headphones - JBL Tour Pro 3"
+    assert rows[0]["node"] == "bluez_output.24_C4_06_42_AE_2A.1"
+    # the door beside it, in the same words
+    assert rows[1]["desc"] == "Handsfree - JBL Tour Pro 3"
+    assert rows[1]["node"] is None
+
+
+def test_a_node_with_no_card_keeps_its_own_description():
+    """A null sink has no hole to name."""
+    rows = pwb.list_playback_entries_from(
+        [{"name": "null-sink", "desc": "Loopback", "routes": []}])
+    assert rows[0]["desc"] == "Loopback"
+
+
+def test_a_node_names_the_hole_it_is_playing_through():
+    """One sink node, two holes under it: the answer is the one in
+    USE, not whichever comes first. A headset in Handsfree wore a
+    header saying Headphones until this."""
+    routes = [{"description": "Headphones", "mine": True, "active": False},
+              {"description": "Handsfree", "mine": True, "active": True}]
+    assert pwb.own_port(routes) == "Handsfree"
+    # and the CM106's idle node still names its own port, which is
+    # why `mine` cannot simply be dropped for `active`
+    idle = [{"description": "Microphone", "mine": True, "active": False}]
+    assert pwb.own_port(idle) == "Microphone"

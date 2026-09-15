@@ -136,16 +136,26 @@ def _door_desc(route):
 def own_port(routes):
     """The port THIS node speaks for, by description, or None.
 
-    `mine` rather than `active`, and the difference is a real card:
-    a CM106 exposes its Microphone and its Line Input as two nodes
-    over one capture device, so only one of them is ever the ACTIVE
-    route while both are somebody's own. Asked which port it is, the
-    idle one answered "none" and fell back to naming its profile.
-    The active one is the fallback here, for a card that marks no
-    port as anyone's.
+    THE ACTIVE ONE AMONG ITS OWN, in that order, and both halves are
+    a real card.
+
+    `mine` alone is not enough: a Bluetooth headset has one sink node
+    and TWO output holes under it, Headphones and Handsfree, and both
+    belong to that node. Answering with the first left a header
+    reading "Headphones" while the headset was plainly in Handsfree.
+
+    `active` alone is not enough either: a CM106 exposes its
+    Microphone and its Line Input as two nodes over one capture
+    device, so only one of them is ever the active route while both
+    are somebody's own. Asked which port it is, the idle one answered
+    "none" and fell back to naming its profile.
+
+    So: the active one among this node's own, then any of its own,
+    then the active one for a card that marks no port as anyone's.
     """
-    return (next((r["description"] for r in (routes or [])
-                  if r.get("mine")), None)
+    mine = [r for r in (routes or []) if r.get("mine")]
+    return (next((r["description"] for r in mine if r.get("active")), None)
+            or next((r["description"] for r in mine), None)
             or active_port(routes))
 
 
@@ -280,6 +290,17 @@ def list_playback_entries_from(sinks):
     for s in sinks or []:
         e = dict(s)
         e["node"] = s["name"]
+        # A LIVE ROW WEARS ITS HOLE TOO, so the list reads the one way
+        # all through: "Headphones - JBL Tour Pro 3" beside "Handsfree
+        # - JBL Tour Pro 3", which is what the desktop shows and what
+        # this program now keys on. Until here a live sink wore its
+        # NODE's description while the doors beside it wore their
+        # port's, so one card answered in two vocabularies and the
+        # header said only "JBL Tour Pro 3" -- true of two devices at
+        # once. A node with no card keeps its own description: it has
+        # no hole to name.
+        if s.get("port") and s.get("card_desc"):
+            e["desc"] = "%s - %s" % (s["port"], s["card_desc"])
         out.append(e)
         for r in (s.get("routes") or []):
             if r.get("reachable", True) or not _offerable(r):
