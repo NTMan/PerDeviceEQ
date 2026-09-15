@@ -182,6 +182,39 @@ def active_port(routes):
                  if r.get("active")), None)
 
 
+def key_from_routes(node, routes):
+    """device_key's rule, for a caller that already holds the routes.
+
+    The window reads a fresh listing every three seconds and each sink
+    in it carries its ports, so asking the server again -- a subprocess
+    on the main loop -- would be paying twice for one fact. Same rule,
+    one place: whoever has the routes gets the same string as whoever
+    has to go and fetch them.
+    """
+    if not node:
+        return node
+    port = next((r.get("name") for r in (routes or [])
+                 if r.get("active")), None)
+    return "%s#%s" % (node, port) if port else str(node)
+
+
+def live_device_key(node):
+    """The device key for a sink, off the heartbeat's own listing.
+
+    THE ONE DOOR every window uses. Both windows hold the same
+    observed listing -- it is one poll feeding all of them -- and each
+    sink in it carries its ports already, so going to the server for
+    a fact the program is already holding would be a subprocess on the
+    main loop. Having ONE function for it is the point: the first cut
+    of this let each window reach for the node name where it happened
+    to have one, and a bound profile stopped being found the moment
+    the output was changed.
+    """
+    sinks = getattr(backend(), "sinks", None) or []
+    s = next((s for s in sinks if s.get("name") == node), None)
+    return key_from_routes(node, (s or {}).get("routes"))
+
+
 def device_key(node, direction="Output", dump=None):
     """WHAT THIS PROGRAM CALLS ONE DEVICE: a node and the hole in use.
 
@@ -206,12 +239,7 @@ def device_key(node, direction="Output", dump=None):
     `direction` is "Output" for a sink and "Input" for a source, since
     a card's routes are listed per direction and a node lives in one.
     """
-    if not node:
-        return node
-    port = next((r.get("name")
-                 for r in _card_ports(node, direction, dump)
-                 if r.get("active")), None)
-    return "%s#%s" % (node, port) if port else str(node)
+    return key_from_routes(node, _card_ports(node, direction, dump))
 
 
 def door_port(route):

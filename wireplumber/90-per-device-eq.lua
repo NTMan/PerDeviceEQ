@@ -27,7 +27,7 @@
 
 local log   = Log.open_topic("pde")
 local META  = "per-device-eq"   -- metadata object name (live edits from the app)
-local PROTOCOL = "1"            -- channel protocol; stamped into the metadata on
+local PROTOCOL = "2"            -- channel protocol; stamped into the metadata on
                                 -- activation, compared by the app (bump together
                                 -- with PROTOCOL in perdeviceeq/config.py on any
                                 -- breaking change to the graph string or the
@@ -39,9 +39,10 @@ local STATE = "per-device-eq"   -- WpState name -> ~/.local/state/wireplumber/pe
 local FLAT = "{ nodes = [ { type = builtin name = eq label = param_eq config = "
           .. "{ filters = [ { type = bq_peaking, freq = 1000, gain = 0.0, q = 1.0 } ] } } ] }"
 
-local graphs = {}            -- node.name -> graph string (runtime source of truth)
+local graphs = {}            -- device key -> graph string (runtime source of truth)
 local nodes  = {}            -- node.name -> live Audio/Sink node proxy
 local md     = nil           -- activated metadata proxy
+local devices = {}           -- bound id -> device proxy (for the holes)
 local state  = State(STATE)  -- WpState handle (GKeyFile under ~/.local/state)
 
 -- seed the table from persisted state (cold start: metadata is empty)
@@ -68,10 +69,67 @@ local function set_graph(node, graph)
   if not ok then log.warning("set_param failed: " .. tostring(err)) end
 end
 
-local function apply(node, name)
-  local g = graphs[name]
+-- THE KEY IS THE NODE AND THE HOLE IN USE, the same rule the app
+-- keys on (perdeviceeq/pw_backend.py, device_key). A node name is
+-- shared by holes a hand never chose together: a headset answers to
+-- one name in Headphones and in Handsfree, and a card with several
+-- outputs answers to one name on all of them. The port's own NAME
+-- goes in the key, never its description -- descriptions are
+-- translated, names are what a card calls its wiring. A node with no
+-- card behind it keys as its bare name.
+local function device_key(node)
+  local name, devid, cdev
+  if not pcall(function()
+    name = tostring(node.properties["node.name"])
+    devid = node.properties["device.id"]
+    cdev  = node.properties["card.profile.device"]
+  end) or not name then
+    return nil
+  end
+  local dev = devid ~= nil and devices[tostring(devid)] or nil
+  if dev == nil then return name end
+  local port = nil
+  pcall(function()
+    for p in dev:iterate_params("Route") do
+      local pr = (p:parse() or {}).properties or {}
+      -- BOTH fields decide: one device carries an input route and an
+      -- output route at once, and on a CM106 they share a card
+      -- device index as well
+      if pr.direction == "Output"
+          and (cdev == nil or tostring(pr.device) == tostring(cdev)) then
+        port = pr.name
+      end
+    end
+  end)
+  return port and (name .. "#" .. tostring(port)) or name
+end
+
+local function apply(node)
+  local k = device_key(node)
+  local g = k and graphs[k] or nil
   if g then set_graph(node, g) end   -- no entry => Clean / unbound => leave alone
 end
+
+-- ---- devices: where a node's holes are listed ----
+-- A lookup table, nothing more. A profile change RESTARTS the node,
+-- so the hook hears the switch on its own state-changed path and has
+-- no reason to watch the device's params -- verified in the field:
+-- the same node came back as headset-output, then headset-hf-output,
+-- then headset-output again, once per switch.
+dev_om = ObjectManager { Interest { type = "device" } }
+dev_om:connect("object-added", function(_, dev)
+  local id
+  if pcall(function() id = tostring(dev["bound-id"]) end) and id then
+    devices[id] = dev
+  end
+end)
+dev_om:connect("object-removed", function(_, dev)
+  local id
+  if pcall(function() id = tostring(dev["bound-id"]) end) and id then
+    devices[id] = nil
+  end
+end)
+dev_om:activate()
 
 -- ---- metadata: the live channel from the GUI/CLI ----
 md_om = ObjectManager {
@@ -89,12 +147,18 @@ md_om:connect("object-added", function(_, m)
     m:set(0, "protocol", "Spa:String:JSON", PROTOCOL)
     m:connect("changed", function(_, subject, key, typ, value)
       if key == "protocol" then return end
+      -- the key names a DEVICE; the node to write to is whichever
+      -- live node currently answers to it
+      local target = nil
+      for _, n in pairs(nodes) do
+        if device_key(n) == key then target = n break end
+      end
       if value ~= nil and value ~= "" then
         graphs[key] = value
-        local n = nodes[key]; if n then set_graph(n, value) end
+        if target then set_graph(target, value) end
       else
         graphs[key] = nil                  -- key cleared (Clean) -> strip EQ
-        local n = nodes[key]; if n then set_graph(n, FLAT) end
+        if target then set_graph(target, FLAT) end
       end
       persist()
     end)
@@ -115,11 +179,11 @@ sink_om:connect("object-added", function(_, node)
   nodes[name] = node
   pcall(function()
     node:connect("state-changed", function(n, _old, new)
-      if new == "running" then apply(n, name) end
+      if new == "running" then apply(n) end
     end)
   end)
   local st; pcall(function() st = node:get_state() end)
-  if st == "running" then apply(node, name) end
+  if st == "running" then apply(node) end
 end)
 sink_om:connect("object-removed", function(_, node)
   local name

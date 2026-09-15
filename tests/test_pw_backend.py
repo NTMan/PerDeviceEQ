@@ -1019,3 +1019,17 @@ def test_a_node_with_no_card_keys_as_its_bare_name():
     d = _card_dump()
     assert pwb.device_key("virtual-thing", "Input", d) == "virtual-thing"
     assert pwb.device_key("no-such-node", "Output", d) == "no-such-node"
+
+
+def test_the_window_and_the_hook_key_the_same_device():
+    """The rule has two doors -- one for a caller holding the routes
+    already, one for a caller that must fetch them -- and they must
+    answer with the same string, or a graph is published where nothing
+    reads it."""
+    d = _bt_card_dump()
+    sink = "bluez_output.24_C4_06_42_AE_2A.1"
+    fetched = pwb.device_key(sink, "Output", d)
+    held = pwb.key_from_routes(sink, pwb.card_output_ports(sink, d))
+    assert fetched == held == sink + "#headset-output"
+    assert pwb.key_from_routes("null-sink", []) == "null-sink"
+    assert pwb.key_from_routes("null-sink", None) == "null-sink"

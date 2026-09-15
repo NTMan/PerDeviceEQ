@@ -3152,7 +3152,8 @@ class MeasureWindow(Adw.Window):
         try:
             sink_keys = self._pw_output_channels(node)
             cmap = self.parent.store.reconcile_map(
-                node, list(self.ch_keys), sink_keys)
+                pw_backend.live_device_key(node),
+                list(self.ch_keys), sink_keys)
         except Exception as e:
             debug.log("play map: %s" % e)
             return None
@@ -4194,7 +4195,8 @@ class MeasureWindow(Adw.Window):
         if sink:
             try:
                 cmap = self.parent.store.reconcile_map(
-                    self.sink_node, list(self.ch_keys), sink)
+                    pw_backend.live_device_key(self.sink_node),
+                    list(self.ch_keys), sink)
             except Exception:
                 cmap = {}
         free = [c for c in sink if not cmap.get(c)]
@@ -4268,13 +4270,14 @@ class MeasureWindow(Adw.Window):
             store.save_user(body)
         try:
             cur = store.reconcile_map(
-                self.sink_node, list(self.ch_keys),
+                pw_backend.live_device_key(self.sink_node),
+                list(self.ch_keys),
                 self._pw_output_channels(self.sink_node))
         except Exception:
             cur = {}
         for out, val in list(cur.items()):
             if val == target:
-                store.pin_channel(self.sink_node, out, None)
+                store.pin_channel(pw_backend.live_device_key(self.sink_node), out, None)
         p = store.get(self.edit_pid) if self.edit_pid else {}
         self.ch_keys = list((p or {}).get("ch_keys")
                             or list(((p or {}).get("channels") or {})))
@@ -4317,14 +4320,15 @@ class MeasureWindow(Adw.Window):
         # to be pinned to nothing, not merely left unpinned
         try:
             cur = store.reconcile_map(
-                self.sink_node, list(self.ch_keys),
+                pw_backend.live_device_key(self.sink_node),
+                list(self.ch_keys),
                 self._pw_output_channels(self.sink_node))
         except Exception:
             cur = {}
         for ch, val in list(cur.items()):
             if val == target and ch != sink_ch:
-                store.pin_channel(self.sink_node, ch, None)
-        store.pin_channel(self.sink_node, sink_ch, target)
+                store.pin_channel(pw_backend.live_device_key(self.sink_node), ch, None)
+        store.pin_channel(pw_backend.live_device_key(self.sink_node), sink_ch, target)
         p = store.get(pid) or {}
         self.ch_keys = list(p.get("ch_keys")
                             or list((p.get("channels") or {})))
@@ -5516,7 +5520,8 @@ class MeasureWindow(Adw.Window):
                 self.parent, "node", None):
             return
         try:
-            self.parent.store.set_binding(self.sink_node, pid)
+            self.parent.store.set_binding(
+                pw_backend.live_device_key(self.sink_node), pid)
         except Exception as e:
             debug.log("settle home: %s" % e)
 

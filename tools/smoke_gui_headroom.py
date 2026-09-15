@@ -150,7 +150,7 @@ def check(a):
         import time as _t
         assert set(w._meter_areas) == {"FL", "FR"}
         w._bal = [Ballistics(), Ballistics()]
-        w._meter_node = "fake.sink"                 # readout treats it live
+        w._meter_dev = "fake.sink#out"              # readout treats it live
         now = _t.monotonic()
         pre0 = w.preamp
         w._on_meter_frame({"peaks_db": [-6.0, 1.5], "clips": [0, 200], "samples": 1600,

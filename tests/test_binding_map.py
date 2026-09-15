@@ -340,3 +340,30 @@ def test_moving_a_target_leaves_its_old_output_behind(store):
     move("FL", "AUX7")
     m = store.reconcile_map(NODE, ["FL", "FR"], sink)
     assert m["AUX7"] == "FL" and m["AUX6"] is None
+
+
+def test_every_caller_asks_the_same_door_for_a_device_key():
+    """The census this series needed and did not get the first time.
+
+    The key moved and eight callers kept passing a NODE NAME, because
+    the first sweep grepped for the variable it happened to be held in
+    rather than for the functions that take a key. In the field that
+    read as a bound profile vanishing the moment the output changed.
+    """
+    import re
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parents[1] / "perdeviceeq"
+    takers = ("binding_for", "set_binding", "pin_channel",
+              "reconcile_map", "map_for", "slots_for")
+    bad = []
+    for f in ("gui.py", "measure_window.py"):
+        text = (src / f).read_text(encoding="utf-8")
+        for m in re.finditer(
+                r"\b(%s)\(\s*\n?\s*([^,\n)]+)" % "|".join(takers), text):
+            arg = m.group(2).strip()
+            if arg.startswith(("pw_backend.live_device_key",
+                               "pw.live_device_key", "self._dev()",
+                               "key", "self._dev")):
+                continue
+            bad.append("%s: %s(%s" % (f, m.group(1), arg))
+    assert not bad, "a key-taker handed something else:\n" + "\n".join(bad)

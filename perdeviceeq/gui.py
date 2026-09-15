@@ -157,7 +157,7 @@ class EqWindow(Adw.ApplicationWindow):
 
         # tier-2 live meter (engine created lazily: scipy is optional)
         self._meter = None
-        self._meter_node = None
+        self._meter_dev = None
         self._meter_state = None
         self._meter_areas = {}
         self._bal = []
@@ -292,7 +292,7 @@ class EqWindow(Adw.ApplicationWindow):
         _t = time.monotonic()
         self._init_devices()
         debug.timing("_init_devices", _t)
-        self.current_pid = self.store.binding_for(self.node) or CLEAN_ID
+        self.current_pid = self.store.binding_for(self._dev()) or CLEAN_ID
         # apply=True primes the session metadata key for the startup device.
         # Before the app starts, EQ is applied by the WP hook from its own
         # saved state and the metadata key does not exist yet; clearing a
@@ -1764,7 +1764,9 @@ class EqWindow(Adw.ApplicationWindow):
         self.picker.select(name)
         self._reconcile_node()
         if load:
-            self._load_profile(self.store.binding_for(name) or CLEAN_ID)
+            self._load_profile(
+                self.store.binding_for(pw_backend.live_device_key(name))
+                or CLEAN_ID)
 
     def _on_sink_pick(self, node, desc):
         """A user pick from the shared picker (vetoed while
@@ -1782,7 +1784,9 @@ class EqWindow(Adw.ApplicationWindow):
             return False
         self.node = node
         self._reconcile_node()
-        self._load_profile(self.store.binding_for(node) or CLEAN_ID)
+        self._load_profile(
+            self.store.binding_for(pw_backend.live_device_key(node))
+            or CLEAN_ID)
 
     def _on_follow_toggled(self, *_):
         """Follow-default toggled; snap to the current default when turned on."""
@@ -1814,6 +1818,24 @@ class EqWindow(Adw.ApplicationWindow):
         # gone machinery
         self._update_meter()
         return False
+
+    def _dev(self):
+        """THE KEY EVERYTHING IS STORED AND PUBLISHED UNDER: the node
+        and the hole in use.
+
+        self.node stays the node's real name, because a tap and a
+        set_param address a NODE. What a binding, a pairing and the
+        metadata address is a DEVICE, and a headset in Handsfree is
+        not the device it was in Headphones even though the name has
+        not moved.
+
+        Read off the heartbeat's own listing, which carries each
+        sink's ports already -- going to the server again would be a
+        subprocess on the main loop for a fact this window holds.
+        """
+        if not self.node:
+            return self.node
+        return pw_backend.live_device_key(self.node)
 
     def _maybe_follow(self, default):
         """Following works even while a measurement window is
@@ -2242,7 +2264,7 @@ class EqWindow(Adw.ApplicationWindow):
             self.bypass_row.set_active(False)
             self._build_channel_bar()
             self._load_slot(self.cur_ch)
-            self.store.set_binding(self.node, pid)
+            self.store.set_binding(self._dev(), pid)
         finally:
             self._loading = False
         # land the composed Safe under Auto: a profile saved before
@@ -2310,7 +2332,7 @@ class EqWindow(Adw.ApplicationWindow):
         # built-in left a profile that no undo could take back.
         self._born_pending = pid
         self.current_pid = pid
-        self.store.set_binding(self.node, pid)
+        self.store.set_binding(self._dev(), pid)
         self.profile_button.set_label(self._display_name(self.store.get(pid)))
 
     def _on_edit(self):
@@ -2408,7 +2430,7 @@ class EqWindow(Adw.ApplicationWindow):
         if not (prof and sink and self.node):
             return
         self._declare_channel(prof)
-        self.store.pin_channel(self.node, sink, prof)
+        self.store.pin_channel(self._dev(), sink, prof)
         self._sync_map()
         if sink in self.ch_keys:
             # the pair is new or has changed hands, so the tab reads its
@@ -2429,7 +2451,7 @@ class EqWindow(Adw.ApplicationWindow):
             return
         self.slots.pop(ch, None)
         getattr(self, "_tab_src", {}).pop(ch, None)
-        self.store.pin_channel(self.node, ch, None)
+        self.store.pin_channel(self._dev(), ch, None)
         self._sync_map()
         self._load_slot(self.cur_ch)
         self._apply_now()
@@ -2524,7 +2546,7 @@ class EqWindow(Adw.ApplicationWindow):
             if (self.slots.get(k) or {}).get("bands") and t not in pch:
                 pch.append(t)
         was = getattr(self, "ch_map", None)
-        self.ch_map = self.store.reconcile_map(self.node, pch,
+        self.ch_map = self.store.reconcile_map(self._dev(), pch,
                                                self.sink_keys)
         tabs = eq.paired_tabs(self.ch_map, self.sink_keys)
         srcs = getattr(self, "_tab_src", None)
@@ -2608,7 +2630,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._update_meter()
         if not self.live or not self.node:
             return
-        node = self.node
+        node = self._dev()
         body = self._working_body()
         extra = self.pref_layers.active_bands()
         silent = (not eq.profile_has_content(body)
@@ -2664,7 +2686,7 @@ class EqWindow(Adw.ApplicationWindow):
             if self.live and self.node:
                 # rewind the sink binding too, or a restart would
                 # resurrect the selection undo just unwound
-                self.store.set_binding(self.node, pid)
+                self.store.set_binding(self._dev(), pid)
             self._sync_map(widen=False)
             self._populate_picker()
         view = self.cur_ch          # keep the user's current tab if still valid
@@ -3041,7 +3063,11 @@ class EqWindow(Adw.ApplicationWindow):
             self._meter = MeterEngine(self._publish_meter)
         if self._meter is None:
             return
-        restart = want and (self._meter_node != self.node
+        # the hole is part of what the device IS, so a switch from
+        # Headphones to Handsfree restarts the tap for the same reason
+        # picking another card does -- and it must, since the engine
+        # pins a capture's channel count for its lifetime
+        restart = want and (self._meter_dev != self._dev()
                             or not self._meter.alive())
         if restart:
             self._meter.stop()      # never swap a running worker's count
@@ -3055,7 +3081,7 @@ class EqWindow(Adw.ApplicationWindow):
             # are their own list -- not the positions the tabs wear
             pos = pw_backend.backend().monitor_positions(self.node)
             self._meter.start(self.node, pos or list(self.sink_keys))
-            self._meter_node = self.node
+            self._meter_dev = self._dev()
             self._dead_frames = []
             self._meter_relinks = 0
             # Empirically (BT sink, in-node graph): a capture stream comes
@@ -3063,9 +3089,9 @@ class EqWindow(Adw.ApplicationWindow):
             # links is the WP hook's graph (re)apply -- a fresh stream does
             # NOT help. Nudge once after the capture starts.
             GLib.timeout_add(400, lambda: (self._apply_now(), False)[1])
-        elif not want and self._meter_node is not None:
+        elif not want and self._meter_dev is not None:
             self._meter.stop()
-            self._meter_node = None
+            self._meter_dev = None
             self._live_db = None
 
     def _stop_meter_on_close(self, *_):
@@ -3103,7 +3129,7 @@ class EqWindow(Adw.ApplicationWindow):
                 self._dead_frames[i] = self._dead_frames[i] + 1 \
                     if p <= -139.0 else 0
             if (max(self._dead_frames) > 36 and self._meter_relinks < 3
-                    and self._meter is not None and self._meter_node):
+                    and self._meter is not None and self._meter_dev):
                 self._meter_relinks += 1
                 self._dead_frames = [0] * len(pks)
                 if os.environ.get("PDE_METER_DEBUG"):
@@ -3408,7 +3434,7 @@ class EqWindow(Adw.ApplicationWindow):
             self._measure_win = None
             if self.live and self.node:
                 self._load_profile(
-                    self.store.binding_for(self.node) or CLEAN_ID)
+                    self.store.binding_for(self._dev()) or CLEAN_ID)
         return False
 
     def _on_create_new(self, _btn):
