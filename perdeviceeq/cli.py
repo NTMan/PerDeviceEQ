@@ -8,7 +8,7 @@ import json, sys
 from .config import CLEAN_ID
 from .profiles import ProfileStore
 from .pw_backend import (list_sinks, list_sources, node_params,
-                         metadata_set, metadata_clear)
+                         backend)
 
 
 def cmd_list():
@@ -47,19 +47,13 @@ def cmd_inspect(name):
 def cmd_apply():
     """Push every bound device's graph into the 'per-device-eq' metadata; the WP
     hook applies it. Requires the hook to be installed (run --install-hook once)."""
-    store = ProfileStore()
-    presets = store.presets()
-    n = 0
-    for node, pid in store.bindings.items():
-        if not pid or pid == CLEAN_ID:
-            metadata_clear(node)
-            continue
-        graph = presets.get(node)
-        if graph is None:
-            continue
-        ok = metadata_set(node, graph)
-        print("%s %s -> %s" % ("metadata" if ok else "FAILED  ", node, pid))
-        n += 1 if ok else 0
-    if not n:
-        print("nothing applied (is the hook installed? run --install-hook)")
-    return 0 if n else 1
+    up, ver = backend().wait_for_hook()
+    if not up:
+        print("the hook is not listening -- nothing was sent. Wait a "
+              "moment and try again, or run --install once.",
+              file=sys.stderr)
+        return 1
+    sent, total = backend().publish_state(ProfileStore().wire_state())
+    print("sent %d of %d device(s) with a graph (hook protocol %s)"
+          % (sent, total, ver))
+    return 0 if sent == total else 1

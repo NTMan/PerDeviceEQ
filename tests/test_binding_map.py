@@ -461,3 +461,42 @@ def test_a_good_state_file_is_read_and_left_alone(tmp_path):
     p.write_text('{"k": 1}', encoding="utf-8")
     assert read_state(str(p), {}) == {"k": 1}
     assert p.exists()
+
+
+def test_the_store_says_what_the_wire_should_hold(tmp_path, monkeypatch):
+    """Pure data: a graph for a device that has one, None for a device
+    whose key must be cleared. No publishing in the store."""
+    from perdeviceeq import profiles
+    monkeypatch.setattr(profiles, "BINDINGS_FILE",
+                        str(tmp_path / "b.json"), raising=False)
+    st = profiles.ProfileStore()
+    st.bindings = {"a": "p1", "b": profiles.CLEAN_ID, "c": None}
+    monkeypatch.setattr(st, "presets", lambda: {"a": "g"})
+    assert st.wire_state() == {"a": "g", "b": None, "c": None}
+
+
+def test_the_backend_counts_only_what_it_could_send():
+    """`total` counts devices with a graph -- a key that is merely
+    cleared cannot fail to be corrected -- and `sent` counts writes
+    the server took. Neither is evidence the hook applied anything."""
+    from perdeviceeq.audio_backend import AudioBackend
+
+    class B(AudioBackend):
+        def __init__(self):
+            super().__init__()
+            self.pushed = []
+
+        def _push_graph(self, device, value):
+            self.pushed.append((device, value))
+            return device != "b"          # one write refused
+
+    # the rest of the abstract surface is not this court's business
+    for name in ("_push_volume", "_push_stream_mutes", "_read_graph",
+                 "_read_volume", "_read_mute", "_push_mute", "_pull",
+                 "capture", "monitor_capture", "play"):
+        setattr(B, name, lambda self, *a, **k: None)
+    B.__abstractmethods__ = frozenset()
+
+    b = B()
+    assert b.publish_state({"a": "g", "b": "g", "c": None}) == (1, 2)
+    assert ("c", None) in b.pushed        # the clear still went out

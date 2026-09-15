@@ -1096,3 +1096,38 @@ def test_the_one_door_answers_for_inputs_too(monkeypatch):
     assert pwb.live_device_key("cm106.source") == "cm106.source#linein"
     assert pwb.live_device_key("some.sink") == "some.sink"
     assert pwb.live_device_key("unknown") == "unknown"
+
+
+def _metadata_dump(name="per-device-eq", entries=None):
+    """A metadata object as pw-dump really shapes it: properties at
+    the TOP level, not under info."""
+    return [{"id": 66, "type": "PipeWire:Interface:Metadata",
+             "props": {"metadata.name": name},
+             "metadata": entries if entries is not None else
+             [{"subject": 0, "key": "protocol", "value": 2}]}]
+
+
+def test_the_hook_is_read_from_the_snapshot():
+    """No second process per beat: the metadata object carries its
+    whole content in the dump the program already takes."""
+    found, ver = PipeWireBackend().hook_protocol(_metadata_dump())
+    assert (found, ver) == (True, "2")
+
+
+def test_the_stamp_is_normalised_to_text():
+    """It arrives as a JSON number while the hook writes a string;
+    comparing the two raw is false forever."""
+    _, ver = PipeWireBackend().hook_protocol(_metadata_dump())
+    assert ver == "2" and ver == __import__('perdeviceeq.config', fromlist=['x']).PROTOCOL
+
+
+def test_another_metadata_object_is_not_ours():
+    """The session is full of metadata objects -- settings, route
+    restore, bluetooth. Only the name says which is the hook's."""
+    d = _metadata_dump(name="settings")
+    assert PipeWireBackend().hook_protocol(d) == (False, None)
+
+
+def test_a_hook_without_a_stamp_is_found_but_unversioned():
+    d = _metadata_dump(entries=[{"subject": 0, "key": "x", "value": 1}])
+    assert PipeWireBackend().hook_protocol(d) == (True, None)

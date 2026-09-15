@@ -1098,6 +1098,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import sys
 
 from .config import METADATA_NAME
@@ -1514,16 +1515,73 @@ class PipeWireBackend(AudioBackend):
             return False
         return shutil.which("pw-record") is not None
 
-    def hook_protocol(self):
+    def wait_for_hook(self, timeout=15.0, step=0.25):
+        """Wait until the LOADED hook says it is listening.
+
+        The stamp is the only evidence there is. The hook writes
+        `protocol` into the metadata on the line AFTER it subscribes
+        to changes, so seeing it means a publish cannot be missed --
+        the race is closed by construction rather than by a sleep.
+        Anything weaker proves less than it looks: the metadata
+        object belongs to WirePlumber's own component and can be up
+        while our hook is not.
+
+        It is also the only liveness evidence we have at all. The
+        hook never answers for a graph it received, so a caller can
+        learn that somebody is listening and nothing more.
+
+        Measured on the field machine: 3.17 s and 3.30 s from
+        `systemctl restart` returning to the stamp appearing, at two
+        different poll rates, with the polling costing nothing beside
+        it. The ceiling is four times the worst of those, for a
+        machine slower than his; a finer step buys nothing against
+        three seconds.
+
+        Returns (up, version).
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            found, ver = self.hook_protocol()
+            if found and ver is not None:
+                return True, ver
+            if time.monotonic() >= deadline:
+                return False, ver
+            time.sleep(step)
+
+    def hook_protocol(self, dump=None):
         """The protocol the LOADED hook stamped into the channel.
-        Returns (found, version): found False = no metadata object
-        (WirePlumber or the hook is not up -- the install/restart
-        narrations own that story, say nothing extra); found True
-        with version None = a pre-versioning hook."""
-        r = _run(["pw-metadata", "-n", METADATA_NAME, "0", "protocol"])
-        out = (r.stdout or "") + (r.stderr or "")
-        m = re.search(r"key:'protocol'\s+value:'([^']*)'", out)
-        return ("Found" in out), (m.group(1) if m else None)
+
+        READ OFF THE SNAPSHOT the program already takes. The metadata
+        object is an ordinary PipeWire object and carries its whole
+        content in a dump, so asking after it costs no second process
+        -- which is what lets the heartbeat watch the hook instead of
+        checking it once at startup and never again.
+
+        Its properties sit at o["props"], NOT at o["info"]["props"]
+        where every other object keeps them; reading the usual place
+        returns an empty dict and the object looks anonymous.
+
+        The stamp arrives as a JSON number (2), while the hook writes
+        a string ("2"), so the version is normalised to text or the
+        comparison is false forever.
+
+        Returns (found, version): found False = no metadata object of
+        ours (WirePlumber or the hook is not up); found True with
+        version None = a pre-versioning hook.
+        """
+        if dump is None:
+            dump = pw_dump()
+        for o in dump or []:
+            if not str(o.get("type", "")).endswith("Metadata"):
+                continue
+            if (o.get("props") or {}).get("metadata.name") != METADATA_NAME:
+                continue
+            for e in o.get("metadata") or []:
+                if e.get("key") == "protocol":
+                    v = e.get("value")
+                    return True, (None if v is None else str(v))
+            return True, None
+        return False, None
 
     def monitor_positions(self, device):
         """What a capture on this node's monitor must ask for."""
@@ -1545,10 +1603,14 @@ class PipeWireBackend(AudioBackend):
         default = default_sink_from_dump(dump)
         if default is None:
             default = default_sink_name()
+        found, ver = self.hook_protocol(dump)
         return {
             "sinks": list_sinks(dump, default=default),
             "sources": list_sources(dump),
             "default_sink": default,
+            # the hook rides the snapshot: watched every beat, not
+            # asked once at startup and trusted for the session
+            "hook": (found, ver),
         }
 
     def update(self, dump=None):

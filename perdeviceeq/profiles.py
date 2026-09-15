@@ -525,6 +525,24 @@ class ProfileStore:
         return profile_graph(dict(p, preamp=self.effective_preamp(p, node)),
                              slots=self.slots_for(node))
 
+    def wire_state(self):
+        """WHAT THE HOOK SHOULD BE HOLDING: {device: graph or None}.
+
+        Pure data -- no publishing here. A device bound to a profile
+        with content gets its graph; a device bound to Clean, to
+        nothing, or to an empty profile gets None, which means the
+        key must be cleared rather than left as it was. The store is
+        the only thing that knows this, and the backend is the only
+        thing that knows how to put it on the wire, so neither does
+        the other's half.
+        """
+        wire = {}
+        graphs = self.presets()
+        for node, pid in self.bindings.items():
+            wire[node] = graphs.get(node) if pid and pid != CLEAN_ID \
+                else None
+        return wire
+
     def presets(self):
         """{node.name: graph_string} for every node bound to a non-Clean,
         content-ful profile. Pushed into the metadata (--apply, and the one-time

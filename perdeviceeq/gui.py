@@ -186,6 +186,9 @@ class EqWindow(Adw.ApplicationWindow):
         self.header_bar = b.get_object("header_bar")
         self.header_note = b.get_object("header_note")
         self.gone_banner = b.get_object("gone_banner")
+        self.hook_banner = b.get_object("hook_banner")
+        self.hook_banner.connect("button-clicked",
+                                 lambda _b: self._install_async())
         self.profile_button = b.get_object("profile_button")
         # the header picker is a suffix in an expander-style
         # row: flat in-row chrome, not a raised pill (HIG
@@ -306,6 +309,21 @@ class EqWindow(Adw.ApplicationWindow):
         if self.live:
             self._pw_unsub = self._pw.subscribe(self._on_pw_state)
             self._pw.start()
+            # THE FIRST BEAT IS SPENT BEFORE ANYONE IS LISTENING.
+            # _init_devices pulls the server once, up at the top of
+            # this constructor, and a subscriber is only called when
+            # the signature CHANGES -- so the one notify that would
+            # have carried the opening state fires before this line
+            # subscribes, and every tick after it says nothing
+            # because nothing moved. Field-found: the banner appeared
+            # only once the default sink was changed, which is simply
+            # the first thing that ever changed.
+            #
+            # So ask for the state instead of waiting to be told,
+            # through the SAME handler a beat would use: painting one
+            # widget here would fix one symptom and leave the rest of
+            # the opening refresh owed.
+            self._on_pw_state(self._pw)
 
     # ---- widget construction ----------------------------------------------
     def _build_header_buttons(self):
@@ -1361,51 +1379,6 @@ class EqWindow(Adw.ApplicationWindow):
         row.append(self.refit_btn)
         self._device_body.insert_child_after(row, self.channel_row)
 
-    def _ask_integration(self):
-        """The hook is what keeps the EQ across reboots and
-        reconnects. A portable run without it used to install
-        silently; now it ASKS -- No quits (the app cannot keep its
-        promise of persistence), Yes installs and says how to
-        uninstall."""
-        if integration.hook_installed():
-            return self._check_hook_protocol()
-        flatpak = bool(os.environ.get("FLATPAK_ID"))
-        extra = ("" if flatpak else
-                 ", plus a menu entry and icon")
-        dlg = Adw.AlertDialog(
-            heading="Install system integration?",
-            body="per-device-eq keeps your EQ across reboots and "
-                 "reconnects through a small WirePlumber hook in "
-                 "your user session%s (everything under ~/.local "
-                 "and ~/.config). Install it now?" % extra)
-        dlg.add_response("no", "Quit")
-        dlg.add_response("yes", "Install")
-        dlg.set_response_appearance("yes",
-                                    Adw.ResponseAppearance.SUGGESTED)
-        dlg.set_default_response("yes")
-        dlg.set_close_response("no")
-
-        def done(_d, resp):
-            if resp != "yes":
-                self.get_application().quit()
-                return
-            # the dialog is the GUI face of --install, and they
-            # SHARE the routine now -- one source of truth
-            try:
-                result = integration.install_full()
-            except FileNotFoundError as e:
-                err = Adw.AlertDialog(heading="Install failed",
-                                      body=str(e))
-                err.add_response("close", "Close")
-                err.set_default_response("close")
-                err.present(self)
-                return
-            self._refresh_integration_menu()
-            self._show_install_result(result)
-        dlg.connect("response", done)
-        dlg.present(self)
-        return False
-
     def _on_autofit_toggled(self, btn):
         """Pressing Auto returns the scientific correction: a
         re-fit from the stored takes (hand edits ask first).
@@ -1534,64 +1507,6 @@ class EqWindow(Adw.ApplicationWindow):
         dlg.present(self)
         return dlg
 
-    def _check_hook_protocol(self):
-        """Once per launch, when the hook is installed: the
-        LOADED hook stamps its channel protocol into the
-        metadata; compare with ours. No metadata object = the
-        hook is not up (other narrations own that story);
-        object without the stamp = a pre-versioning hook --
-        the same one-click offer, honestly labeled."""
-        found, ver = pw_backend.backend().hook_protocol()
-        if not found or ver == config.PROTOCOL:
-            return False
-        try:
-            newer = (ver is not None
-                     and float(ver) > float(config.PROTOCOL))
-        except ValueError:
-            newer = True
-        shown = ver if ver is not None else "pre-1 (no stamp)"
-        if newer:
-            body = ("The installed WirePlumber hook speaks "
-                    "protocol %s -- newer than this app (%s), "
-                    "likely written by a newer build. Update "
-                    "the app, or reinstall the integration "
-                    "from this one to match it."
-                    % (shown, config.PROTOCOL))
-            label = "Reinstall integration"
-        else:
-            body = ("The installed WirePlumber hook speaks "
-                    "protocol %s, this app speaks %s -- live "
-                    "edits may not apply until they match. "
-                    "One click rewrites the hook from this "
-                    "app." % (shown, config.PROTOCOL))
-            label = "Update integration"
-        dlg = Adw.AlertDialog(
-            heading="Integration version mismatch", body=body)
-        dlg.add_response("later", "Not now")
-        dlg.add_response("update", label)
-        dlg.set_response_appearance(
-            "update", Adw.ResponseAppearance.SUGGESTED)
-        dlg.set_default_response("update")
-        dlg.set_close_response("later")
-
-        def done(_d, resp):
-            if resp != "update":
-                return
-            try:
-                result = integration.install_full()
-            except FileNotFoundError as e:
-                err = Adw.AlertDialog(heading="Install failed",
-                                      body=str(e))
-                err.add_response("close", "Close")
-                err.set_default_response("close")
-                err.present(self)
-                return
-            self._refresh_integration_menu()
-            self._show_install_result(result)
-        dlg.connect("response", done)
-        dlg.present(self)
-        return False
-
     def _refresh_integration_menu(self):
         """The integration item states the opposite of the
         CURRENT hook state. Refreshed at build and after each
@@ -1605,43 +1520,143 @@ class EqWindow(Adw.ApplicationWindow):
                  if integration.hook_installed()
                  else "Install integration", "win.integration")
 
+    def _hook_banner(self, hook):
+        """The hook, watched rather than checked once at launch.
+
+        It used to be asked one question at startup and believed for
+        the rest of the session; a hook that died, or came back
+        speaking another protocol, went unremarked while nothing was
+        applied. It now rides the heartbeat, so the banner appears by
+        itself and leaves by itself when the thing is fixed --
+        nothing to dismiss, because there is nothing to dismiss when
+        a problem stops existing.
+
+        No banner for success. The menu entry flipping to Remove
+        integration already says it landed, and a strip of chrome
+        that has to be closed by hand is work handed to the person
+        for no news.
+
+        A dialog is kept for exactly one case, elsewhere: when the
+        person has to run a command themselves. That needs a copy
+        button and an OK, which a banner cannot carry.
+
+        The states, in the order they are asked: BROKEN (one file of
+        two), ABSENT (nothing installed, or removed by hand), SILENT
+        (installed but not answering), MISMATCHED (answering another
+        protocol), and well -- the only one that says nothing.
+        """
+        found, ver = hook
+        if found is None:
+            # nothing has been pulled yet, so the SERVER's half is
+            # unknown -- but the disk's half is not, and "no files at
+            # all" is answerable right now. Silence here was what
+            # hid the strip on a machine whose state never changed.
+            if integration.hook_installed() \
+                    or integration.hook_half_installed():
+                return
+        if integration.hook_half_installed():
+            # one file of two: WirePlumber loads nothing and says so
+            # on every start, and this used to read as "removed"
+            self.hook_banner.set_title(
+                "The integration is broken: one of its two files is "
+                "missing")
+            self.hook_banner.set_revealed(True)
+            return
+        if not integration.hook_installed():
+            # NOT A SILENCE ANY MORE. A first run used to stop behind
+            # a modal asking to install, with Quit as the other
+            # answer; a removal afterwards said nothing at all, and
+            # the window then sat there looking normal while nothing
+            # it did reached the ears. Both are the same state --
+            # there is no hook -- and it belongs in the strip that
+            # carries every other thing wrong with the hook.
+            self.hook_banner.set_title(
+                "The EQ is not applied: the WirePlumber integration "
+                "is not installed")
+            self.hook_banner.set_button_label("Install")
+            self.hook_banner.set_revealed(True)
+            return
+        self.hook_banner.set_button_label("Retry")
+        if not found:
+            self.hook_banner.set_title(
+                "The correction is not being applied: the hook is "
+                "not answering")
+        elif str(ver) != config.PROTOCOL:
+            shown = ver if ver is not None else "pre-1 (no stamp)"
+            self.hook_banner.set_title(
+                "The hook speaks protocol %s, this app speaks %s -- "
+                "edits may not apply until they match"
+                % (shown, config.PROTOCOL))
+        else:
+            self.hook_banner.set_revealed(False)
+            return
+        self.hook_banner.set_revealed(True)
+
+    def _install_async(self):
+        """Install OFF THE MAIN LOOP, and narrate once when it ends.
+
+        install_full now waits for the hook to answer and feeds it
+        before returning -- about three seconds after a WirePlumber
+        restart -- so running it here would freeze the window for
+        that long, which is its own kind of lie. The narration waits
+        with it: saying "installed" and then, seconds later, "the
+        hook never came up" is one lie in two acts.
+        """
+        def work():
+            try:
+                result = integration.install_full()
+            except FileNotFoundError as e:
+                GLib.idle_add(failed, str(e))
+                return
+            GLib.idle_add(landed, result)
+
+        def failed(msg):
+            err = Adw.AlertDialog(heading="Install failed", body=msg)
+            err.add_response("close", "Close")
+            err.set_default_response("close")
+            err.present(self)
+            return False
+
+        def landed(result):
+            self._refresh_integration_menu()
+            self._show_install_result(result)
+            return False
+
+        pw_backend.in_thread(work)
+
     def _show_install_result(self, result):
-        """One narration for both install faces: the first-run
-        dialog and the menu trigger."""
-        hint = ("To remove it later, use Remove integration "
-                "in the main menu.")
+        """Say something ONLY when the person has to do something.
+
+        A dialog is for work, not for news: it stops everything and
+        waits to be dismissed. The one case that earns it is a
+        WirePlumber that would not restart from here, because then
+        there is a command to copy and run by hand.
+
+        Everything else is silence. Success says nothing -- the menu
+        entry flipping to Remove integration is the news, and a modal
+        that has to be closed is a chore handed over for none. A hook
+        that did not come up says nothing HERE either: it is a
+        standing condition, not an event, and the banner carries it
+        for as long as it lasts -- this window used to pop "Integration
+        installed" over a banner reading "the hook is not answering",
+        two voices contradicting each other in one frame.
+        """
         if result.get("restarted") is False:
             where = (" on the host"
                      if os.environ.get("FLATPAK_ID") else "")
             body = ("The WirePlumber hook is installed but "
                     "the service was not restarted, so it is "
                     "not loaded yet -- run the command below "
-                    "once%s.\n\n%s" % (where, hint))
+                    "once%s.\n\nTo remove it later, use Remove "
+                    "integration in the main menu." % where)
             self._command_dialog("Integration installed", body,
                                  self._WP_RESTART_CMD)
-            return
-        info = Adw.AlertDialog(
-            heading="Integration installed",
-            body=hint)
-        info.add_response("close", "Close")
-        info.set_default_response("close")
-        info.present(self)
 
     def _on_integration(self):
         """The menu trigger: install or remove by the CURRENT
         hook state."""
         if not integration.hook_installed():
-            try:
-                result = integration.install_full()
-            except FileNotFoundError as e:
-                err = Adw.AlertDialog(heading="Install failed",
-                                      body=str(e))
-                err.add_response("close", "Close")
-                err.set_default_response("close")
-                err.present(self)
-                return
-            self._refresh_integration_menu()
-            self._show_install_result(result)
+            self._install_async()
             return
         ask = Adw.AlertDialog(
             heading="Remove system integration?",
@@ -1669,14 +1684,12 @@ class EqWindow(Adw.ApplicationWindow):
                         "command below runs once%s." % where)
                 self._command_dialog("Integration removed", body,
                                      self._WP_RESTART_CMD)
-                return
-            info = Adw.AlertDialog(
-                heading="Integration removed",
-                body="The hook is gone; the EQ no longer "
-                     "applies.")
-            info.add_response("close", "Close")
-            info.set_default_response("close")
-            info.present(self)
+            # and nothing when it simply worked: removing is a
+            # deliberate act, the menu entry has already flipped back
+            # to Install integration, and a modal that has to be
+            # closed is a chore handed over for news the person
+            # already has. The same rule the install side follows --
+            # a dialog is for work, not for saying yes.
         ask.connect("response", done)
         ask.present(self)
 
@@ -1806,6 +1819,7 @@ class EqWindow(Adw.ApplicationWindow):
             self._pending_out = None
             self.picker.select(hit["node"], hit["desc"])
             self._on_sink_pick(hit["node"], hit["desc"])
+        self._hook_banner(getattr(st, "hook", (None, None)))
         self._maybe_follow(st.default_sink)
         self._reconcile_node()
         self._follow_device()
@@ -3857,7 +3871,6 @@ class EqApplication(Adw.Application):
         else."""
         if self.win is None:
             self.win = EqWindow(self)
-            GLib.idle_add(self.win._ask_integration)
         self.win.present()
 
 

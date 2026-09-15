@@ -61,6 +61,26 @@ def install_hook():
     conf_changed = _write_if_changed(WP_CONF, HOOK_CONF)
     return lua_changed or conf_changed
 
+def seed_hook():
+    """Feed a hook that has just been installed. Returns (up, sent, total).
+
+    It starts with nothing: its own state is empty, the window
+    publishes only the device it has open, and the bindings file it
+    cannot read -- WirePlumber's Lua sandbox has no filesystem at
+    all, which is why the hook is fed rather than reading. Without
+    this, every bound device but the open one plays uncorrected until
+    a hand opens its tab, and nothing says so. After a protocol bump
+    that is every device on the machine.
+    """
+    from .profiles import ProfileStore
+    from .pw_backend import backend
+    up, _ver = backend().wait_for_hook()
+    if not up:
+        return False, 0, 0
+    sent, total = backend().publish_state(ProfileStore().wire_state())
+    return True, sent, total
+
+
 def install_full():
     """One source of truth for --install and the GUI dialog: the
     hook (with one WirePlumber restart when it changed), then the
@@ -89,13 +109,36 @@ def install_full():
             desk = "installed"
         except FileNotFoundError:
             desk = "missing"
+    # FED BEFORE ANYONE IS TOLD IT IS INSTALLED. Saying "installed"
+    # and then, three seconds later, "the hook never came up" is the
+    # same lie in two acts. Wait for the stamp, feed the hook, and
+    # let the caller narrate ONE outcome.
+    up, sent, total = (True, 0, 0)
+    if restarted is not False:
+        up, sent, total = seed_hook()
     return {"hook": changed, "desktop": desk,
-            "restarted": restarted}
+            "restarted": restarted,
+            "hook_up": up, "sent": sent, "total": total}
 
 
 def hook_installed():
-    """Both halves on disk: the question the GUI asks at startup."""
+    """Both halves on disk."""
     return os.path.exists(WP_SCRIPT) and os.path.exists(WP_CONF)
+
+
+def hook_half_installed():
+    """ONE half on disk: a broken installation, not a removed one.
+
+    Removing through the menu takes both files, so neither state nor
+    silence is wrong there. A hand that deletes one of them leaves
+    something worse than absence: a component config that still names
+    a script which is not there, and WirePlumber failing to load it
+    on every start -- observed in the field as a restart loop with
+    `Could not locate script`. Nothing was applied and nothing said
+    so, because the window read "not installed" and held its tongue
+    the way it does after a deliberate removal.
+    """
+    return (os.path.exists(WP_SCRIPT) != os.path.exists(WP_CONF))
 
 
 def uninstall_hook():

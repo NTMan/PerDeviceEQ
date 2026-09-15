@@ -108,6 +108,33 @@ class AudioBackend(ABC):
                 return
             self._push_graph(device, value)
 
+    def publish_state(self, wire):
+        """Put a whole wire_state on the wire. Returns (sent, total).
+
+        `total` counts devices that HAVE a graph to send, not every
+        binding: a device whose key is only being cleared cannot fail
+        to be corrected. `sent` counts the writes the server accepted.
+
+        What that proves is exactly one thing -- the write reached the
+        metadata object. The hook does not answer for a graph it
+        applied, so no caller may say "applied"; the honest word is
+        sent.
+        """
+        sent = total = 0
+        for device, value in (wire or {}).items():
+            if value is None:
+                self.clear_graph(device)
+                continue
+            total += 1
+            with self._lock:
+                self._graphs[device] = value
+                if self._moratorium is not None:
+                    self._queue("graph", device, value)
+                    continue          # queued, not sent: do not count it
+                ok = self._push_graph(device, value)
+            sent += 1 if ok else 0
+        return sent, total
+
     def clear_graph(self, device):
         """Desire a clean `device` (no DSP)."""
         with self._lock:
@@ -327,6 +354,12 @@ class AudioBackend(ABC):
         self.sinks = snap.get("sinks", [])
         self.sources = snap.get("sources", [])
         self.default_sink = snap.get("default_sink")
+        # (found, version) of the loaded hook, as of this beat. It is
+        # in the signature below: a hook that dies, or comes back, or
+        # comes back speaking another protocol, is a change the window
+        # has to hear -- it is the difference between a correction
+        # being applied and not.
+        self.hook = snap.get("hook", (None, None))
         # THE PORTS BELONG IN THE SIGNATURE, not just the names. A
         # jack event changes no name and no default: pulling the
         # cable out of a microphone socket only flips that route's
@@ -344,7 +377,8 @@ class AudioBackend(ABC):
                      for s in self.sinks),
                tuple((s.get("name"), _route_sig(s.get("routes")))
                      for s in self.sources),
-               self.default_sink)
+               self.default_sink,
+               self.hook)
         changed = sig != getattr(self, "_sig", None)
         self._sig = sig
         if changed:

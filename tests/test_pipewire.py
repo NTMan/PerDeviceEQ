@@ -68,26 +68,18 @@ def test_monitor_capture_pins_the_tap(monkeypatch):
     assert cmd[cmd.index("--target") + 1] == "some.sink"
 
 
-def test_hook_protocol_states(monkeypatch):
-    """Stamped, legacy (object without the stamp), and no
-    metadata object at all."""
-    import subprocess as sp
+def test_hook_protocol_states():
+    """Stamped, legacy (object without the stamp), and no metadata
+    object of ours at all -- now read from the snapshot the program
+    already takes, so watching the hook costs no process per beat."""
+    def dump(name="per-device-eq", entries=None):
+        return [{"id": 99, "type": "PipeWire:Interface:Metadata",
+                 "props": {"metadata.name": name},
+                 "metadata": entries or []}]
 
-    def fake(out):
-        def run(cmd, timeout=2.0):
-            return sp.CompletedProcess(cmd, 0, out, "")
-        return run
-
-    monkeypatch.setattr(pipewire, "_run", fake(
-        'Found "per-device-eq" metadata 99\n'
-        "update: id:0 key:'protocol' value:'1' "
-        "type:'Spa:String:JSON'\n"))
-    assert pipewire.PipeWireBackend().hook_protocol() == (True, "1")
-
-    monkeypatch.setattr(
-        pipewire, "_run",
-        fake('Found "per-device-eq" metadata 99\n'))
-    assert pipewire.PipeWireBackend().hook_protocol() == (True, None)
-
-    monkeypatch.setattr(pipewire, "_run", fake(""))
-    assert pipewire.PipeWireBackend().hook_protocol() == (False, None)
+    b = pipewire.PipeWireBackend()
+    assert b.hook_protocol(dump(entries=[
+        {"subject": 0, "key": "protocol", "value": "1"}])) == (True, "1")
+    assert b.hook_protocol(dump()) == (True, None)
+    assert b.hook_protocol(dump(name="settings")) == (False, None)
+    assert b.hook_protocol([]) == (False, None)

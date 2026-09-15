@@ -116,8 +116,16 @@ def main():
         except FileNotFoundError as e:
             print(str(e), file=sys.stderr)
             return 2
+        if not res["hook_up"]:
+            print("the hook did not come up: installation did not "
+                  "finish. Wait a moment and run --install again.",
+                  file=sys.stderr)
+            return 2
         print("hook + config installed; WirePlumber restarted once..."
               if res["hook"] else "hook already up to date")
+        if res["total"]:
+            print("sent %d of %d device(s) with a graph"
+                  % (res["sent"], res["total"]))
         print({"packaged": "desktop entry: provided by the system "
                            "package",
                "installed": "desktop entry + icon installed",

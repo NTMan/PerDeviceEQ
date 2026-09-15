@@ -33,9 +33,30 @@ def _banners(path):
 def test_gone_banners_speak_one_language_per_state():
     main = _banners(DATA / MAIN)
     measure = _banners(DATA / MEASURE)
-    assert set(main) == {"gone_banner"}, main
+    assert set(main) == {"gone_banner", "hook_banner"}, main
+    assert main["hook_banner"]
+    assert main["hook_banner"] != main["gone_banner"]
     assert set(measure) == {"gone_banner", "mic_banner"}, measure
     assert main["gone_banner"] == measure["gone_banner"]
     assert main["gone_banner"]
     assert measure["mic_banner"]
     assert measure["mic_banner"] != measure["gone_banner"]
+
+
+def test_a_half_installed_hook_is_broken_not_removed(tmp_path,
+                                                     monkeypatch):
+    """Removing through the menu takes both files. A hand that takes
+    one leaves a config naming a script that is not there, and
+    WirePlumber fails to load it on every start -- which the window
+    read as 'removed' and said nothing about."""
+    from perdeviceeq import integration
+    script, conf = tmp_path / "h.lua", tmp_path / "h.conf"
+    monkeypatch.setattr(integration, "WP_SCRIPT", str(script))
+    monkeypatch.setattr(integration, "WP_CONF", str(conf))
+    assert not integration.hook_installed()
+    assert not integration.hook_half_installed()      # both gone
+    conf.write_text("x", encoding="utf-8")
+    assert integration.hook_half_installed()          # one left
+    script.write_text("x", encoding="utf-8")
+    assert integration.hook_installed()
+    assert not integration.hook_half_installed()
