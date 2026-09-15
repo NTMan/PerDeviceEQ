@@ -464,8 +464,32 @@ class ProfileStore:
             self.pins[node] = keep
             if not keep:
                 self.pins.pop(node, None)
-        if out != self.map_for(node) or keep != pinned:
-            self.set_map(node, out)
+        # A RECORD IS EARNED, NOT VISITED. The map is not a decision:
+        # resolve_slots computes it from the profile's channels and the
+        # sink's, and it is kept on disk for ONE reader -- the hook, at
+        # login, with no sink to ask. A device with no profile gives
+        # that reader nothing to apply (graph_for_node leaves a Clean
+        # or unbound node alone before it ever looks at a map), so a
+        # record holding only a map is residue of having opened the
+        # window on that device. Merely selecting an output was enough
+        # to mint one, and with a device now being a node AND a hole,
+        # that is one more entry per hole ever visited.
+        #
+        # A PIN is a decision and earns the record by itself, including
+        # under No EQ, where a hand can unpair a channel with no
+        # profile in front of it at all.
+        # DECIDED BY WHAT IS IN FRONT OF IT NOW, not by what has
+        # already reached the store. A profile load reconciles BEFORE
+        # it records the binding, and another path records it first,
+        # so asking the store produced a map on one route and none on
+        # the other for the same act. prof_keys is the profile being
+        # mapped -- Clean and No EQ bring none.
+        bound = self.bindings.get(node)
+        if prof_keys or (bound and bound != CLEAN_ID) or keep:
+            if out != self.map_for(node) or keep != pinned:
+                self.set_map(node, out)
+        elif self.map_for(node):
+            self.set_map(node, {})       # drops the record and saves
         return out
 
     def binding_for(self, node):

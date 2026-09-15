@@ -220,7 +220,10 @@ def test_the_resolver_s_answer_is_never_mistaken_for_a_choice(store):
     read those Nones as deliberate and kept them, so the node stayed
     uncorrected for good."""
     store.reconcile_map(NODE, [], ["FL", "FR"])          # nothing to map yet
-    assert store.map_for(NODE) == {"FL": None, "FR": None}
+    # nothing was decided, so nothing is kept -- which makes the bug
+    # impossible rather than merely survivable: a later reconcile has
+    # no stored Nones to read back as a hand's choice
+    assert store.map_for(NODE) == {}
     assert store.reconcile_map(NODE, ["FL", "FR"], ["FL", "FR"]) == \
         {"FL": "FL", "FR": "FR"}
 
@@ -367,3 +370,63 @@ def test_every_caller_asks_the_same_door_for_a_device_key():
                 continue
             bad.append("%s: %s(%s" % (f, m.group(1), arg))
     assert not bad, "a key-taker handed something else:\n" + "\n".join(bad)
+
+
+def _store(tmp_path, monkeypatch):
+    from perdeviceeq import profiles, config
+    monkeypatch.setattr(config, "BINDINGS_FILE",
+                        str(tmp_path / "bindings.json"), raising=False)
+    monkeypatch.setattr(profiles, "BINDINGS_FILE",
+                        str(tmp_path / "bindings.json"), raising=False)
+    return profiles.ProfileStore()
+
+
+def test_a_device_with_nothing_decided_gets_no_record(tmp_path,
+                                                      monkeypatch):
+    """Selecting an output used to mint a record holding only a
+    derived map. Nobody reads a map for an unbound device -- the hook
+    leaves such a node alone before it ever looks at one -- so it was
+    residue, and with a device being a node AND a hole there is one
+    per hole ever visited."""
+    st = _store(tmp_path, monkeypatch)
+    st.reconcile_map("headset#hf", [], ["MONO"])
+    assert st.map_for("headset#hf") == {}
+
+
+def test_a_pin_earns_the_record_on_its_own(tmp_path, monkeypatch):
+    """A hand can unpair a channel with No EQ in front of it, and that
+    is a decision, not residue."""
+    st = _store(tmp_path, monkeypatch)
+    st.pin_channel("card#out", "FR", None)
+    st.reconcile_map("card#out", [], ["FL", "FR"])
+    assert st.pins_for("card#out") == {"FR": None}
+    assert st.map_for("card#out")
+
+
+def test_unbinding_clears_the_record_it_had_earned(tmp_path,
+                                                   monkeypatch):
+    """The record follows the decision both ways."""
+    st = _store(tmp_path, monkeypatch)
+    st.set_binding("card#out", "abc123")
+    st.reconcile_map("card#out", ["FL", "FR"], ["FL", "FR"])
+    assert st.map_for("card#out")
+    st.set_binding("card#out", None)
+    st.reconcile_map("card#out", [], ["FL", "FR"])
+    assert st.map_for("card#out") == {}
+
+
+def test_the_map_is_kept_whichever_order_the_load_takes(tmp_path,
+                                                        monkeypatch):
+    """A profile load reconciles before it records the binding, and
+    another path records it first. Both are the same act and must
+    leave the same record -- the field caught one output with a
+    profile and no map beside two with both."""
+    st = _store(tmp_path, monkeypatch)
+    # reconcile first, bind after
+    st.reconcile_map("card#a", ["FL", "FR"], ["FL", "FR"])
+    st.set_binding("card#a", "abc123")
+    # bind first, reconcile after
+    st.set_binding("card#b", "abc123")
+    st.reconcile_map("card#b", ["FL", "FR"], ["FL", "FR"])
+    assert st.map_for("card#a") == st.map_for("card#b")
+    assert st.map_for("card#a") == {"FL": "FL", "FR": "FR"}
