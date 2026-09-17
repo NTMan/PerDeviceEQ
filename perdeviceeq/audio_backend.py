@@ -44,6 +44,8 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 
+from . import debug
+
 
 def _route_sig(routes):
     """A card's ports as the population sees them: the flags that
@@ -415,8 +417,14 @@ class AudioBackend(ABC):
         for cb in list(self._subs):
             try:
                 cb(self)
-            except Exception:
-                pass
+            except Exception as e:
+                # NOT SILENTLY. The catch is right -- one window's
+                # broken callback must not stop the next one's -- but
+                # swallowing the reason turned every such break into a
+                # ghost: the beat arrived, half of a window's refresh
+                # ran, and nothing anywhere said why the other half
+                # did not.
+                debug.crashed("pw state subscriber", e)
 
     def subscribe(self, cb):
         """Register cb(state), called after each observed change.
