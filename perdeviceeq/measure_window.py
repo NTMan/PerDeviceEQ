@@ -3241,10 +3241,16 @@ class MeasureWindow(Adw.Window):
         """
         if not (0 <= col < self.mic_ch):
             return
+        # A TARGET THE PROFILE DOES NOT HAVE YET IS STILL AN ANSWER.
+        # Which capsule sits in which ear is true before any earphone
+        # is measured, and the rig is set up FIRST -- so a profile
+        # with no sides is exactly the state this gesture is made in.
+        # Refusing the assignment there meant the capsules were
+        # pointed, the targets added afterwards, and both tabs still
+        # read "captures nothing" with nothing to show for the work.
         by_name = dict(self._stored_takes())
         for key in keys:
-            if key in self.ch_keys:
-                by_name[key] = col
+            by_name[key] = col
         self._takes_pending = by_name
         if col not in self.mic_cols:
             self.mic_cols = sorted(self.mic_cols + [col])
@@ -5725,7 +5731,16 @@ class MeasureWindow(Adw.Window):
         chans = {str(c): {} for c in self.mic_cols}
         by_name = (self._takes_pending if self._takes_pending is not None
                    else self._stored_takes())
-        for key in self.ch_keys:            # profile order, not dict
+        # THE PROFILE IN FRONT OF THE RIG DECIDES NOTHING HERE. This
+        # walked the open profile's targets and wrote only those, so
+        # every save quietly dropped the assignments made for any
+        # other target -- the ones just made on a profile that has no
+        # sides yet, and the ones made earlier on a wider one. The
+        # profile's own order is kept where it applies and the rest
+        # follows it, because order is display and this file is a
+        # record of the RIG.
+        rest = sorted(k for k in by_name if k not in self.ch_keys)
+        for key in list(self.ch_keys) + rest:
             col = by_name.get(key)
             if col in self.mic_cols:
                 chans[str(col)].setdefault("takes", []).append(key)
