@@ -326,14 +326,14 @@ def test_the_input_list_shows_one_row_per_jack():
     speaks for and the route it means."""
     rows = pwb.list_capture_entries(_card_dump())
     assert [r["name"] for r in rows][:2] == [
-        "alsa_input.usb-0d8c-00.analog-stereo#1",
-        "alsa_input.usb-0d8c-00.analog-stereo#2"]
+        "alsa_input.usb-0d8c-00.analog-stereo#mic",
+        "alsa_input.usb-0d8c-00.analog-stereo#linein"]
     assert all(r["node"] == "alsa_input.usb-0d8c-00.analog-stereo"
                for r in rows[:2])
     assert rows[0]["desc"].startswith("Microphone - ")
     assert rows[1]["desc"].startswith("Line In - ")
     assert rows[1]["route"]["active"] is True
-    # one port or none: the node speaks for itself, key unchanged
+    # no ports at all: nothing to name, so the node speaks for itself
     solo = [r for r in rows if r["name"] == "virtual-thing"][0]
     assert solo["node"] == "virtual-thing" and solo["route"] is None
 
@@ -341,14 +341,33 @@ def test_the_input_list_shows_one_row_per_jack():
 def test_the_graph_gets_the_node_and_the_rest_keeps_the_key():
     node = "alsa_input.usb-0d8c-00.analog-stereo"
     assert pwb.entry_key(node) == node
-    assert pwb.entry_key(node, {"index": 2}) == node + "#2"
-    assert pwb.split_entry(node + "#2") == (node, 2)
+    assert pwb.entry_key(node, {"index": 2, "name": "linein"}) == (
+        node + "#linein")
+    assert pwb.split_entry(node + "#linein") == (node, "linein")
     assert pwb.split_entry(node) == (node, None)
-    assert pwb.entry_node(node + "#2") == node
+    assert pwb.entry_node(node + "#linein") == node
     assert pwb.entry_node(node) == node
     assert pwb.split_entry(None) == (None, None)
-    # a name that merely contains a hash is not an entry key
-    assert pwb.split_entry("weird#name") == ("weird#name", None)
+    # nothing on one side of the separator is not an identity
+    assert pwb.split_entry("weird#") == ("weird#", None)
+    assert pwb.split_entry("#linein") == ("#linein", None)
+
+
+def test_one_identity_however_it_was_reached():
+    """The list and the device door spell a rig the same way.
+
+    They did not: the input list numbered the port and the door named
+    it, so a key written by one was never found by the other -- a
+    stored microphone came back as gone while it was plugged in, and
+    the card behind it emptied when the window asked its width.
+    """
+    d = _card_dump()
+    node = "alsa_input.usb-0d8c-00.analog-stereo"
+    rows = {r["name"]: r for r in pwb.list_capture_entries(d)}
+    live = pwb.key_from_routes(node, pwb.card_input_ports(node, d))
+    assert live in rows                      # the active jack has a row
+    assert rows[live]["route"]["active"] is True
+    assert pwb.entry_node(live) == node      # and the graph gets the node
 
 
 def test_an_output_route_cannot_crown_an_input_port():
@@ -578,6 +597,7 @@ def test_a_port_behind_another_profile_gets_a_row_of_its_own():
         "Aux stereo in", "Mic 2", "Mic 1"]
     # named the way the desktop names it: port, then card
     assert doors[-1]["desc"] == "Mic 1 - Topping M62"
+    # a door keeps numbers on both sides: no node, so no name
     dev, idx = pw.card_entry_target(doors[-1]["name"])
     assert (dev, idx) == (346, 9)                 # Mic 1
     assert pw.is_card_entry(doors[-1]["name"])

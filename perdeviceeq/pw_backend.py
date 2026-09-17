@@ -192,6 +192,22 @@ def active_port(routes):
                  if r.get("active")), None)
 
 
+ENTRY_SEP = "#"
+
+
+def port_key(node, port):
+    """A device key: the node and the hole in use, spelled once.
+
+    Every writer of an identity goes through here -- the device door,
+    the input list, the hook's own copy of the rule -- because two
+    spellings of one idea are two identities, and the second one is
+    always found by a window looking for the first.
+    """
+    if not node or not port:
+        return node
+    return "%s%s%s" % (node, ENTRY_SEP, port)
+
+
 def key_from_routes(node, routes):
     """device_key's rule, for a caller that already holds the routes.
 
@@ -205,7 +221,7 @@ def key_from_routes(node, routes):
         return node
     port = next((r.get("name") for r in (routes or [])
                  if r.get("active")), None)
-    return "%s#%s" % (node, port) if port else str(node)
+    return port_key(node, port) if node else node
 
 
 def live_device_key(node):
@@ -661,9 +677,6 @@ def set_card_profile(device_id, index):
                            % ((r.stderr or r.stdout) or "").strip())
 
 
-ENTRY_SEP = "#"
-
-
 def entry_key(node, route=None):
     """The identity of a capture ENTRY: a node, or a node on one of
     its card ports. GNOME lists ports as separate inputs and so do
@@ -671,10 +684,16 @@ def entry_key(node, route=None):
     becomes part of WHICH RIG this is -- and that is the truth:
     the microphone jack and the line jack of one card are different
     preamps, different gain and different noise, so they deserve
-    their own calibration rather than sharing one."""
+    their own calibration rather than sharing one.
+
+    The port is named, not numbered. It was numbered here first --
+    this list had its own spelling before a device key had one -- and
+    an index moves with the card's profile while a name does not, so
+    the name is the identity and the number is where it happens to
+    sit today."""
     if not route:
         return node
-    return "%s%s%d" % (node, ENTRY_SEP, int(route["index"]))
+    return port_key(node, route.get("name"))
 
 
 CARD_ENTRY = "card:"
@@ -694,25 +713,39 @@ def is_card_entry(key):
 
 def card_entry_target(key):
     """(device id, route index) from such a key, (None, None) from
-    anything else."""
-    head, idx = split_entry(key)
-    if idx is None or not is_card_entry(head):
+    anything else.
+
+    A door keeps NUMBERS on both sides: it stands for a port whose
+    node does not exist yet, so there is no node to name and the
+    index is all there is. It reads its own shape rather than the
+    entry splitter's, which now answers with a port NAME."""
+    head, sep, idx = str(key or "").rpartition(ENTRY_SEP)
+    if not sep or not is_card_entry(head):
         return None, None
     try:
-        return int(str(head)[len(CARD_ENTRY):]), idx
+        return int(head[len(CARD_ENTRY):]), int(idx)
     except ValueError:
         return None, None
 
 
 def split_entry(key):
-    """(node, route index or None) from an entry key. The graph gets
-    the NODE; everything else keeps the identity."""
+    """(node, port name or None) from an entry key. The graph gets
+    the NODE; everything else keeps the identity.
+
+    The last separator decides, and whatever follows it is the port.
+    The tail used to have to be a NUMBER, which quietly made this the
+    splitter for one of the two spellings: a key written by the
+    device door came back whole, the window looked for a live node
+    under a name no node carries, and the field read that as the
+    measurement microphone being gone while it sat plugged in. Node
+    names do not carry the separator, so there is nothing left for
+    the old guard to protect."""
     if not key:
         return key, None
-    node, sep, idx = str(key).rpartition(ENTRY_SEP)
-    if not sep or not idx.isdigit():
+    node, sep, port = str(key).rpartition(ENTRY_SEP)
+    if not sep or not port or not node:
         return key, None
-    return node, int(idx)
+    return node, port
 
 
 def entry_node(key):
@@ -763,6 +796,13 @@ def list_capture_entries_from(sources):
             e["node"] = s["name"]
             e["route"] = routes[0] if routes else None
             e["routes"] = routes
+            # ONE PORT IS STILL A PORT. Left under the bare node name,
+            # a single-jack rig was called one thing in this list and
+            # another by every record written about it, and the two
+            # only ever met when a stored key came back looking for
+            # its row. A node with no ports at all keeps its name:
+            # there is no hole to name.
+            e["name"] = entry_key(s["name"], e["route"])
             out.append(e)
             continue
         for r in routes:
