@@ -84,6 +84,11 @@ class InputMeter:
         self._rms = None
         self._dc = None
         self._n = 0
+        # WHAT IS BEING TAPPED, readable from outside. A meter that
+        # cannot say which rig it is reading can only be asked whether
+        # it is running, and "running" was taken for "right".
+        self.node = None
+        self.channels = 0
 
     # ---- lifecycle ---------------------------------------------------
     def start(self, node, channels):
@@ -101,6 +106,8 @@ class InputMeter:
                                         args=(self._proc, n),
                                         daemon=True)
         self._thread.start()
+        self.node = node
+        self.channels = n
 
     def alive(self):
         return self._thread is not None and self._thread.is_alive()
@@ -116,6 +123,8 @@ class InputMeter:
         thread, self._thread = self._thread, None
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.0)
+        self.node = None
+        self.channels = 0
         with self._lock:
             self._peaks = None
             self._rms = None

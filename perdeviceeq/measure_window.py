@@ -3893,27 +3893,39 @@ class MeasureWindow(Adw.Window):
                     and not self._mic_gone)
 
     def _sync_inmeter(self):
-        want = self._meter_wanted()
-        if want and not self._inmeter.alive():
-            src = self._selected_source() or {}
-            # its own claim to a live node, then the id. A door row
-            # declares node = None and carries no id now, but a meter
-            # is the last place to trust one field alone: what it taps
-            # must be the node the picker resolves to and nothing else.
-            node = src.get("id")
-            if node is None or not src.get("node"):
-                return
-            try:
-                self._inmeter.start(node, self.mic_ch)
-            except Exception as e:
-                debug.log("input meter: %s" % e)
-                return
-            if self._meter_tick is None:
-                self._meter_tick = GLib.timeout_add(
-                    66, self._on_meter_tick)
-        elif not want and self._inmeter.alive():
-            self._inmeter.stop()
-            self._meter_dark()
+        src = self._selected_source() or {}
+        # its own claim to a live node, then the id. A door row
+        # declares node = None and carries no id now, but a meter
+        # is the last place to trust one field alone: what it taps
+        # must be the node the picker resolves to and nothing else.
+        node = src.get("id") if src.get("node") else None
+        if not (self._meter_wanted() and node is not None):
+            if self._inmeter.alive():
+                self._inmeter.stop()
+                self._meter_dark()
+            return
+        # THE TAP IS ASKED WHAT IT IS READING, not merely whether it
+        # is running. Started once and left, it went on reading the
+        # rig that was chosen when the window opened: picking another
+        # microphone moved the picker, the calibration row and the
+        # width, and the bars beside them kept metering the old jack.
+        # The width belongs in the question too -- it is the column
+        # count the capture was opened with, and two rigs rarely
+        # share it.
+        if (self._inmeter.alive()
+                and self._inmeter.node == node
+                and self._inmeter.channels == self.mic_ch):
+            return
+        try:
+            self._inmeter.start(node, self.mic_ch)
+        except Exception as e:
+            debug.log("input meter: %s" % e)
+            return
+        # the levels on the bars belong to the rig that just left
+        self._meter_dark()
+        if self._meter_tick is None:
+            self._meter_tick = GLib.timeout_add(
+                66, self._on_meter_tick)
 
     def _meter_dark(self):
         """A meter with nothing behind it reads EMPTY.
