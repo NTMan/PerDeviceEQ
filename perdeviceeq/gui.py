@@ -3388,12 +3388,22 @@ class EqWindow(Adw.ApplicationWindow):
         sid = takes[-1].get("session") if takes else None
         last = (((m.get("sessions") or {}).get(sid) or {})
                 .get("sink") or {}).get("node_name")
+        # A BINDING IS KEYED BY DEVICE, THE WINDOW IS OPENED ON A
+        # NODE. Comparing the two lists directly never matched once a
+        # device became its node AND the hole in use, so this fell
+        # through to the first binding and handed the window a KEY --
+        # which is no sink's name, so the window reported the output
+        # device gone while it was playing. The live sinks are asked
+        # through the same door the binding was written with.
         homes = [n for n, x in self.store.bindings.items()
                  if x == p["id"]]
         here = {s["name"] for s in self.sinks}
+        homed = next((s["name"] for s in self.sinks
+                      if pw_backend.live_device_key(s["name"]) in homes),
+                     None)
         node = (last if last in here else
-                next((n for n in homes if n in here),
-                     last or (homes[0] if homes else None)))
+                homed or last
+                or (pw_backend.entry_node(homes[0]) if homes else None))
         self._open_measure_for(node or self.node, p["id"])
 
     def _open_measure_for(self, node, pid):
