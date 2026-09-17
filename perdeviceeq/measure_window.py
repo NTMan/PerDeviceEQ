@@ -4237,6 +4237,9 @@ class MeasureWindow(Adw.Window):
         if self.session is not None and self.session.takes_of(ch):
             return False
         key = self.ch_keys[ch] if 0 <= ch < len(self.ch_keys) else None
+        # NO PROFILE YET, NOTHING TYPED: a fresh window mints one only
+        # when something needs it, so until then the takes of this
+        # sitting are the whole answer.
         p = self.parent.store.get(self.edit_pid) if self.edit_pid else {}
         band = (((p or {}).get("channels") or {}).get(key) or {})
         return not (band.get("bands") or [])
@@ -4249,38 +4252,40 @@ class MeasureWindow(Adw.Window):
         Here a tab IS a target, so removing it would take its takes
         with it, and a measurement is the one thing in this window
         nobody can make again by clicking. So the button goes dead
-        instead, and says why."""
+        instead, and says why.
+
+        THE LIST BEING EDITED IS THE WINDOW'S OWN. A fresh window has
+        no profile yet -- one is minted at the first take, a retarget
+        or the close -- so reading the surviving targets back out of
+        the store answered with nothing and took every tab with it.
+        The profile mirrors this list where one exists; it is not
+        where the list comes from.
+
+        AND A TARGET IS NOT A ROUTE. That this profile has no such
+        side says nothing about which output plays which, so nothing
+        is pinned here: a target that is gone is one the resolver
+        stops handing out by itself, while a pin reading "feeds from
+        nothing" is a fact about the CARD. It outlives the profile
+        that wrote it and costs every other profile on that card the
+        channel, which is what a removal here never meant to say.
+        """
         ch = self._selected_ch
         if not (0 <= ch < len(self.ch_keys)) or not self._target_is_empty(ch):
             return
-        if not (0 <= ch < len(self.ch_keys)):
-            return
         target = self.ch_keys[ch]
-        store = self.parent.store
         if self.edit_pid:
+            store = self.parent.store
             p = store.get(self.edit_pid) or {}
-            keys = [k for k in (p.get("ch_keys")
-                                or list((p.get("channels") or {})))
-                    if k != target]
-            chans = {k: v for k, v in (p.get("channels") or {}).items()
-                     if k != target}
             body = dict(p)
-            body["channels"] = chans
-            body["ch_keys"] = keys
+            body["ch_keys"] = [
+                k for k in (p.get("ch_keys")
+                            or list((p.get("channels") or {})))
+                if k != target]
+            body["channels"] = {
+                k: v for k, v in (p.get("channels") or {}).items()
+                if k != target}
             store.save_user(body)
-        try:
-            cur = store.reconcile_map(
-                pw_backend.live_device_key(self.sink_node),
-                list(self.ch_keys),
-                self._pw_output_channels(self.sink_node))
-        except Exception:
-            cur = {}
-        for out, val in list(cur.items()):
-            if val == target:
-                store.pin_channel(pw_backend.live_device_key(self.sink_node), out, None)
-        p = store.get(self.edit_pid) if self.edit_pid else {}
-        self.ch_keys = list((p or {}).get("ch_keys")
-                            or list(((p or {}).get("channels") or {})))
+        self.ch_keys = [k for k in self.ch_keys if k != target]
         self.n_ch = len(self.ch_keys)
         self._selected_ch = min(ch, self.n_ch - 1)
         self._recompute_mic()
