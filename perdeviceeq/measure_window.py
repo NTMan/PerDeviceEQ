@@ -3704,7 +3704,16 @@ class MeasureWindow(Adw.Window):
             "on the capsule and watch which channel moves. With one "
             "capture channel in use it captures every target and "
             "there is nothing to say.")
-        add.set_sensitive(bool(self.mic_ch and self.ch_keys))
+        # THE MICROPHONE IS SETTLED FIRST and is not allowed to need
+        # anything from the step after it: not a target, not a route.
+        # A card with capture channels is the whole precondition. Made
+        # to wait for the profile's targets, this door was shut on the
+        # card that needs it most -- one naming no positions of its
+        # own starts with an empty target list BY DESIGN, and there a
+        # hand cannot say which capsule it is holding until it can
+        # open this. The popover already offers the whole vocabulary
+        # for the same reason.
+        add.set_sensitive(bool(self.mic_ch))
         add.set_popover(self._col_add_popover())
         end.append(add)
         row.set_child(box)
