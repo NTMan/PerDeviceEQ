@@ -4904,35 +4904,60 @@ class MeasureWindow(Adw.Window):
             # every control gray while "everything is there",
             # and nothing said WHICH of the four truths failed
             # or what NAME the window was looking for.
+            # THE LADDER RUNS ALONG THE CHAIN, and the order is the
+            # whole of it: each rung may speak only for the end it
+            # tests, and whatever is left over is not a spare rung to
+            # hang it on. The last one used to be a catch-all, so a
+            # microphone sitting plugged in and answering was
+            # reported OFFLINE because no capsule had been pointed at
+            # the target yet -- and the field went looking for the
+            # breakage in the wrong end of the chain.
             if not self.ch_keys:
                 miss = ("nothing to measure yet -- add a target and "
                         "the output it plays through")
-            elif (self._selected_ch not in self.mic_of
-                    and 0 <= self._selected_ch < len(self.ch_keys)
-                    and self.mic_cols):
-                miss = ("no microphone assigned to %s -- say which "
-                        "capture channel captures it"
-                        % self.ch_keys[self._selected_ch])
             elif not self._sink_present() or self._sink_gone:
                 miss = "sink offline: %s" % (self.sink_node
                                              or "?")
-            elif self.mic_picker.core.node:
-                miss = ("mic offline: %s"
-                        % self.mic_picker.core.node)
-            elif self.memory.mic_for(self.sink_node):
-                # the field's silent lock: a remembered mic LABEL
-                # that never resolved to a live node. None is not
-                # "gone" (you cannot leave without being born), so
-                # the mic banner sleeps -- this names the state and
-                # the way out.
-                miss = "mic not resolved -- re-pick the mic"
-            else:
+            elif not self.mic_picker.core.node:
                 # NOTHING was ever chosen for this sink, which is not
                 # a failure and must not read as one. "re-pick" says
                 # something was lost; the reflex it earned in the
-                # field was to go looking for the breakage. This is an
-                # invitation, and it is the only line here that is.
-                miss = "pick a measurement mic to start"
+                # field was to go looking for the breakage. That is
+                # an invitation, and it is the only line here that
+                # is. The other half is the field's silent lock: a
+                # remembered mic LABEL that never resolved to a live
+                # node. None is not "gone" (you cannot leave without
+                # being born), so the mic banner sleeps and this
+                # names the state and the way out.
+                miss = ("mic not resolved -- re-pick the mic"
+                        if self.memory.mic_for(self.sink_node)
+                        else "pick a measurement mic to start")
+            elif not self._source_present() or self._mic_gone:
+                miss = ("mic offline: %s"
+                        % self.mic_picker.core.node)
+            else:
+                # WHAT IS LEFT IS THE CAPSULE. The ladder walks the
+                # same truths the live test is made of, in the same
+                # order, so the last rung needs no condition of its
+                # own -- and cannot leave the pult speechless.
+                #
+                # AND WITH NO CAPSULE IN USE AT ALL this is still the
+                # sentence: the rule that one capsule captures every
+                # target answers the question the moment a wire is
+                # named, and until then nothing captures anything.
+                # Asking for mic_cols here made the honest line
+                # unreachable in exactly the case that needed it --
+                # the one a rig with no record of its own lands in.
+                # The range guard rides the NAME rather than the
+                # rung, as the same refusal at the measure door
+                # already does: a target out of range is still a
+                # target nothing captures, and a rung it falls past
+                # would leave the pult with nothing to say.
+                key = (self.ch_keys[self._selected_ch]
+                       if 0 <= self._selected_ch < len(self.ch_keys)
+                       else "it")
+                miss = ("no microphone assigned to %s -- say which "
+                        "capture channel captures it" % key)
             debug.mic_trace("pult %r core=%r"
                          % (miss, self.mic_picker.core.node))
             self._say(miss)
