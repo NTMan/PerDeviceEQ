@@ -270,6 +270,11 @@ def test_a_hand_alone_is_worth_a_rig_profile():
     # a handler firing during load must not mint a profile
     assert mp.worth_saving({}, None) is False
     assert mp.worth_saving({}, None, by_hand=False) is False
+    # A PICK IS ALSO SOMETHING SAID about a rig, and it must not
+    # need a calibration to survive: without this the hand chose a
+    # microphone, nothing was written, and the next opening went
+    # back to the rig remembered before it.
+    assert mp.worth_saving({}, None, chosen=True) is True
 
 
 # --- the channel record: a column's calibration and its sensitivity --------

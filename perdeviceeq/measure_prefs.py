@@ -39,7 +39,7 @@ def _atomic_write(path, obj):
 
 
 def worth_saving(cal, existing, by_hand=False, knees=None,
-                 columns=None):
+                 columns=None, chosen=False):
     """Is there anything about this rig worth writing down?
 
     A remembered rig, or a calibration, obviously. And a HAND: an
@@ -61,10 +61,16 @@ def worth_saving(cal, existing, by_hand=False, knees=None,
     walked -- so a declaration that did not count as worth saving
     would be forgotten before it could earn anything.
 
+    And a rig a hand CHOSE. A pick is a statement about this sink's
+    setup and it has to survive the window: with no calibration, no
+    working point and no declared column there was nothing here worth
+    writing, so the pick left no trace at all and the next opening
+    went back to whatever was remembered before it.
+
     Everything else is a handler firing during load, which must not
     mint a profile for every rig that is merely selected."""
     return (bool(cal) or existing is not None or bool(by_hand)
-            or bool(knees) or bool(columns))
+            or bool(knees) or bool(columns) or bool(chosen))
 
 
 KNEE_FIELDS = ("gain", "kind", "knee_axis_db", "flat_dbfs",

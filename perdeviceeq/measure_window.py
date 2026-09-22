@@ -265,9 +265,6 @@ class MeasureWindow(Adw.Window):
         self._prefill_from_memory()
         debug.timing("_prefill_from_memory", _t)
         _t = time.monotonic()
-        self._select_profile_rig()
-        debug.timing("_select_profile_rig", _t)
-        _t = time.monotonic()
         self._ensure_session(arm=False, quiet=True)
         debug.timing("_ensure_session", _t)
         _t = time.monotonic()
@@ -1953,25 +1950,6 @@ class MeasureWindow(Adw.Window):
                      % self.mic_picker.core.node)
         self._sync_cal_labels()
 
-    def _select_profile_rig(self):
-        """An edit belongs to its rig: the mic of the profile's
-        LAST sitting is selected at birth, present or gone --
-        never a silent substitute (field doctrine). Per-sink
-        memory still rules new profiles."""
-        m = ((self.edit_prof or {}).get("measurement") or {})
-        takes = m.get("takes") or []
-        sid = takes[-1].get("session") if takes else None
-        stored = (((m.get("sessions") or {}).get(sid) or {})
-                  .get("source") or {})
-        node = stored.get("node_match")
-        if not node:
-            return
-        e = self._entry_for(node)
-        self.mic_picker.select(
-            (e or {}).get("name") or node,
-            (e or {}).get("desc") or stored.get("name") or node)
-        self._adopt_selected_source()
-
     def _sync_cal_labels(self):
         """Set and unset must read apart at a glance: the row's
         subtitle wears the check mark and the chosen file's
@@ -3010,7 +2988,7 @@ class MeasureWindow(Adw.Window):
             self.mic_banner.set_revealed(False)
             self._update_pult()
         self._apply_entry_route()
-        self._adopt_selected_source()
+        self._adopt_selected_source(chosen=True)
 
     def _switch_card_for(self, key):
         """Put the card on the profile that carries this port, then
@@ -3055,7 +3033,10 @@ class MeasureWindow(Adw.Window):
 
         pw_backend.in_thread(work)
 
-    def _adopt_selected_source(self):
+    def _adopt_selected_source(self, chosen=False):
+        """chosen says a HAND moved the picker, which is the one
+        thing a load cannot claim: the rig it names is saved even
+        when nothing has been said about it yet."""
         src = self._selected_source()
         debug.mic_trace("adopt src=%r core=%r in_list=%s"
                      % ((src or {}).get("name"),
@@ -3089,7 +3070,7 @@ class MeasureWindow(Adw.Window):
         self._rebuild_page()
         self._rebuild_map_slots()
         self._sync_cal_labels()
-        self._persist_mic()
+        self._persist_mic(chosen=chosen)
         self._rebuild_session()
         # THE LEVEL TRAVELS ONE WAY ONLY: _ensure_session reads
         # the pair's memory when it builds the session, and
@@ -5724,7 +5705,7 @@ class MeasureWindow(Adw.Window):
             pass
         return False
 
-    def _persist_mic(self, by_hand=False):
+    def _persist_mic(self, by_hand=False, chosen=False):
         """Save the chosen mic + its per-capture-channel cal (bound to the
         source node) and remember the mic for this sink as soon as either
         changes -- not only at create."""
@@ -5743,9 +5724,15 @@ class MeasureWindow(Adw.Window):
         # writing down for the same reason a calibration is -- and a
         # rig with no calibration is every rig until one is chosen
         knees = self._knees_for_store(src, existing)
+        # BY_HAND AND CHOSEN ARE NOT ONE FLAG, and the file lost a
+        # pick because they were treated as one: by_hand empties the
+        # calibration block (an operator taking a cal off), while
+        # choosing a rig says nothing about calibration and must
+        # never erase one.
         if not measure_prefs.worth_saving(cal, existing, by_hand,
                                           knees=knees,
-                                          columns=self.mic_cols):
+                                          columns=self.mic_cols,
+                                          chosen=chosen):
             return
         chans = {str(c): {} for c in self.mic_cols}
         by_name = (self._takes_pending if self._takes_pending is not None
