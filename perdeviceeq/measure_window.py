@@ -3122,9 +3122,14 @@ class MeasureWindow(Adw.Window):
         wrong jack from moving to the right one. It also never
         lifted -- _entered is set by the first sweep and cleared by
         nothing, so a sweep cancelled with Stop, or a take deleted,
-        left the row dead with nothing recorded."""
-        if self.session is None:
-            return
+        left the row dead with nothing recorded.
+
+        A window that opened with no rig has nothing to tear down and
+        everything to build, so there is no early return here: the
+        guard that stood at the top made the one door to a first
+        session unreachable, and a mic picked in an open window left
+        the canvas empty until the window was opened again.
+        """
         if self._entered:
             try:
                 self.session.__exit__(None, None, None)
@@ -4978,23 +4983,20 @@ class MeasureWindow(Adw.Window):
         __enter__ (the tempdir, foreign-stream muting, the profile
         bypass, the start volume) waits for the first sweep. quiet
         suppresses the dialogs for the opportunistic open-time
-        attempt -- no mic picked yet is not an error there."""
+        attempt -- no mic picked yet is not an error there.
+
+        CONSTRUCTION ASKS FOR NOTHING LIVE, which is his rule: the
+        takes belong to the PROFILE and not to the rig that recorded
+        them. A microphone can be renamed, unplugged or thrown away
+        while the profile it measured is alive and being read, and a
+        window that hides six recorded takes because nothing is
+        plugged in is answering a question nobody asked. So the
+        session is built unresolved -- the shape it was designed for,
+        an absent home is livable -- and the canvas adopts. What
+        needs a live rig is ARMING, and the two refusals live there
+        now."""
         if self.session is None:
             mic = self.mic_picker.core.node
-            if not mic:
-                if not quiet:
-                    self._error("Pick a measurement mic first.")
-                return False
-            if not self.mic_ch:
-                # A REMEMBERED NAME THAT NEVER RESOLVED still fills
-                # the picker, and the width comes from the live card,
-                # so there is none to build a session on. It used to
-                # be two by default, which built a session for a
-                # microphone that is not there.
-                if not quiet:
-                    self._error("That microphone is not on the "
-                                "system right now.")
-                return False
             # A SESSION IS BUILT ONCE, in the constructor, so nothing
             # about a single run may be settled here. Which sweeps
             # hunt is not a property of a session at all: the
@@ -5005,7 +5007,11 @@ class MeasureWindow(Adw.Window):
             cfg = ms.SessionConfig(
                 sink=self.sink_node,
                 source=pw_backend.entry_node(mic),
-                channels=self.mic_ch,
+                # the CARD's width where there is a card. One column
+                # holds a canvas, and a session built to SHOW takes
+                # records nothing with that number: the arming half
+                # below is what a sweep has to get past.
+                channels=self.mic_ch or 1,
                 mute_others=True, device=self.sink_desc,
                 play_map=self._play_map(),
                 start_volume=self.memory.volume_for(
@@ -5032,6 +5038,19 @@ class MeasureWindow(Adw.Window):
                 return False
             self._adopt_canvas()
         if arm and not self._entered:
+            if not self.mic_picker.core.node:
+                if not quiet:
+                    self._error("Pick a measurement mic first.")
+                return False
+            if not self.mic_ch:
+                # A REMEMBERED NAME THAT NEVER RESOLVED still fills
+                # the picker, and the width comes from the live card,
+                # so there is nothing to sweep into. The canvas above
+                # does not care: those takes are already recorded.
+                if not quiet:
+                    self._error("That microphone is not on the "
+                                "system right now.")
+                return False
             try:
                 self.session.__enter__()
                 self._entered = True

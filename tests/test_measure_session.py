@@ -675,6 +675,29 @@ def test_offline_birth_carries_the_canvas(shim_state, tmp_path):
     assert ses.takes_of(0) == []
 
 
+def test_a_canvas_needs_no_microphone(tmp_path):
+    """And no microphone either: the rig that recorded a canvas may
+    be renamed, unplugged or in a bin, while the profile it measured
+    is alive and being read. So a session with no source at all
+    constructs, adopts and computes; only arming asks the graph."""
+    cfg = ms.SessionConfig(sink="test_sink", source=None, channels=1,
+                           samples=131072,
+                           save_dir=str(tmp_path / "takes"))
+    ses = ms.MeasureSession(cfg, resolve=False)
+    assert ses.source is None
+    freqs = ms.mc.log_grid()
+    ghost = ms.TakeRecord(
+        "abc123def456", 0, freqs,
+        [0.0 for _ in freqs],
+        5.0, 45.0, -6.0, 0, 0, None,
+        noise_dbfs=-80.0, capture_channel=0,
+        created_utc="2026-07-10T00:00:00+00:00")
+    ses.adopt_take(0, ghost)
+    assert len(ses.takes_of(0)) == 1
+    mean, _spread = ses.average_and_spread(0)
+    assert mean is not None
+
+
 def test_enter_resolves_a_deferred_birth(shim_state, tmp_path):
     """resolve=False defers the graph to __enter__: the live
     preconditions run FRESH at arming and the session fills its
