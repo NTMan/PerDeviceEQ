@@ -8,6 +8,11 @@
 #   * a headless import smoke of the Gtk modules
 #   * the full pytest suite (under xvfb: with gi present, the
 #     widget-building tests wake up and need a display)
+# A second job builds the RPM from the pushed tree in a clean
+# Fedora with only rpm-build and the spec's BuildRequires, as
+# COPR does. Without it the spec first runs on release day,
+# and with no GTK or numpy installed its %check (the installed
+# launcher, --help) shows the command line starts without them.
 name: Tests
 on:
   push:
@@ -78,3 +83,19 @@ jobs:
         run: |
           export PATH="$PWD/tests/shims:$PATH"
           xvfb-run -a python3 tools/hig_audit.py --window
+
+  rpm:
+    name: RPM build (Fedora)
+    runs-on: ubuntu-24.04
+    container:
+      image: registry.fedoraproject.org/fedora:latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install rpm-build and the spec's BuildRequires
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+              rpm-build dnf5-plugins
+          dnf builddep -y --setopt=install_weak_deps=False \
+              per-device-eq.spec
+      - name: Build from the checkout
+        run: rpmbuild -bb --build-in-place per-device-eq.spec
