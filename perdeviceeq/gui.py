@@ -1806,9 +1806,9 @@ class EqWindow(Adw.ApplicationWindow):
             self._maybe_follow(self._pw.default_sink)
 
     def _on_pw_state(self, st):
-        """PWState refresh: keep the device model current and, with follow
+        """Heartbeat refresh: keep the device model current and, with follow
         on and no measure window open, chase the default sink. One poll in
-        pipewire feeds this instead of a per-window timer."""
+        the backend feeds this instead of a per-window timer."""
         self.sinks = st.sinks
         rows = pw_backend.list_playback_entries_from(st.sinks)
         self.picker.refresh(rows)

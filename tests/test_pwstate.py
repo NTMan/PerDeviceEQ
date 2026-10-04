@@ -1,5 +1,6 @@
-"""PWState: one snapshot (sinks/sources/default) with change detection and
-subscriptions. GTK-free core, driven by update() against synthetic dumps."""
+"""The backend's heartbeat state: one snapshot (sinks/sources/default)
+with change detection and subscriptions. GTK-free core, driven by
+update() against synthetic dumps."""
 from perdeviceeq import pw_backend as pwb
 
 

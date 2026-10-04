@@ -18,8 +18,8 @@ living memory, and the next one should cost one module, not a
 rewrite. Sibling heirs for other platforms make the program
 cross-platform without touching anything above this line.
 
-PWState's read task grows into this class: the graph poller becomes
-the observed-side sync of the heir, windows subscribe here instead.
+Windows subscribe here, and the heir's heartbeat -- one poll for
+every window -- keeps the observed side in sync.
 
 The moratorium (a measurement in progress):
 

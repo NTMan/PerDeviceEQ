@@ -18,9 +18,9 @@ The windows differ around the picker, not inside it: the main
 window wraps it in Follow-the-default (on by default) and vetoes
 picks while following; the Measure window never follows and
 vetoes picks while a sweep runs. Both feed it from the one
-PWState heartbeat.
+heartbeat of the backend.
 
-Split in the pipewire.py tradition: PickerCore is plain data and
+Split in two: PickerCore is plain data and
 plain rules, importable and testable with no GTK at all;
 NodeMenu is the thin GTK shell around a GtkMenuButton. It shows
 the core's TWO levels -- a card with several nodes becomes a
@@ -207,9 +207,8 @@ class NodeMenu:
     def __init__(self, button, on_pick, ellipsis=None,
                  placeholder=None, action="pick"):
         # gi arrives here, not at module scope: the core above stays
-        # importable in the GTK-less test sandbox (the pipewire.py
-        # rule), and by construction time the app has long loaded gi
-        # with its versions required.
+        # importable in the GTK-less test sandbox, and by construction
+        # time the app has long loaded gi with its versions required.
         from gi.repository import Gio, GLib
         self._Gio = Gio
         self._GLib = GLib

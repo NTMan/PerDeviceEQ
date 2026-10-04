@@ -273,7 +273,7 @@ class MeasureWindow(Adw.Window):
         debug.timing("MeasureWindow total", _born)
         self._pw_unsub = self._pw.subscribe(self._on_pw_state)
         self._pw.start()
-        # Birth reconcile: PWState notifies on CHANGE only, so a
+        # Birth reconcile: the backend notifies on CHANGE only, so a
         # home already gone at open would stay un-announced until
         # the graph happens to move -- no banner, no locks, a
         # split state (reachable since the edit opens on an
@@ -2828,7 +2828,7 @@ class MeasureWindow(Adw.Window):
 
     # ---- callbacks (config) -----------------------------------------------
     def _on_pw_state(self, st):
-        """The shared PWState refresh drives the whole window: keep the
+        """The shared heartbeat refresh drives the whole window: keep the
         input list current, then reconcile the target sink against the
         graph. One pipewire poll feeds this instead of a window timer."""
         self._refresh_sources_from(st.sources)
