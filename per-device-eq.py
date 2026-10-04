@@ -5,8 +5,7 @@ per-device-eq -- per-output-device parametric EQ for PipeWire 1.6+ (entry point)
 
 Thin launcher: locate the `perdeviceeq` package (next to this script when run
 from a checkout, or /usr/share/per-device-eq when installed), dispatch the CLI,
-and launch the GTK/libadwaita GUI. Implementation lives in the package:
-config, eq, profiles, pipewire, integration, cli, gui.
+and launch the GTK/libadwaita GUI. Implementation lives in the package.
 
   --list-sinks           list sinks (default marked with *)
   --list-sources         list capture sources

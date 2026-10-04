@@ -12,7 +12,7 @@ Source0:        %{url}/archive/v%{version}/%{reponame}-%{version}.tar.gz
 
 BuildArch:      noarch
 
-# python3-devel: interpreter for the import check + python-rpm-macros
+# python3-devel: interpreter for the launcher check + python-rpm-macros
 # (provides the py_byte_compile macro used at install time)
 BuildRequires:  python3-devel
 BuildRequires:  desktop-file-utils
@@ -91,12 +91,11 @@ install -Dpm0644 data/%{appid}.metainfo.xml \
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/%{appid}.desktop
 appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/%{appid}.metainfo.xml
-# import check: the package must import cleanly (no GTK needed here);
-# the .pyc were produced by the byte-compile step above and are packaged.
-%{python3} -c "import sys; sys.path.insert(0, '%{buildroot}%{_datadir}/%{name}'); \
-import perdeviceeq.config, perdeviceeq.eq, perdeviceeq.profiles, \
-perdeviceeq.pipewire, perdeviceeq.integration, perdeviceeq.cli, \
-perdeviceeq.measure_prefs"
+# the installed launcher must start: it finds the package under
+# <prefix>/share the way it does on a user's system and imports what
+# the command line needs (the GUI is imported only after the
+# arguments are parsed, so no GTK is needed here)
+%{python3} %{buildroot}%{_bindir}/%{name} --help
 
 # On full removal (not upgrade), tell the user what the package
 # cannot do for them: the per-user integration, if installed, is
