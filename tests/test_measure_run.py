@@ -24,6 +24,7 @@ import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
 from perdeviceeq import level_run
+from perdeviceeq.config import COMMON_KEY, STRIP
 from perdeviceeq import measure_session as ms
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,7 +89,7 @@ def test_end_to_end_two_takes(tmp_path):
     for n in (1, 2):
         snap = json.loads((state / ("meta_at_play_%d.json" % n))
                           .read_text())
-        assert "test_sink" not in snap                # silent during sound
+        assert snap.get("test_sink") == STRIP     # nothing during the sound
 
     # path verification: direct link into the real device, nothing else,
     # and the capture pinned to the requested source
@@ -160,9 +161,9 @@ def test_profile_restored_when_playback_fails(tmp_path):
     assert proc.returncode == 1
     assert "pw-play failed" in proc.stderr
     assert not out.exists()
-    # the key was cleared for the (failed) sound...
+    # the device played nothing for the (failed) sound...
     snap = json.loads((state / "meta_at_play_1.json").read_text())
-    assert "test_sink" not in snap
+    assert snap.get("test_sink") == STRIP
     # ...and put back verbatim by the context exit
     assert meta_now(state) == {"test_sink": GRAPH}
 
@@ -294,14 +295,19 @@ def test_playback_pinned_when_default_changes(tmp_path):
 
 # --- no profile bound: nothing to bypass, nothing to restore ---------------
 
-def test_clean_sink_needs_no_bypass(tmp_path):
+def test_a_sink_with_no_value_of_its_own_is_stripped_too(tmp_path):
+    """It plays the common entry, so it is stripped like any other, and
+    afterwards it follows that entry again."""
     proc, out, state = run_measure(tmp_path, seed_meta=False)
     assert proc.returncode == 0, proc.stderr
     eq = json.loads(out.read_text())["eq_profile_state"]
     assert eq["profile"] is None
     assert eq["profile_source"] is None
-    assert eq["bypass"] is False
-    assert eq["restored"] is None
+    assert eq["bypass"] is True
+    assert eq["restored"] is True
+    snap = json.loads((state / "meta_at_play_1.json").read_text())
+    assert snap.get("test_sink") == STRIP
+    assert meta_now(state) == {"test_sink": COMMON_KEY}
 
 
 # --- persisted-only profile (cold boot, GUI unopened): seed from WpState ----

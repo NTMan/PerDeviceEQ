@@ -5,6 +5,7 @@ import types
 
 import pytest
 
+from perdeviceeq import config
 from perdeviceeq import pw_backend as pwb
 from perdeviceeq.pw_backend import PipeWireBackend, StreamHandle
 
@@ -65,8 +66,12 @@ def test_graph_publish_and_clear_speak_metadata(rig):
         c[:5] == ["pw-metadata", "-n", "per-device-eq", "0",
                   "test_sink"] and "{ nodes = [] }" in c
         for c in calls)
-    assert any(c[:3] == ["pw-metadata", "-n", "per-device-eq"]
-               and "-d" in c for c in calls)
+    # no value of its own is WRITTEN: a delete of a key the metadata
+    # does not hold is never announced, and after a restart it holds
+    # none of what the hook persisted
+    assert ["pw-metadata", "-n", "per-device-eq", "0", "test_sink",
+            "@taste"] in calls
+    assert not any(c[:1] == ["pw-metadata"] and "-d" in c for c in calls)
 
 
 def test_volume_resolves_the_sink_and_speaks_wpctl(rig):
@@ -111,6 +116,25 @@ def test_read_graph_falls_back_to_wpstate(rig, monkeypatch):
     monkeypatch.setattr(pwb, "metadata_get",
                         lambda k: "LIVE")
     assert b._read_graph("test_sink") == ("LIVE", "metadata")
+
+
+def test_following_the_common_entry_reads_as_no_value_of_its_own(
+        rig, monkeypatch):
+    b, _ = rig
+    monkeypatch.setattr(pwb, "metadata_get", lambda k: "@taste")
+    assert b._read_graph("test_sink") == (None, "metadata")
+    monkeypatch.setattr(pwb, "metadata_get", lambda k: "")
+    assert b._read_graph("test_sink") == ("", "metadata")
+
+
+def test_explicitly_nothing_is_read_back_from_the_state_file(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    (tmp_path / "wireplumber").mkdir()
+    (tmp_path / "wireplumber" / "per-device-eq").write_text(
+        "[per-device-eq]\n@protocol=3\ndev#port=\n", encoding="utf-8")
+    assert pwb.wpstate_get("dev#port") == ""
+    assert pwb.wpstate_get("other") is None
 
 
 def test_wpstate_escapes_are_undone():
@@ -1156,21 +1180,22 @@ def _metadata_dump(name="per-device-eq", entries=None):
     return [{"id": 66, "type": "PipeWire:Interface:Metadata",
              "props": {"metadata.name": name},
              "metadata": entries if entries is not None else
-             [{"subject": 0, "key": "protocol", "value": 2}]}]
+             [{"subject": 0, "key": "protocol",
+               "value": int(config.PROTOCOL)}]}]
 
 
 def test_the_hook_is_read_from_the_snapshot():
     """No second process per beat: the metadata object carries its
     whole content in the dump the program already takes."""
     found, ver = PipeWireBackend().hook_protocol(_metadata_dump())
-    assert (found, ver) == (True, "2")
+    assert (found, ver) == (True, config.PROTOCOL)
 
 
 def test_the_stamp_is_normalised_to_text():
     """It arrives as a JSON number while the hook writes a string;
     comparing the two raw is false forever."""
     _, ver = PipeWireBackend().hook_protocol(_metadata_dump())
-    assert ver == "2" and ver == __import__('perdeviceeq.config', fromlist=['x']).PROTOCOL
+    assert ver == config.PROTOCOL
 
 
 def test_another_metadata_object_is_not_ours():

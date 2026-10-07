@@ -971,18 +971,12 @@ def resolve_sink_id(name, dump=None):
     return nid
 
 def metadata_set(node_name, graph):
-    """Write a device's graph into the 'per-device-eq' metadata. The WP hook is
-    subscribed and applies it to the live node (and on every later reconnect).
-    Stored as a plain string (no type tag), which the hook reads verbatim."""
+    """Write a device's value into the 'per-device-eq' metadata: a graph,
+    STRIP or COMMON_KEY (config.py). The WP hook is subscribed and applies
+    it to the live node (and on every later reconnect). Stored as a plain
+    string (no type tag), which the hook reads verbatim."""
     r = _run(["pw-metadata", "-n", METADATA_NAME, "0", node_name, graph])
     return r.returncode == 0 and "Found" in (r.stdout + r.stderr)
-
-
-def metadata_clear(node_name):
-    """Delete a device's key (Clean / unbound). The hook removes the
-    graph from the live node."""
-    r = _run(["pw-metadata", "-n", METADATA_NAME, "-d", "0", node_name])
-    return r.returncode == 0
 
 _POS_FALLBACK = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"]
 
@@ -1142,7 +1136,7 @@ import subprocess
 import time
 import sys
 
-from .config import METADATA_NAME
+from .config import COMMON_KEY, METADATA_NAME
 from .audio_backend import AudioBackend
 
 
@@ -1197,7 +1191,7 @@ def wpstate_get(key):
                     continue
                 k, v = line.split("=", 1)     # a key's own '=' is \e
                 if _wp_unescape(k) == key:
-                    return v or None
+                    return v                  # "" is STRIP, kept as is
     except OSError:
         pass
     return None
@@ -1461,9 +1455,7 @@ class PipeWireBackend(AudioBackend):
         return device_key(sink)
 
     def _push_graph(self, device, value):
-        if value is None:
-            return metadata_clear(device)
-        return metadata_set(device, value)
+        return metadata_set(device, COMMON_KEY if value is None else value)
 
     def _push_volume(self, device, cubic):
         sink_id = resolve_sink_id(device)
@@ -1542,7 +1534,7 @@ class PipeWireBackend(AudioBackend):
     def _read_graph(self, device):
         value = metadata_get(device)
         if value is not None:
-            return value, "metadata"
+            return (None if value == COMMON_KEY else value), "metadata"
         value = wpstate_get(device)
         return value, ("wpstate" if value is not None else None)
 
@@ -1565,7 +1557,8 @@ class PipeWireBackend(AudioBackend):
     def _restore_failed(self, device, value):
         print("CRITICAL: failed to restore the EQ profile; put it "
               "back manually:\n  pw-metadata -n per-device-eq 0 "
-              "'%s' '%s'" % (device, value), file=sys.stderr)
+              "'%s' '%s'" % (device, COMMON_KEY if value is None
+                             else value), file=sys.stderr)
 
     def missing_requirements(self):
         """Command-line tools the platform still needs."""

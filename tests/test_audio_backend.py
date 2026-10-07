@@ -4,6 +4,7 @@ no PipeWire, no GTK -- the platform-free half must hold everywhere."""
 import pytest
 
 from perdeviceeq.audio_backend import AudioBackend
+from perdeviceeq.config import STRIP
 
 
 class FakeBackend(AudioBackend):
@@ -19,6 +20,7 @@ class FakeBackend(AudioBackend):
 
     def _push_graph(self, device, value):
         self.log.append(("graph", device, value))
+        self.server_graph = (value, "metadata")
         return True
 
     def _read_graph(self, device):
@@ -90,7 +92,7 @@ def test_begin_strips_mutes_and_doses():
     f.server_volume = 0.61
     state = f.moratorium_begin("dev", 0.074)
     assert f.log[-3:] == [("mutes", "dev", True),
-                          ("graph", "dev", None),
+                          ("graph", "dev", STRIP),
                           ("volume", "dev", 0.074)]
     assert state["bypass"] is True
     assert state["profile"] == "TASTE"
@@ -157,15 +159,20 @@ def test_seed_restores_what_the_server_had():
     assert state["profile_source"] == "wpstate"
     f.moratorium_end()
     tail = [e for e in f.log if e[0] == "graph"]
-    assert tail == [("graph", "dev", None), ("graph", "dev", "SRV")]
+    assert tail == [("graph", "dev", STRIP), ("graph", "dev", "SRV")]
     assert ("volume", "dev", 0.61) in f.log
 
 
-def test_clean_server_means_no_strip_and_no_restore():
+def test_a_device_with_no_value_of_its_own_is_stripped_too():
+    """It plays the common entry, so there is a graph on it to strip;
+    the restore puts it back to following that entry."""
     f = FakeBackend()
-    f.moratorium_begin("dev", None, mute_others=False)
+    state = f.moratorium_begin("dev", None, mute_others=False)
+    assert state["bypass"] is True and state["profile"] is None
     f.moratorium_end()
-    assert all(e[0] != "graph" for e in f.log)
+    assert [e for e in f.log if e[0] == "graph"] == \
+        [("graph", "dev", STRIP), ("graph", "dev", None)]
+    assert state["restored"] is True
     assert all(e[0] != "volume" for e in f.log)
     assert all(e[0] != "mutes" for e in f.log)
 
@@ -250,7 +257,7 @@ def test_the_moratorium_strips_the_graph_the_device_wears():
     state = f.moratorium_begin("dev", 0.074)
     assert state["metadata_key"] == "dev#port"
     assert state["profile"] == "G" and state["bypass"] is True
-    assert ("graph", "dev#port", None) in f.log
+    assert ("graph", "dev#port", STRIP) in f.log
     assert set(f.graph_reads) == {"dev#port"}
     assert ("volume", "dev", 0.074) in f.log        # the knob is the node's
     f.moratorium_end()
@@ -267,5 +274,5 @@ def test_a_write_queued_for_the_device_outranks_the_restore():
     f.publish_graph("dev#port", "NEW")
     f.moratorium_end()
     graphs = [e for e in f.log if e[0] == "graph"]
-    assert graphs == [("graph", "dev#port", None),
+    assert graphs == [("graph", "dev#port", STRIP),
                       ("graph", "dev#port", "NEW")]

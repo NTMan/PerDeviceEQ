@@ -42,13 +42,13 @@ from . import (__version__, chantabs, config, debug, eq, level_run,
 
 import numpy as np
 from .picker import NodeMenu
-from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE,
+from .config import (APP_ID, CLEAN_ID, COMMON_KEY, FAVORITES_FILE, STRIP,
                      load_ui_state, save_ui_state,
                      UI_FILE_CANDIDATES, read_state)
 from . import level_strip
 from .peq_view import CollapsibleCard, PeqView
 from .preferences import PreferenceLayers
-from .profiles import ProfileStore, editor_body
+from .profiles import ProfileStore, common_graph, editor_body
 
 DB_MAX = 24.0
 FMIN, FMAX = config.FMIN, config.FMAX
@@ -2678,7 +2678,9 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _apply_now(self):
         """Publish the device's live state to the per-device-eq metadata:
-        the graph string, or key removal when bypassed / empty.
+        its own graph, STRIP under Bypass, or no value of its own -- it
+        then plays the common entry, which a device with no profile
+        publishes here as well.
 
         The publish rides the backend authority: the editor's wish
         lands in its desired store and the store pushes the server,
@@ -2693,12 +2695,21 @@ class EqWindow(Adw.ApplicationWindow):
         node = self._dev()
         auth = pw_backend.backend()
         if self.bypass_row.get_active():
-            pw_backend.in_thread(lambda: auth.clear_graph(node))
+            pw_backend.in_thread(lambda: auth.publish_graph(node, STRIP))
+            return
+        taste = self.pref_layers.active_bands()
+        manual = None if self.preamp_auto else self.preamp
+        if self.current_pid == CLEAN_ID:
+            common = common_graph(taste, manual)
+
+            def follow():
+                auth.publish_graph(COMMON_KEY, common)
+                auth.clear_graph(node)
+            pw_backend.in_thread(follow)
             return
         body = self._working_body()
-        graph = eq.device_graph(body, self._graph_slots(body),
-                                self.pref_layers.active_bands(),
-                                None if self.preamp_auto else self.preamp)
+        graph = eq.device_graph(body, self._graph_slots(body), taste,
+                                manual)
         if graph is None:
             pw_backend.in_thread(lambda: auth.clear_graph(node))
         else:

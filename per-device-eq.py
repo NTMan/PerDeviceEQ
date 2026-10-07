@@ -123,7 +123,7 @@ def main():
         print("hook + config installed; WirePlumber restarted once..."
               if res["hook"] else "hook already up to date")
         if res["total"]:
-            print("sent %d of %d device(s) with a graph"
+            print("sent %d of %d entries"
                   % (res["sent"], res["total"]))
         print({"packaged": "desktop entry: provided by the system "
                            "package",

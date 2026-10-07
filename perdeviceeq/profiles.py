@@ -19,9 +19,17 @@ import hashlib
 import os, sys, json, uuid
 
 from .config import (SYS_PROFILE_DIRS, USER_PROFILES_DIR, BINDINGS_FILE,
-                     CONFIG_DIR, CLEAN_ID, SCHEMA_VERSION, V3_BLOCKS,
-                     load_ui_state, read_state)
+                     CONFIG_DIR, CLEAN_ID, COMMON_KEY, SCHEMA_VERSION,
+                     STRIP, V3_BLOCKS, load_ui_state, read_state)
 from .eq import device_graph, resolve_slots
+
+
+def common_graph(taste, manual=None):
+    """The common entry (config.COMMON_KEY): what a device with no
+    profile of its own plays -- the listener's taste and preamp, in the
+    form that fits a node of any width. STRIP when that is nothing."""
+    g = device_graph({}, None, taste, manual)
+    return STRIP if g is None else g
 from .preferences import PreferenceLayers
 
 
@@ -527,19 +535,20 @@ class ProfileStore:
         return device_graph(p, self.slots_for(node), taste, manual)
 
     def wire_state(self, listener=None):
-        """WHAT THE HOOK SHOULD BE HOLDING: {device: graph or None}.
+        """WHAT THE HOOK SHOULD BE HOLDING: {key: value}.
 
-        Pure data -- no publishing here. A device bound to a profile
-        gets its graph; a device bound to Clean, to nothing, or one
-        whose profile, taste and preamp leave nothing to play gets
-        None, which means the key must be cleared rather than left as
-        it was. The store is
-        the only thing that knows this, and the backend is the only
-        thing that knows how to put it on the wire, so neither does
-        the other's half.
+        Pure data -- no publishing here. The common entry is always
+        there (common_graph). A device bound to a profile gets its
+        graph; a device bound to Clean, or one whose profile, taste and
+        preamp leave nothing to play, gets None: no value of its own,
+        so it plays the common entry. The store is the only thing that
+        knows this, and the backend is the only thing that knows how
+        to put it on the wire, so neither does the other's half.
         """
-        wire = {}
-        graphs = self.presets(listener)
+        taste, manual = listener if listener is not None \
+            else self._listener()
+        wire = {COMMON_KEY: common_graph(taste, manual)}
+        graphs = self.presets((taste, manual))
         for node, pid in self.bindings.items():
             wire[node] = graphs.get(node) if pid and pid != CLEAN_ID \
                 else None

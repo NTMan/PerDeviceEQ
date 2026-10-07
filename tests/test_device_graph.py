@@ -33,6 +33,30 @@ def _peak(bands):
     return eq.curve_max_db(0.0, [eq.Band.from_dict(b) for b in bands])
 
 
+# ---- the common entry -------------------------------------------------------
+
+def test_the_common_entry_is_the_listener_s_layers_in_any_width():
+    g = P.common_graph([BASS], None)
+    assert 'inputs = [ "eq:In 1" ]' in g and 'outputs = [ "eq:Out 1" ]' in g
+    assert "freq = 50, gain = 12" in g
+    assert "gain = -12" in g                     # Auto over the taste alone
+    assert P.common_graph([], None) == P.STRIP
+    assert P.common_graph([], -3.0) != P.STRIP   # a ride with no taste
+
+
+def test_the_window_publishes_the_contract():
+    """Bypass is explicitly nothing; a device with no profile follows the
+    common entry, which the window publishes with it."""
+    fn = next(n for n in ast.walk(ast.parse(pathlib.Path(
+        eq.__file__).with_name("gui.py").read_text(encoding="utf-8")))
+        if isinstance(n, ast.FunctionDef) and n.name == "_apply_now")
+    pubs = [[ast.unparse(a) for a in c.args] for c in ast.walk(fn)
+            if isinstance(c, ast.Call)
+            and ast.unparse(c.func) == "auth.publish_graph"]
+    assert ["node", "STRIP"] in pubs
+    assert ["COMMON_KEY", "common"] in pubs
+
+
 # ---- Auto -------------------------------------------------------------------
 
 def test_auto_counts_a_channel_no_profile_channel_feeds():

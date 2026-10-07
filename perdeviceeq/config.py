@@ -47,7 +47,17 @@ METADATA_NAME  = "per-device-eq"
 # compares at startup and offers a one-click reinstall on
 # mismatch. Bump on any breaking change to the graph string or
 # the metadata contract; additive changes ride free.
-PROTOCOL = "2"
+PROTOCOL = "3"
+# The metadata contract, the same in the hook (COMMON and STRIP there,
+# keep them equal). A device's value is its own graph, STRIP for
+# explicitly nothing (Bypass, a measurement in progress), or COMMON_KEY
+# for "no value of its own" -- written, never a deleted key: the metadata
+# announces a delete only for a key it holds, and after a restart it holds
+# none of what the hook keeps. A device with no value of its own and a
+# card behind it plays the entry under COMMON_KEY: the listener's taste
+# and preamp, in the form that fits a node of any width.
+COMMON_KEY = "@taste"
+STRIP = ""
 # the static hook is shipped next to the package (repo) or system-wide (package)
 HOOK_SRC_CANDIDATES = [os.path.join(_DATA_ROOT, "wireplumber", WP_SCRIPT_NAME),
                        "/usr/share/per-device-eq/wireplumber/" + WP_SCRIPT_NAME]

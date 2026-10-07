@@ -14,10 +14,12 @@
 -- EQ filter-graph on each sink, and the sole owner of the persisted state.
 --
 -- How it works:
---   * graphs are kept in an in-memory table `graphs` (node.name -> graph string),
---     which is the runtime source of truth;
+--   * graphs are kept in an in-memory table `graphs` (device key -> graph
+--     string), which is the runtime source of truth;
 --   * on startup the table is seeded from WpState (~/.local/state/wireplumber/),
---     because the metadata object is empty after a PipeWire restart;
+--     because the metadata object is empty after a PipeWire restart; only a
+--     table written under this PROTOCOL is read -- an older one means
+--     something else by its values, and the app's reinstall feeds a new one;
 --   * the GUI/CLI push live edits into the "per-device-eq" metadata object; we
 --     subscribe to its "changed" signal, update the table, apply to the live
 --     node, and persist the table back to WpState;
@@ -27,12 +29,23 @@
 
 local log   = Log.open_topic("pde")
 local META  = "per-device-eq"   -- metadata object name (live edits from the app)
-local PROTOCOL = "2"            -- channel protocol; stamped into the metadata on
+local PROTOCOL = "3"            -- channel protocol; stamped into the metadata on
                                 -- activation, compared by the app (bump together
                                 -- with PROTOCOL in perdeviceeq/config.py on any
                                 -- breaking change to the graph string or the
                                 -- metadata contract)
 local STATE = "per-device-eq"   -- WpState name -> ~/.local/state/wireplumber/per-device-eq
+
+-- THE CONTRACT (COMMON_KEY and STRIP in perdeviceeq/config.py, keep
+-- them equal). A key names a device (device_key below) or COMMON. A
+-- device's value is its own graph, or STRIP for explicitly nothing --
+-- Bypass, or a measurement in progress. A device with no value of its
+-- own plays COMMON: the listener's taste and preamp, in a graph that
+-- fits a node of any width. To say "no value of its own" the app writes
+-- COMMON's name as the value rather than deleting the key: the metadata
+-- announces a delete only for a key it holds, and after a restart it
+-- holds none of what is persisted here, so a delete would never arrive.
+local COMMON = "@taste"
 
 -- No EQ is the ABSENCE of a graph, not a flat one. audioconvert's
 -- load_filter_graph() removes the graph when it is handed an empty
@@ -42,7 +55,9 @@ local STATE = "per-device-eq"   -- WpState name -> ~/.local/state/wireplumber/pe
 -- scale DC under a device set to Clean.
 local STRIP = ""
 
-local graphs = {}            -- device key -> graph string (runtime source of truth)
+local PROTO_KEY = "@protocol"   -- in the persisted table: what wrote it
+
+local graphs = {}            -- key -> graph or STRIP; no key: plays COMMON
 local nodes  = {}            -- node.name -> live Audio/Sink node proxy
 local md     = nil           -- activated metadata proxy
 local devices = {}           -- bound id -> device proxy (for the holes)
@@ -51,15 +66,19 @@ local state  = State(STATE)  -- WpState handle (GKeyFile under ~/.local/state)
 -- seed the table from persisted state (cold start: metadata is empty)
 do
   local ok, p = pcall(function() return state:load() end)
-  if ok and p ~= nil then
+  if ok and p ~= nil and p[PROTO_KEY] == PROTOCOL then
     pcall(function()
-      for k, v in pairs(p) do graphs[k] = v end
+      for k, v in pairs(p) do
+        if k ~= PROTO_KEY then graphs[k] = v end
+      end
     end)
   end
 end
 
 local function persist()
-  pcall(function() state:save(graphs) end)
+  local t = { [PROTO_KEY] = PROTOCOL }
+  for k, v in pairs(graphs) do t[k] = v end
+  pcall(function() state:save(t) end)
 end
 
 local function set_graph(node, graph)
@@ -107,10 +126,28 @@ local function device_key(node)
   return port and (name .. "#" .. tostring(port)) or name
 end
 
+-- A node with a card behind it is where the sound comes out. A virtual
+-- sink -- a null sink, a loopback, an effect chain -- passes audio on to
+-- one, and the listener's layers belong on the way out, once.
+local function has_card(node)
+  local id
+  pcall(function() id = node.properties["device.id"] end)
+  return id ~= nil
+end
+
+-- what a node plays: its own value, else COMMON if it has a card, else
+-- nothing is known about it (nil)
+local function wanted(node, key)
+  local g = graphs[key]
+  if g == nil and has_card(node) then g = graphs[COMMON] end
+  return g
+end
+
 local function apply(node)
   local k = device_key(node)
-  local g = k and graphs[k] or nil
-  if g then set_graph(node, g) end   -- no entry => Clean / unbound => leave alone
+  if k == nil then return end
+  local g = wanted(node, k)
+  if g ~= nil then set_graph(node, g) end   -- nothing known => leave alone
 end
 
 -- ---- devices: where a node's holes are listed ----
@@ -149,21 +186,21 @@ md_om:connect("object-added", function(_, m)
     -- and offers a one-click reinstall on mismatch
     m:set(0, "protocol", "Spa:String:JSON", PROTOCOL)
     m:connect("changed", function(_, subject, key, typ, value)
-      if key == "protocol" then return end
-      -- the key names a DEVICE; the node to write to is whichever
-      -- live node currently answers to it
-      local target = nil
-      for _, n in pairs(nodes) do
-        if device_key(n) == key then target = n break end
+      if key == nil or key == "protocol" then return end
+      if key ~= COMMON and value == COMMON then
+        value = nil                        -- no value of its own
       end
-      if value ~= nil and value ~= "" then
-        graphs[key] = value
-        if target then set_graph(target, value) end
-      else
-        graphs[key] = nil                  -- key cleared (Clean) -> strip EQ
-        if target then set_graph(target, STRIP) end
-      end
+      graphs[key] = value
       persist()
+      -- a device key reaches whichever live node answers to it now;
+      -- COMMON reaches every node with a card and no value of its own
+      for _, n in pairs(nodes) do
+        local k = device_key(n)
+        if k ~= nil and (k == key or (key == COMMON and graphs[k] == nil
+                                      and has_card(n))) then
+          set_graph(n, wanted(n, k) or STRIP)
+        end
+      end
     end)
   end)
 end)
@@ -198,5 +235,5 @@ sink_om:activate()
 
 do
   local n = 0; for _ in pairs(graphs) do n = n + 1 end
-  log.info("per-device-eq hook loaded; " .. n .. " persisted graph(s)")
+  log.info("per-device-eq hook loaded; persisted entries: " .. n)
 end

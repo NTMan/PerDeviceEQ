@@ -61,7 +61,6 @@ from . import pw_backend
 from .pw_backend import playback_channels, sink_channels
 
 
-METADATA_NAME = "per-device-eq"          # same object the app + WP hook use
 PLAY_NODE = pw_backend.PLAY_NODE
 CAPTURE_NODE = pw_backend.CAPTURE_NODE
 SINK_API_PREFIXES = ("alsa", "bluez")    # "real device" whitelist
@@ -245,19 +244,6 @@ def foreign_streams(dump, sink_id):
                     "prior_mute": bool(props_param(o).get("mute", False)),
                     "muted_for_measure": False})
     return out
-
-
-# --- per-device-eq metadata (profile bypass) ---------------------------------
-
-
-def metadata_set(key, value):
-    r = _run(["pw-metadata", "-n", METADATA_NAME, "0", key, value])
-    return r.returncode == 0 and "Found" in (r.stdout + r.stderr)
-
-
-def metadata_clear(key):
-    return _run(["pw-metadata", "-n", METADATA_NAME, "-d", "0", key]) \
-        .returncode == 0
 
 
 # --- volume ------------------------------------------------------------------

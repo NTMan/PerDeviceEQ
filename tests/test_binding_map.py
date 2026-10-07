@@ -465,20 +465,23 @@ def test_a_good_state_file_is_read_and_left_alone(tmp_path):
 
 def test_the_store_says_what_the_wire_should_hold(tmp_path, monkeypatch):
     """Pure data: a graph for a device that has one, None for a device
-    whose key must be cleared. No publishing in the store."""
+    with no value of its own, and the common entry always. No
+    publishing in the store."""
     from perdeviceeq import profiles
     monkeypatch.setattr(profiles, "BINDINGS_FILE",
                         str(tmp_path / "b.json"), raising=False)
     st = profiles.ProfileStore()
     st.bindings = {"a": "p1", "b": profiles.CLEAN_ID, "c": None}
     monkeypatch.setattr(st, "presets", lambda listener=None: {"a": "g"})
-    assert st.wire_state() == {"a": "g", "b": None, "c": None}
+    assert st.wire_state() == {profiles.COMMON_KEY: profiles.STRIP,
+                               "a": "g", "b": None, "c": None}
 
 
 def test_the_backend_counts_only_what_it_could_send():
-    """`total` counts devices with a graph -- a key that is merely
-    cleared cannot fail to be corrected -- and `sent` counts writes
-    the server took. Neither is evidence the hook applied anything."""
+    """`total` counts the entries with a value to send -- a device
+    only told to follow the common entry is not counted -- and `sent`
+    counts writes the server took. Neither is evidence the hook
+    applied anything."""
     from perdeviceeq.audio_backend import AudioBackend
 
     class B(AudioBackend):

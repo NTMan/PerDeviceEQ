@@ -54,6 +54,6 @@ def cmd_apply():
               file=sys.stderr)
         return 1
     sent, total = backend().publish_state(ProfileStore().wire_state())
-    print("sent %d of %d device(s) with a graph (hook protocol %s)"
+    print("sent %d of %d entries (hook protocol %s)"
           % (sent, total, ver))
     return 0 if sent == total else 1

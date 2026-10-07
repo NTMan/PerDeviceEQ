@@ -45,6 +45,7 @@ import traceback
 from abc import ABC, abstractmethod
 
 from . import debug
+from .config import STRIP
 
 
 def _route_sig(routes):
@@ -123,9 +124,10 @@ class AudioBackend(ABC):
     def publish_state(self, wire):
         """Put a whole wire_state on the wire. Returns (sent, total).
 
-        `total` counts devices that HAVE a graph to send, not every
-        binding: a device whose key is only being cleared cannot fail
-        to be corrected. `sent` counts the writes the server accepted.
+        `total` counts the entries with a value to send -- a device's
+        own graph, and the common entry -- not every binding: a device
+        that is only told to follow the common entry is not counted.
+        `sent` counts the writes the server accepted.
 
         What that proves is exactly one thing -- the write reached the
         metadata object. The hook does not answer for a graph it
@@ -148,7 +150,8 @@ class AudioBackend(ABC):
         return sent, total
 
     def clear_graph(self, device):
-        """Desire a clean `device` (no DSP)."""
+        """Desire no value of its own for `device`: with a card behind
+        it, it plays the common entry (config.COMMON_KEY)."""
         with self._lock:
             self._graphs[device] = None
             if self._moratorium is not None:
@@ -216,9 +219,10 @@ class AudioBackend(ABC):
             self._moratorium = {"sink": sink, "key": key,
                                 "restore": restore,
                                 "muted": mute_others}
-            if restore["graph"] is not None:
-                self._push_graph(key, None)
-                state["bypass"] = True
+            # ALWAYS, found or not: a device with no value of its own
+            # plays the common entry, so there is a graph on it either way
+            self._push_graph(key, STRIP)
+            state["bypass"] = True
             if restore["mute"]:
                 self._push_mute(sink, False)
             if measure_cubic is not None:
@@ -246,8 +250,7 @@ class AudioBackend(ABC):
             # differs on every run -- a number that cannot be equal to
             # itself does not belong in a record whose job is to be
             # compared.
-            self._await_moratorium(sink, key, measure_cubic,
-                                   restore["graph"] is not None)
+            self._await_moratorium(sink, key, measure_cubic)
             return state
 
     # how long to wait for the pushes above to be visible on the
@@ -257,7 +260,7 @@ class AudioBackend(ABC):
     SETTLE_TIMEOUT_S = 1.5
     SETTLE_POLL_S = 0.01
 
-    def _await_moratorium(self, sink, key, measure_cubic, had_graph):
+    def _await_moratorium(self, sink, key, measure_cubic):
         """Block until the server shows the moratorium in force, or
         the timeout runs out.
 
@@ -270,13 +273,13 @@ class AudioBackend(ABC):
         """
         t0 = time.monotonic()
         while time.monotonic() - t0 < self.SETTLE_TIMEOUT_S:
-            ok = True
-            if had_graph:
-                try:
-                    value, _src = self._read_graph(key)
-                except Exception:
-                    value = None
-                ok = ok and not value
+            try:
+                value, _src = self._read_graph(key)
+            except Exception:
+                value = None
+            # STRIP itself: None is "follows the common entry", which
+            # is the state before the write, not after it
+            ok = value == STRIP
             if ok and measure_cubic is not None:
                 try:
                     now = self._read_volume(sink)
@@ -315,8 +318,7 @@ class AudioBackend(ABC):
             if ("volume", sink) not in self._pending \
                     and restore.get("mute"):
                 self._push_mute(sink, True)
-            if ("graph", key) not in self._pending \
-                    and restore["graph"] is not None:
+            if ("graph", key) not in self._pending:
                 ok = bool(self._push_graph(key,
                                            restore["graph"]))
                 state["restored"] = ok
@@ -456,8 +458,9 @@ class AudioBackend(ABC):
 
     @abstractmethod
     def _push_graph(self, device, value):
-        """Make the server wear `value` on `device`; None = clean.
-        Returns truthy on success -- the restore's evidence."""
+        """Make the server wear `value` on `device`: a graph, STRIP
+        for explicitly nothing, None for no value of its own. Returns
+        truthy on success -- the restore's evidence."""
 
     @abstractmethod
     def _push_volume(self, device, cubic):

@@ -18,6 +18,7 @@ import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
 from perdeviceeq import level_run
+from perdeviceeq.config import STRIP
 from perdeviceeq import measure_core as mc
 from perdeviceeq import measure_session as ms
 from perdeviceeq import sweep_io
@@ -118,7 +119,7 @@ def test_take_spread_discard_finalize(shim_state, tmp_path):
 
         # the profile was bypassed DURING the sound
         snap = json.loads((shim_state / "meta_at_play_1.json").read_text())
-        assert "test_sink" not in snap
+        assert snap.get("test_sink") == STRIP
 
         dropped = ses.discard(0, out1.take.id)
         assert dropped.id == 1
