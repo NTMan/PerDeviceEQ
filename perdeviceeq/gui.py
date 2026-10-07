@@ -133,6 +133,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.floor_off = False
         self.floor_hz = None
         self._save_source = 0
+        self._republish_source = 0
         self._loading = False
         self.sinks = []
         self._born_pending = None   # a fork waiting for its history mark
@@ -2753,6 +2754,7 @@ class EqWindow(Adw.ApplicationWindow):
             self._sync_map(widen=False)
             self._populate_picker()
         view = self.cur_ch          # keep the user's current tab if still valid
+        was = self._listener_state()
         self._loading = True
         try:
             self.preamp = float(snap.get("preamp", 0.0))
@@ -2785,6 +2787,8 @@ class EqWindow(Adw.ApplicationWindow):
         if self._editable(self.current_pid):
             self.store.save_user(self._working_body())
         self._apply_now()
+        if self._listener_state() != was:
+            self._save_preamp_state()       # writes the ride, republishes
         self._update_headroom()
         self._canvas_refresh()
 
@@ -2918,6 +2922,40 @@ class EqWindow(Adw.ApplicationWindow):
         else:
             self._ui_state["preamp"] = round(float(self.preamp), 1)
         save_ui_state(self._ui_state)
+        self._listener_changed()
+
+    def _listener_state(self):
+        """What the listener owns rather than the device: the active
+        taste and, in Manual, the ride. Auto is left out -- it is
+        computed per device and changes with every device edit."""
+        return (json.dumps(self.pref_layers.active_bands(), sort_keys=True),
+                bool(self.preamp_auto),
+                None if self.preamp_auto else round(float(self.preamp), 1))
+
+    def _listener_changed(self):
+        """The taste or the preamp ride changed. Both belong to every
+        device and every device's graph carries them, so every bound
+        device is published again once the edits settle. The device in
+        view is published by the caller at once, as before."""
+        if self._republish_source:
+            GLib.source_remove(self._republish_source)
+        self._republish_source = GLib.timeout_add(
+            _SAVE_DEBOUNCE_MS, self._republish_others)
+
+    def _republish_others(self):
+        """The same answer the hook feed gives (wire_state), with the
+        layers this window holds now, for every bound device except the
+        one in view -- the window owns that key and may be ahead of the
+        store by an unsaved edit."""
+        self._republish_source = 0
+        wire = self.store.wire_state(
+            (self.pref_layers.active_bands(),
+             None if self.preamp_auto else self.preamp))
+        if self.live and self.node:
+            wire.pop(self._dev(), None)
+        auth = pw_backend.backend()
+        pw_backend.in_thread(lambda: auth.publish_state(wire))
+        return GLib.SOURCE_REMOVE
 
     def _set_preamp_auto(self, on, land=False):
         """Flip the follow mode and sync the toggle without echo."""
@@ -3670,6 +3708,7 @@ class EqWindow(Adw.ApplicationWindow):
         """After any layer change: re-apply, recompute the headroom
         hints and keep the card in step with the store."""
         self._apply_now()
+        self._listener_changed()
         self._update_headroom()
         self._sync_taste_card()
 
@@ -3843,6 +3882,7 @@ class EqWindow(Adw.ApplicationWindow):
             return
         self.pref_layers.upsert(dict(act, bands=bands))
         self._apply_now()
+        self._listener_changed()
         self._schedule_save()        # one global-history entry per
         if final:                    # settled gesture
             self._update_headroom()

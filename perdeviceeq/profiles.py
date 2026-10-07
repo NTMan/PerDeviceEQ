@@ -510,20 +510,23 @@ class ProfileStore:
                   else float(st.get("preamp", 0.0) or 0.0))
         return PreferenceLayers().active_bands(), manual
 
-    def graph_for_node(self, node):
+    def graph_for_node(self, node, listener=None):
         """What the device plays (eq.device_graph) from the stored profile,
-        the stored map and the listener's layers. None for Clean, for an
-        unbound device, and for one with nothing to play."""
+        the stored map and the listener's layers -- `listener` as
+        (taste, manual) when the caller holds them, else read from disk.
+        None for Clean, for an unbound device, and for one with nothing to
+        play."""
         pid = self.bindings.get(node)
         if not pid or pid == CLEAN_ID:
             return None                      # hook leaves the node alone
         p = self.profiles.get(pid)
         if not p:
             return None
-        taste, manual = self._listener()
+        taste, manual = listener if listener is not None \
+            else self._listener()
         return device_graph(p, self.slots_for(node), taste, manual)
 
-    def wire_state(self):
+    def wire_state(self, listener=None):
         """WHAT THE HOOK SHOULD BE HOLDING: {device: graph or None}.
 
         Pure data -- no publishing here. A device bound to a profile
@@ -536,21 +539,22 @@ class ProfileStore:
         the other's half.
         """
         wire = {}
-        graphs = self.presets()
+        graphs = self.presets(listener)
         for node, pid in self.bindings.items():
             wire[node] = graphs.get(node) if pid and pid != CLEAN_ID \
                 else None
         return wire
 
-    def presets(self):
+    def presets(self, listener=None):
         """{device: graph} for every device bound to a profile that has
-        something to play. Pushed into the metadata by --apply and when
-        the hook is installed."""
+        something to play. Pushed into the metadata by --apply, when the
+        hook is installed, and by the window when the taste or the
+        preamp ride changes."""
         out = {}
         for node, pid in self.bindings.items():
             if not pid or pid == CLEAN_ID:
                 continue
-            g = self.graph_for_node(node)
+            g = self.graph_for_node(node, listener)
             if g is not None:
                 out[node] = g
         return out

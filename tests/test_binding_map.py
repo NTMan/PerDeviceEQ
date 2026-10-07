@@ -471,7 +471,7 @@ def test_the_store_says_what_the_wire_should_hold(tmp_path, monkeypatch):
                         str(tmp_path / "b.json"), raising=False)
     st = profiles.ProfileStore()
     st.bindings = {"a": "p1", "b": profiles.CLEAN_ID, "c": None}
-    monkeypatch.setattr(st, "presets", lambda: {"a": "g"})
+    monkeypatch.setattr(st, "presets", lambda listener=None: {"a": "g"})
     assert st.wire_state() == {"a": "g", "b": None, "c": None}
 
 
