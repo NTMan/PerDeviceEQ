@@ -35,3 +35,11 @@ def _listener_state_is_the_test_s(tmp_path, monkeypatch):
                         str(tmp_path / "preference-layers.json"))
     monkeypatch.setattr(config, "UI_STATE_FILE",
                         str(tmp_path / "ui-state.json"))
+
+
+@pytest.fixture(autouse=True)
+def _no_node_seen_before(monkeypatch):
+    """The device-key rule remembers the last port each node showed; a
+    test starts with none seen."""
+    from perdeviceeq import pw_backend
+    monkeypatch.setattr(pw_backend, "_LAST_KEY", {})

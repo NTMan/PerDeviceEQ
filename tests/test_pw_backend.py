@@ -1116,6 +1116,19 @@ def test_the_window_and_the_hook_key_the_same_device():
     assert pwb.key_from_routes("null-sink", None) == "null-sink"
 
 
+def test_a_node_out_of_sight_is_the_device_it_was_last_seen_as():
+    """A headset is gone for the seconds WirePlumber takes to restart;
+    its key is not its bare name then. A new port is a new device."""
+    hp = [{"name": "headset-output", "active": True}]
+    hf = [{"name": "headset-hf-output", "active": True}]
+    assert pwb.key_from_routes("bt.1", hp) == "bt.1#headset-output"
+    assert pwb.key_from_routes("bt.1", None) == "bt.1#headset-output"
+    assert pwb.key_from_routes("bt.1", []) == "bt.1#headset-output"
+    assert pwb.key_from_routes("bt.1", hf) == "bt.1#headset-hf-output"
+    assert pwb.key_from_routes("bt.1", None) == "bt.1#headset-hf-output"
+    assert pwb.key_from_routes("never.seen", None) == "never.seen"
+
+
 def test_a_live_row_reads_like_the_door_beside_it():
     """One card, one vocabulary. A live sink used to wear its NODE's
     description while the unreachable ports beside it wore their

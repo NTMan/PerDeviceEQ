@@ -98,7 +98,10 @@ end
 -- outputs answers to one name on all of them. The port's own NAME
 -- goes in the key, never its description -- descriptions are
 -- translated, names are what a card calls its wiring. A node with no
--- card behind it keys as its bare name.
+-- card behind it keys as its bare name. A node whose card is not listed
+-- yet has no key at all (nil): the bare name would be another device's,
+-- and under that name it would take COMMON instead of its own value.
+-- The device's arrival applies it (dev_om below).
 local function device_key(node)
   local name, devid, cdev
   if not pcall(function()
@@ -108,8 +111,9 @@ local function device_key(node)
   end) or not name then
     return nil
   end
-  local dev = devid ~= nil and devices[tostring(devid)] or nil
-  if dev == nil then return name end
+  if devid == nil then return name end
+  local dev = devices[tostring(devid)]
+  if dev == nil then return nil end
   local port = nil
   pcall(function()
     for p in dev:iterate_params("Route") do
@@ -161,6 +165,17 @@ dev_om:connect("object-added", function(_, dev)
   local id
   if pcall(function() id = tostring(dev["bound-id"]) end) and id then
     devices[id] = dev
+    -- a node that came first had no key; it has one now
+    for _, n in pairs(nodes) do
+      local d, st
+      pcall(function()
+        d = n.properties["device.id"]
+        st = n:get_state()
+      end)
+      if d ~= nil and tostring(d) == id and st == "running" then
+        apply(n)
+      end
+    end
   end
 end)
 dev_om:connect("object-removed", function(_, dev)

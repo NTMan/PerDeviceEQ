@@ -203,6 +203,7 @@ scenarios["a table of this protocol seeds the hook"] = function()
   w.device(70, { HP })
   w.node(BT, 70, 1)
   eq(w.applied[BT], "OWN", "own value from the table")
+  w.device(71, {})                    -- a card with no ports: bare key
   w.node("alsa_output.card", 71, 0)
   eq(w.applied["alsa_output.card"], "TASTE", "common from the table")
 end
@@ -210,10 +211,22 @@ end
 scenarios["a table of another protocol is not read"] = function()
   local w = world({ [KEY] = "OLD", ["alsa_output.card"] = "OLD" })
   w.device(70, { HP })
+  w.device(71, {})
   w.node(BT, 70, 1)
   w.node("alsa_output.card", 71, 0)
   eq(w.applied[BT], nil, "old own value ignored")
   eq(w.applied["alsa_output.card"], nil, "old bare key ignored")
+end
+
+scenarios["a node seen before its card waits for it"] = function()
+  local w = world(nil)
+  w.metadata()
+  w.write("@taste", "TASTE")
+  w.write(KEY, "OWN")
+  w.node(BT, 70, 1)                   -- running, its card not listed yet
+  eq(w.applied[BT], nil, "no key yet: left alone, not given COMMON")
+  w.device(70, { HP })
+  eq(w.applied[BT], "OWN", "its own value once the card is listed")
 end
 
 local names = {}

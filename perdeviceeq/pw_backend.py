@@ -208,6 +208,10 @@ def port_key(node, port):
     return "%s%s%s" % (node, ENTRY_SEP, port)
 
 
+# The last key each node answered to with a port.
+_LAST_KEY = {}
+
+
 def key_from_routes(node, routes):
     """device_key's rule, for a caller that already holds the routes.
 
@@ -216,12 +220,23 @@ def key_from_routes(node, routes):
     on the main loop -- would be paying twice for one fact. Same rule,
     one place: whoever has the routes gets the same string as whoever
     has to go and fetch them.
+
+    A NODE THAT SHOWS NO PORT RIGHT NOW IS THE DEVICE IT WAS LAST SEEN
+    AS. No port meant the bare name, and the bare name is also what a
+    node with no card is keyed by -- so a headset that was gone for the
+    seconds WirePlumber took to restart became another device: the
+    window loaded Default for it and published under a key no node
+    answers to. Only a node never seen with a port keys as its bare name.
     """
     if not node:
         return node
     port = next((r.get("name") for r in (routes or [])
                  if r.get("active")), None)
-    return port_key(node, port) if node else node
+    if port is None:
+        return _LAST_KEY.get(node, node)
+    key = port_key(node, port)
+    _LAST_KEY[node] = key
+    return key
 
 
 def live_device_key(node):
