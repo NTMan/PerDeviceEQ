@@ -113,6 +113,30 @@ def test_read_graph_falls_back_to_wpstate(rig, monkeypatch):
     assert b._read_graph("test_sink") == ("LIVE", "metadata")
 
 
+def test_wpstate_escapes_are_undone():
+    assert pwb._wp_unescape("a\\sb\\ec\\od\\ce\\\\f") == "a b=c[d]e\\f"
+    assert pwb._wp_unescape("plain.name#headset-output") == \
+        "plain.name#headset-output"
+
+
+def test_wpstate_finds_a_key_wireplumber_escaped(tmp_path, monkeypatch):
+    """A UCM output's port is "[Out] Line1", which WirePlumber writes
+    as \\oOut\\c\\sLine1. The entry has to be found under the key the
+    program spells, or a measurement on that sink reads no graph."""
+    d = tmp_path / "wireplumber"
+    d.mkdir()
+    node = "alsa_output.usb-Topping_M62-00.HiFi__Line1__sink"
+    bt = "bluez_output.24_C4_06_42_AE_2A.1#headset-output"
+    (d / "per-device-eq").write_text(
+        "[per-device-eq]\n"
+        + node + "#\\oOut\\c\\sLine1=G-M62\n"
+        + bt + "=G-BT\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert pwb.wpstate_get(node + "#[Out] Line1") == "G-M62"
+    assert pwb.wpstate_get(bt) == "G-BT"
+    assert pwb.wpstate_get(node) is None
+
+
 def test_read_volume_takes_the_cube_root(rig):
     b, _ = rig
     v = b._read_volume("test_sink")

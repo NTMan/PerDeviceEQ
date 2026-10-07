@@ -1155,12 +1155,36 @@ def metadata_get(key):
     return m.group(1) if m else None
 
 
+# WirePlumber escapes a key before it writes it into a state file
+# (escape_string in lib/wp/state.c): a backslash, a space, '=', '['
+# and ']' become \\, \s, \e, \o and \c. A UCM port is named like
+# "[Out] Line1", so its key reaches the file as ...#\oOut\c\sLine1.
+_WP_ESCAPES = {"\\": "\\", "s": " ", "e": "=", "o": "[", "c": "]"}
+
+
+def _wp_unescape(text):
+    """A state-file key as WirePlumber was given it, see _WP_ESCAPES."""
+    out = []
+    chars = iter(text)
+    for ch in chars:
+        if ch == "\\":
+            nxt = next(chars, "")
+            out.append(_WP_ESCAPES.get(nxt, "\\" + nxt))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def wpstate_get(key):
     """Read a sink's graph from the WirePlumber hook's persisted state
     (a GKeyFile at $XDG_STATE_HOME/wireplumber/per-device-eq). The hook
     seeds its runtime table from here on a cold start and does NOT
     publish persisted graphs into the metadata, so a freshly-booted
-    session where the GUI was never opened has the profile ONLY here."""
+    session where the GUI was never opened has the profile ONLY here.
+
+    Keys are compared unescaped (_wp_unescape). Values need nothing:
+    GKeyFile escapes only backslashes, control characters and a leading
+    space, and a graph string carries none of them."""
     base = os.environ.get("XDG_STATE_HOME") \
         or os.path.expanduser("~/.local/state")
     path = os.path.join(base, "wireplumber", "per-device-eq")
@@ -1170,8 +1194,8 @@ def wpstate_get(key):
                 line = line.rstrip("\n")
                 if line.startswith("[") or "=" not in line:
                     continue
-                k, v = line.split("=", 1)     # node.name has no '=' itself
-                if k == key:
+                k, v = line.split("=", 1)     # a key's own '=' is \e
+                if _wp_unescape(k) == key:
                     return v or None
     except OSError:
         pass
