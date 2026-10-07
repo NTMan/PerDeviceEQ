@@ -64,7 +64,8 @@ def test_no_sink_no_slots():
 
 def test_graph_follows_the_sink_not_the_profile():
     p = _wide()
-    assert _sets(eq.profile_graph(p)) == 20          # what the profile holds
+    # what the profile holds, up to what one param_eq can carry
+    assert _sets(eq.profile_graph(p)) == eq.PARAM_EQ_PORTS
     g = eq.profile_graph(p, slots=["FL", "FR"])
     assert _sets(g) == 2                             # what the sink can take
     assert "filters3" not in g
@@ -135,3 +136,55 @@ def test_the_single_curve_reaches_every_chain():
     g = eq.profile_graph(p, slots=eq.resolve_slots(["ALL"], ["FL", "FR"]))
     assert _sets(g) == 2
     assert g.count("gain = -3") == 2
+
+
+# ---- the graph states its own width --------------------------------------
+# param_eq declares PARAM_EQ_PORTS ports whatever the config names, and a
+# graph naming no ports inherits that number. On a node narrower than that
+# the surplus outputs are never written, and a MONO node averages them
+# into its one channel: silence becomes full scale DC.
+
+def test_one_curve_is_one_channel_wide():
+    """The shared form names ONE port pair, so the filter graph runs a
+    copy per channel instead of claiming eight."""
+    g = eq.build_graph(0.0, [])
+    assert 'inputs = [ "eq:In 1" ]' in g
+    assert 'outputs = [ "eq:Out 1" ]' in g
+
+
+def test_a_chain_per_channel_names_a_port_per_chain():
+    g = eq.build_graph_channels([(0.0, []), (0.0, [])])
+    assert 'inputs = [ "eq:In 1" "eq:In 2" ]' in g
+    assert 'outputs = [ "eq:Out 1" "eq:Out 2" ]' in g
+    assert _sets(g) == 2
+
+
+def test_the_names_belong_to_the_graph_not_to_its_node():
+    """The lists come after the nodes array closes."""
+    g = eq.build_graph_channels([(0.0, [])])
+    assert "} ] inputs = [" in g
+    assert g.endswith('outputs = [ "eq:Out 1" ] }')
+
+
+def test_a_published_graph_on_a_mono_sink_is_one_channel_wide():
+    """The case this exists for, through the call the publishers use."""
+    g = eq.profile_graph(_wide(), extra=[LSC], slots=[None])
+    assert 'inputs = [ "eq:In 1" ]' in g
+    assert 'outputs = [ "eq:Out 1" ]' in g
+    assert _sets(g) == 1
+
+
+def test_eight_chains_are_all_named():
+    g = eq.build_graph_channels([(0.0, [])] * eq.PARAM_EQ_PORTS)
+    assert '"eq:In %d"' % eq.PARAM_EQ_PORTS in g
+    assert _sets(g) == eq.PARAM_EQ_PORTS
+
+
+def test_a_ninth_chain_is_not_emitted():
+    """param_eq clamps the number in filtersN to 1..8: filters9 would be
+    parsed into the eighth bank, on top of filters8."""
+    sets = [(0.0, [eq.Band.from_dict(PK)])] * (eq.PARAM_EQ_PORTS + 2)
+    g = eq.build_graph_channels(sets)
+    assert _sets(g) == eq.PARAM_EQ_PORTS
+    assert "filters9" not in g
+    assert '"eq:In 9"' not in g

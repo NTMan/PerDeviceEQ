@@ -51,22 +51,64 @@ def build_filter_array(preamp, bands):
     return "[ %s ]" % " ".join(filters)
 
 
+# param_eq registers this many input and this many output ports
+# whatever its config names (param_eq_ports in PipeWire's
+# spa/plugins/filter-graph/plugin_builtin.c). A graph that names no
+# ports of its own takes its width from that descriptor: the inputs of
+# its first node and the outputs of its last. On a node with fewer
+# channels the graph is fed only as many inputs as the node has, yet
+# declares all eight outputs; the ones nobody writes keep whatever was
+# in their buffers, audioconvert treats the stream as eight channels
+# wide after the graph, and on a MONO node the channel mixer averages
+# all eight into the one channel. Silence becomes full scale DC --
+# pipewire issue 5473, fixed in master by 42cef4c ("filter-graph:
+# support PORT_PAIR nodes"), in no release up to 1.6.9. Naming one
+# input and one output port per chain states the real width on every
+# version, and with the fix the graph comes out the same.
+#
+# The same eight bounds the chains. param_eq keeps eight banks of
+# biquads and clamps the number in filtersN to 1..8, so a ninth chain
+# does not reach a ninth channel: it is parsed into the eighth bank, on
+# top of what filters8 put there.
+PARAM_EQ_PORTS = 8
+
+
+def _port_names(n):
+    """The graph-level ` inputs = [ ... ] outputs = [ ... ]` naming the
+    first n port pairs of the node called eq."""
+    ins = " ".join('"eq:In %d"' % i for i in range(1, n + 1))
+    outs = " ".join('"eq:Out %d"' % i for i in range(1, n + 1))
+    return " inputs = [ %s ] outputs = [ %s ]" % (ins, outs)
+
+
 def build_graph(preamp, bands):
-    """Single param_eq applied to all channels (config.filters)."""
+    """One curve on every channel (config.filters).
+
+    The graph is ONE channel wide -- a single named port pair -- and the
+    filter graph runs a copy of it for each channel of the node it lands
+    on, so the same string fits a node of any width.
+    """
     cfg = "filters = %s" % build_filter_array(preamp, bands)
     return ("{ nodes = [ { type = builtin name = eq label = param_eq "
-            "config = { %s } } ] }" % cfg)
+            "config = { %s } } ]%s }" % (cfg, _port_names(1)))
 
 
 def build_graph_channels(channel_sets):
     """Per-channel param_eq. channel_sets is a list of (preamp, bands) in
-    channel order; emitted as config.filters1, filters2, ... (1-based)."""
+    channel order; emitted as config.filters1, filters2, ... (1-based).
+
+    The graph names one input and one output port per chain, so it is
+    exactly as wide as the list. A list longer than PARAM_EQ_PORTS is
+    cut to it: a ninth chain would land on the eighth channel rather
+    than beside it, and channels past the eighth get nothing from this
+    node either way."""
+    sets = list(channel_sets)[:PARAM_EQ_PORTS]
     parts = []
-    for i, (preamp, bands) in enumerate(channel_sets, start=1):
+    for i, (preamp, bands) in enumerate(sets, start=1):
         parts.append("filters%d = %s" % (i, build_filter_array(preamp, bands)))
     cfg = " ".join(parts)
     return ("{ nodes = [ { type = builtin name = eq label = param_eq "
-            "config = { %s } } ] }" % cfg)
+            "config = { %s } } ]%s }" % (cfg, _port_names(len(sets))))
 
 
 # The device floor: Taste asks, the zone disposes. The device

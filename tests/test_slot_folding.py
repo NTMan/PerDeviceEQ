@@ -153,7 +153,8 @@ def test_the_first_band_under_no_eq_spreads(tmp_path, monkeypatch):
 
     slots = [(cmap.get(k) or k) for k in sink]
     g = eq.profile_graph(dict(p, floor_off=True), slots=slots)
-    assert g.count("gain = -3") == len(sink)
+    # every tab gets the curve, up to what one param_eq can carry
+    assert g.count("gain = -3") == min(len(sink), eq.PARAM_EQ_PORTS)
 
 
 def test_a_tab_is_refilled_when_its_source_changes():

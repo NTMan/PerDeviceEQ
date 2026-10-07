@@ -34,10 +34,13 @@ local PROTOCOL = "2"            -- channel protocol; stamped into the metadata o
                                 -- metadata contract)
 local STATE = "per-device-eq"   -- WpState name -> ~/.local/state/wireplumber/per-device-eq
 
--- identity / flat graph: a single 0 dB filter. Applied to strip EQ when a device
--- is set to Clean. Must stay in sync with build_graph(0.0, []) in per-device-eq.py.
-local FLAT = "{ nodes = [ { type = builtin name = eq label = param_eq config = "
-          .. "{ filters = [ { type = bq_peaking, freq = 1000, gain = 0.0, q = 1.0 } ] } } ] }"
+-- No EQ is the ABSENCE of a graph, not a flat one. audioconvert's
+-- load_filter_graph() removes the graph when it is handed an empty
+-- string. A flat param_eq is still a graph, and one that names no ports
+-- declares param_eq's eight outputs (see PARAM_EQ_PORTS in
+-- perdeviceeq/eq.py): on a mono node that turned silence into full
+-- scale DC under a device set to Clean.
+local STRIP = ""
 
 local graphs = {}            -- device key -> graph string (runtime source of truth)
 local nodes  = {}            -- node.name -> live Audio/Sink node proxy
@@ -158,7 +161,7 @@ md_om:connect("object-added", function(_, m)
         if target then set_graph(target, value) end
       else
         graphs[key] = nil                  -- key cleared (Clean) -> strip EQ
-        if target then set_graph(target, FLAT) end
+        if target then set_graph(target, STRIP) end
       end
       persist()
     end)
