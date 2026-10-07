@@ -21,8 +21,8 @@ import os, sys, json, uuid
 from .config import (SYS_PROFILE_DIRS, USER_PROFILES_DIR, BINDINGS_FILE,
                      CONFIG_DIR, CLEAN_ID, SCHEMA_VERSION, V3_BLOCKS,
                      load_ui_state, read_state)
-from .eq import (profile_graph, profile_has_content,
-                 resolve_slots, auto_preamp_db)
+from .eq import device_graph, resolve_slots
+from .preferences import PreferenceLayers
 
 
 def _new_id():
@@ -498,40 +498,39 @@ class ProfileStore:
             self.bindings[node] = pid
         self.save_bindings()
 
-    def effective_preamp(self, p, node=None):
-        """What the wire gets. In Auto it is computed here and nowhere
-        stored; in Manual it is the number the user rides, which lives in
-        the app's ui state beside the mode. Neither is a property of the
-        earphone, so neither is written into the profile: the preamp card
-        sits above every profile in the window and belongs to the app.
-
-        The hook computes Auto exactly as it publishes -- without the taste
-        layer, which it does not apply either -- so its number and its
-        graph agree.
-        """
+    @staticmethod
+    def _listener():
+        """The layers that belong to the listener rather than to a device:
+        the active taste, and in Manual the preamp the user rides (None in
+        Auto). Read from disk on every call, because the feed runs where
+        no window is open to ask. Neither is a property of the earphone,
+        so neither is written into a profile."""
         st = load_ui_state()
-        if not bool(st.get("preamp_auto", True)):
-            return float(st.get("preamp", 0.0) or 0.0)
-        t = auto_preamp_db(p)
-        return -t if t else 0.0
+        manual = (None if bool(st.get("preamp_auto", True))
+                  else float(st.get("preamp", 0.0) or 0.0))
+        return PreferenceLayers().active_bands(), manual
 
     def graph_for_node(self, node):
+        """What the device plays (eq.device_graph) from the stored profile,
+        the stored map and the listener's layers. None for Clean, for an
+        unbound device, and for one with nothing to play."""
         pid = self.bindings.get(node)
         if not pid or pid == CLEAN_ID:
             return None                      # hook leaves the node alone
         p = self.profiles.get(pid)
         if not p:
             return None
-        return profile_graph(dict(p, preamp=self.effective_preamp(p, node)),
-                             slots=self.slots_for(node))
+        taste, manual = self._listener()
+        return device_graph(p, self.slots_for(node), taste, manual)
 
     def wire_state(self):
         """WHAT THE HOOK SHOULD BE HOLDING: {device: graph or None}.
 
         Pure data -- no publishing here. A device bound to a profile
-        with content gets its graph; a device bound to Clean, to
-        nothing, or to an empty profile gets None, which means the
-        key must be cleared rather than left as it was. The store is
+        gets its graph; a device bound to Clean, to nothing, or one
+        whose profile, taste and preamp leave nothing to play gets
+        None, which means the key must be cleared rather than left as
+        it was. The store is
         the only thing that knows this, and the backend is the only
         thing that knows how to put it on the wire, so neither does
         the other's half.
@@ -544,15 +543,14 @@ class ProfileStore:
         return wire
 
     def presets(self):
-        """{node.name: graph_string} for every node bound to a non-Clean,
-        content-ful profile. Pushed into the metadata (--apply, and the one-time
-        migration of existing bindings into the hook's persistent state)."""
+        """{device: graph} for every device bound to a profile that has
+        something to play. Pushed into the metadata by --apply and when
+        the hook is installed."""
         out = {}
         for node, pid in self.bindings.items():
             if not pid or pid == CLEAN_ID:
                 continue
-            p = self.profiles.get(pid)
-            if not p or not profile_has_content(p):
-                continue
-            out[node] = self.graph_for_node(node)
+            g = self.graph_for_node(node)
+            if g is not None:
+                out[node] = g
         return out

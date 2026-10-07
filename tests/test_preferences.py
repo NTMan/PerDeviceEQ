@@ -67,12 +67,10 @@ def test_disabled_layer_bands_stay_out_of_the_graph():
     assert "freq = 50" not in eq.profile_graph(flat, extra=[off])
 
 
-def test_active_has_content_drives_the_apply_path(tmp_path):
-    st = _store(tmp_path)
-    assert st.active_has_content() is False        # no layer at all
-    lid = st.upsert({"name": "A",
-                     "bands": [dict(LSC50, enabled=False)]})
-    st.set_active(lid)
-    assert st.active_has_content() is False        # all bands off
-    st.upsert({"id": lid, "name": "A", "bands": [LSC50]})
-    assert st.active_has_content() is True
+def test_a_layer_with_every_band_off_gives_a_flat_device_nothing():
+    """What the old content check decided, asked of the one answer now:
+    a disabled band is not a reason to publish a graph."""
+    flat = {"floor_off": True, "ch_keys": [], "channels": {}}
+    off = dict(LSC50, enabled=False)
+    assert eq.device_graph(flat, ["FL", "FR"], [off]) is None
+    assert eq.device_graph(flat, ["FL", "FR"], [LSC50]) is not None

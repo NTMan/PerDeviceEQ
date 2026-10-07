@@ -237,25 +237,25 @@ def resolve_slots(prof_keys, sink_keys):
     return [prof[i] if i < len(prof) else None for i in range(len(sink))]
 
 
-def auto_preamp_db(p, extra=None):
+def auto_preamp_db(p, extra=None, slots=None):
     """The attenuation that zeroes the tier-1 estimate for this body: the
-    max of the WORST channel's summed band curve with no preamp, so one
-    shared value clears every slot.
+    max of the WORST chain's summed band curve with no preamp, so one
+    shared value clears every chain.
     Rounded UP to the 0.1 dB step the spin can express, so the result lands
     at or below 0 dBFS.
+
+    The chains are the ones the graph carries (_chains). With `slots` that
+    is one per sink channel, and a channel no profile channel feeds still
+    carries the floor and the taste: leaving it out let such a channel
+    rise above 0 dB while the preamp was set for the others.
 
     Pure, and computed rather than stored: its inputs include the floor and
     the taste layer, and taste is not part of a profile. Storing the answer
     inside the profile meant that changing the taste rewrote every profile
     that had been opened -- a derived number kept in the wrong house.
     """
-    tail = [Band.from_dict(b) for b in floor_bands(p) + list(extra or [])]
-    chans = p.get("channels") or {}
-    keys = list(p.get("ch_keys") or list(chans.keys()))
-    peaks = [curve_max_db(0.0, [Band.from_dict(b) for b in
-                                ((chans.get(k) or {}).get("bands")
-                                 or [])] + tail)
-             for k in keys] or [curve_max_db(0.0, tail)]
+    peaks = [curve_max_db(0.0, [Band.from_dict(b) for b in c])
+             for c in _chains(p, extra, slots)]
     return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
 
@@ -396,35 +396,57 @@ def profile_graph(p, extra=None, slots=None):
     here, at the one call that knows both sides.
     """
     g = float(p.get("preamp", 0.0))
-    tail = [Band.from_dict(b)
-            for b in floor_bands(p) + list(extra or [])]
+    chans = p.get("channels") or {}
+    if not (slots or p.get("ch_keys") or chans):
+        return build_graph(g, [Band.from_dict(b) for b in
+                               floor_bands(p) + list(extra or [])])
+    return build_graph_channels(
+        [(g, [Band.from_dict(b) for b in c])
+         for c in _chains(p, extra, slots)])
+
+
+def _chains(p, extra=None, slots=None):
+    """The band lists a graph built from `p` carries, one per chain, in
+    the order profile_graph emits them.
+
+    For each slot -- or each profile channel, when there are no slots --
+    the bands of the profile channel it names, none for a slot no profile
+    channel feeds, then the floor and `extra`. With no channel at all
+    there is one chain of floor and `extra`: the shared form. Never more
+    than PARAM_EQ_PORTS, which is all one param_eq carries.
+    """
+    tail = floor_bands(p) + list(extra or [])
     chans = p.get("channels") or {}
     keys = list(slots) if slots else (p.get("ch_keys") or list(chans.keys()))
-    sets = []
-    for k in keys:
-        # a sink channel the profile does not reach carries the tail
-        # alone -- it plays dry, and nothing else is kept for it
-        bands = (chans.get(k) or {}).get("bands", []) if k else []
-        sets.append((g, [Band.from_dict(b) for b in bands] + tail))
-    if not sets:
-        return build_graph(g, tail)
-    return build_graph_channels(sets)
+    if not keys:
+        return [tail]
+    return [list((chans.get(k) or {}).get("bands", []) if k else []) + tail
+            for k in keys][:PARAM_EQ_PORTS]
 
 
-def _set_has_content(s):
-    return any(b.get("enabled", True) for b in (s or {}).get("bands", []))
+def device_graph(p, slots, taste, manual=None):
+    """What a device plays: the one answer the window and the hook feed
+    share, so a device's graph does not depend on which of them wrote it.
 
+    `p` is the profile body, `slots` one entry per sink channel (a profile
+    channel or None), `taste` the active taste layer's bands, `manual` the
+    preamp the user rides -- None for Auto, which is then computed over
+    the chains this graph carries, the taste included.
 
-def profile_has_content(p):
-    """True if the profile actually changes the sound (some enabled band or a
-    non-zero preamp). A flat profile is equivalent to Clean / no binding."""
-    if abs(float(p.get("preamp", 0.0))) > 1e-9:   # schema v2 shared preamp
-        return True
-    chans = p.get("channels") or {}
-    for k in (p.get("ch_keys") or chans.keys()):
-        if _set_has_content(chans.get(k)):
-            return True
-    return False
+    None when there is nothing to play: no enabled band in any chain, the
+    floor and the taste counted, and a preamp of zero. The caller clears
+    the device's key then.
+    """
+    if manual is None:
+        t = auto_preamp_db(p, extra=taste, slots=slots)
+        pre = -t if t else 0.0
+    else:
+        pre = float(manual)
+    plays = any(b.get("enabled", True)
+                for c in _chains(p, taste, slots) for b in c)
+    if not plays and abs(pre) < 1e-9:
+        return None
+    return profile_graph(dict(p, preamp=pre), extra=taste, slots=slots)
 
 
 # ---- biquad frequency response: FR plot + tier-1 headroom estimate ---------

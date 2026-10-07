@@ -23,3 +23,15 @@ def fixtures_dir(tmp_path_factory):
         capture_output=True,
     )
     return out
+
+
+@pytest.fixture(autouse=True)
+def _listener_state_is_the_test_s(tmp_path, monkeypatch):
+    """The hook feed reads the listener's layers -- the active taste and
+    the preamp ride -- from the user's config. A test must not hear the
+    taste or the ride of whoever runs it."""
+    from perdeviceeq import config, preferences
+    monkeypatch.setattr(preferences, "PREF_LAYERS_FILE",
+                        str(tmp_path / "preference-layers.json"))
+    monkeypatch.setattr(config, "UI_STATE_FILE",
+                        str(tmp_path / "ui-state.json"))

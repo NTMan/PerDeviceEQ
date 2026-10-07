@@ -99,7 +99,6 @@ def test_two_rides_are_the_same_package():
 def test_the_hook_computes_auto_when_no_one_chose(store, tmp_path):
     pid = store.save_user(_profile())
     store.set_binding("sink", pid)
-    assert store.effective_preamp(store.get(pid)) == pytest.approx(-6.0)
     assert "gain = -6" in store.graph_for_node("sink")
 
 
@@ -107,7 +106,6 @@ def test_the_hook_obeys_a_manual_ride(store, tmp_path):
     _ui(tmp_path, preamp_auto=False, preamp=-3.0)
     pid = store.save_user(_profile())
     store.set_binding("sink", pid)
-    assert store.effective_preamp(store.get(pid)) == pytest.approx(-3.0)
     assert "gain = -3" in store.graph_for_node("sink")
 
 
@@ -115,4 +113,5 @@ def test_auto_in_the_ui_state_still_computes(store, tmp_path):
     _ui(tmp_path, preamp_auto=True, preamp=-99.0)
     pid = store.save_user(_profile())
     store.set_binding("sink", pid)
-    assert store.effective_preamp(store.get(pid)) == pytest.approx(-6.0)
+    assert "gain = -6" in store.graph_for_node("sink")
+    assert "-99" not in store.graph_for_node("sink")

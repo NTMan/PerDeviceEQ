@@ -2690,25 +2690,29 @@ class EqWindow(Adw.ApplicationWindow):
         if not self.live or not self.node:
             return
         node = self._dev()
-        body = self._working_body()
-        extra = self.pref_layers.active_bands()
-        silent = (not eq.profile_has_content(body)
-                  and not self.pref_layers.active_has_content())
         auth = pw_backend.backend()
-        if self.bypass_row.get_active() or silent:
+        if self.bypass_row.get_active():
+            pw_backend.in_thread(lambda: auth.clear_graph(node))
+            return
+        body = self._working_body()
+        graph = eq.device_graph(body, self._graph_slots(body),
+                                self.pref_layers.active_bands(),
+                                None if self.preamp_auto else self.preamp)
+        if graph is None:
             pw_backend.in_thread(lambda: auth.clear_graph(node))
         else:
-            # one entry per channel the CARD has, and an unpaired one
-            # is None on purpose: it has no tab, and it plays dry
-            slots = ([self.ch_map.get(k) for k in self.sink_keys]
-                     if getattr(self, "ch_map", None) else
-                     eq.resolve_slots(
-                         (body.get("ch_keys")
-                          or list((body.get("channels") or {}))),
-                         self.sink_keys))
-            graph = eq.profile_graph(body, extra=extra, slots=slots)
             pw_backend.in_thread(lambda: auth.publish_graph(node,
                                                            graph))
+
+    def _graph_slots(self, body):
+        """One entry per channel the CARD has: the profile channel that
+        feeds it, or None. An unpaired channel has no tab, but it is
+        still in the graph and still carries the floor and the taste."""
+        if getattr(self, "ch_map", None):
+            return [self.ch_map.get(k) for k in self.sink_keys]
+        return eq.resolve_slots(
+            (body.get("ch_keys") or list((body.get("channels") or {}))),
+            self.sink_keys)
 
     # ---- undo / redo -------------------------------------------------------
     def _snapshot(self):
@@ -2992,17 +2996,13 @@ class EqWindow(Adw.ApplicationWindow):
                 for b in eq.floor_bands(self._working_body())]
 
     def _auto_preamp_db(self):
-        """Preamp that zeroes the tier-1 estimate: the max of the edited
-        chain's band curve (no preamp) -- the WORST channel's, so one
-        shared value clears every slot.
-        Rounded UP to the 0.1 dB step the spin can express, so the result
-        lands at or below 0 dBFS."""
-        tail = [eq.Band.from_dict(b)
-                for b in self.pref_layers.active_bands()]
-        tail += self._floor_tail()
-        peaks = [eq.curve_max_db(0.0, self._slot(k)["bands"] + tail)
-                 for k in self.ch_keys] or [eq.curve_max_db(0.0, tail)]
-        return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
+        """Preamp that zeroes the tier-1 estimate (eq.auto_preamp_db):
+        the max over every chain the published graph carries, so one
+        shared value clears them all -- the number the hook feed
+        computes for this device, from the same body and slots."""
+        body = self._working_body()
+        return eq.auto_preamp_db(body, self.pref_layers.active_bands(),
+                                 self._graph_slots(body))
 
     def _on_bypass(self, *_):
         """Bypass toggled: republish the device state."""
