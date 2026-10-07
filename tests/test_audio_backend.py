@@ -218,3 +218,54 @@ def test_an_unmuted_sink_is_left_alone():
     f.moratorium_end()
     assert not [e for e in f.log if e[0] == "mute"]
 
+
+
+# ---- the graph is the device's, the knobs are the node's ------------------
+
+class DeviceKeyed(FakeBackend):
+    """An heir whose graphs are published under node#port while volume
+    and mute stay on the node -- the PipeWire arrangement since the key
+    became the node and the port in use."""
+
+    def __init__(self):
+        super().__init__()
+        self.server = {"dev#port": "G"}
+        self.graph_reads = []
+
+    def _graph_key(self, sink):
+        return sink + "#port"
+
+    def _read_graph(self, device):
+        self.graph_reads.append(device)
+        value = self.server.get(device)
+        return value, ("metadata" if value is not None else None)
+
+    def _push_graph(self, device, value):
+        self.server[device] = value
+        return super()._push_graph(device, value)
+
+
+def test_the_moratorium_strips_the_graph_the_device_wears():
+    f = DeviceKeyed()
+    state = f.moratorium_begin("dev", 0.074)
+    assert state["metadata_key"] == "dev#port"
+    assert state["profile"] == "G" and state["bypass"] is True
+    assert ("graph", "dev#port", None) in f.log
+    assert set(f.graph_reads) == {"dev#port"}
+    assert ("volume", "dev", 0.074) in f.log        # the knob is the node's
+    f.moratorium_end()
+    assert ("graph", "dev#port", "G") in f.log
+    assert state["restored"] is True
+    assert not [e for e in f.log if e[0] == "graph" and e[1] == "dev"]
+
+
+def test_a_write_queued_for_the_device_outranks_the_restore():
+    """The window publishes under the device key; while a measurement
+    runs that write is queued, and it is the newer wish."""
+    f = DeviceKeyed()
+    f.moratorium_begin("dev", None)
+    f.publish_graph("dev#port", "NEW")
+    f.moratorium_end()
+    graphs = [e for e in f.log if e[0] == "graph"]
+    assert graphs == [("graph", "dev#port", None),
+                      ("graph", "dev#port", "NEW")]

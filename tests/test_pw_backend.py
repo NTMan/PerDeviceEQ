@@ -1037,6 +1037,14 @@ def test_one_device_is_a_node_and_the_hole_in_use():
     assert pwb.device_key(sink, "Output", bt) == sink + "#headset-output"
 
 
+def test_the_moratorium_key_is_the_device_key(monkeypatch):
+    """The measure session hands the backend a node name; the graph
+    it has to strip is published under the device key."""
+    monkeypatch.setattr(pwb, "pw_dump", _bt_card_dump)
+    sink = "bluez_output.24_C4_06_42_AE_2A.1"
+    assert PipeWireBackend()._graph_key(sink) == sink + "#headset-output"
+
+
 def test_the_key_carries_the_port_name_not_its_description():
     """Descriptions are translated and rewritten; port names are what
     the card calls its own wiring."""

@@ -979,7 +979,8 @@ def metadata_set(node_name, graph):
 
 
 def metadata_clear(node_name):
-    """Delete a device's key (Clean / unbound). The hook flattens the live node."""
+    """Delete a device's key (Clean / unbound). The hook removes the
+    graph from the live node."""
     r = _run(["pw-metadata", "-n", METADATA_NAME, "-d", "0", node_name])
     return r.returncode == 0
 
@@ -1450,9 +1451,14 @@ class StreamHandle:
 
 
 class PipeWireBackend(AudioBackend):
-    """The audio server is PipeWire; devices are node names."""
+    """The audio server is PipeWire. Volume, mute and streams address
+    a node by its name; a filter graph is published for a device, the
+    node and the port in use (device_key)."""
 
     # -- state verbs ---------------------------------------------------
+
+    def _graph_key(self, sink):
+        return device_key(sink)
 
     def _push_graph(self, device, value):
         if value is None:

@@ -90,6 +90,16 @@ class AudioBackend(ABC):
 
     # -- equalization state -------------------------------------------
 
+    def _graph_key(self, sink):
+        """The key a sink's filter graph is published under.
+
+        The moratorium is handed a NODE, because volume, mute and the
+        foreign streams belong to the node. The graph does not: it is
+        published for the device the node is playing through, and the
+        window and the hook both address it by that key. An heir whose
+        devices are its nodes keeps this default."""
+        return sink
+
     def _queue(self, kind, device, value):
         self._pending[(kind, device)] = value
         names = [f.name for f in
@@ -179,9 +189,10 @@ class AudioBackend(ABC):
         with self._lock:
             if self._moratorium is not None:
                 raise RuntimeError("moratorium already active")
-            value, source = self._read_graph(sink)
-            self._graphs[sink] = value
-            state = {"metadata_key": sink, "profile": value,
+            key = self._graph_key(sink)
+            value, source = self._read_graph(key)
+            self._graphs[key] = value
+            state = {"metadata_key": key, "profile": value,
                      "profile_source":
                          source if value is not None else None,
                      "bypass": False, "restored": None}
@@ -202,10 +213,11 @@ class AudioBackend(ABC):
                           if mute_others else None),
                 "state": state,
             }
-            self._moratorium = {"sink": sink, "restore": restore,
+            self._moratorium = {"sink": sink, "key": key,
+                                "restore": restore,
                                 "muted": mute_others}
             if restore["graph"] is not None:
-                self._push_graph(sink, None)
+                self._push_graph(key, None)
                 state["bypass"] = True
             if restore["mute"]:
                 self._push_mute(sink, False)
@@ -234,7 +246,7 @@ class AudioBackend(ABC):
             # differs on every run -- a number that cannot be equal to
             # itself does not belong in a record whose job is to be
             # compared.
-            self._await_moratorium(sink, measure_cubic,
+            self._await_moratorium(sink, key, measure_cubic,
                                    restore["graph"] is not None)
             return state
 
@@ -245,7 +257,7 @@ class AudioBackend(ABC):
     SETTLE_TIMEOUT_S = 1.5
     SETTLE_POLL_S = 0.01
 
-    def _await_moratorium(self, sink, measure_cubic, had_graph):
+    def _await_moratorium(self, sink, key, measure_cubic, had_graph):
         """Block until the server shows the moratorium in force, or
         the timeout runs out.
 
@@ -261,7 +273,7 @@ class AudioBackend(ABC):
             ok = True
             if had_graph:
                 try:
-                    value, _src = self._read_graph(sink)
+                    value, _src = self._read_graph(key)
                 except Exception:
                     value = None
                 ok = ok and not value
@@ -290,7 +302,7 @@ class AudioBackend(ABC):
             if m is None:
                 return
             self._moratorium = None
-            sink, restore = m["sink"], m["restore"]
+            sink, key, restore = m["sink"], m["key"], m["restore"]
             state = restore["state"]
             if ("volume", sink) not in self._pending \
                     and restore["volume"] is not None:
@@ -303,13 +315,13 @@ class AudioBackend(ABC):
             if ("volume", sink) not in self._pending \
                     and restore.get("mute"):
                 self._push_mute(sink, True)
-            if ("graph", sink) not in self._pending \
+            if ("graph", key) not in self._pending \
                     and restore["graph"] is not None:
-                ok = bool(self._push_graph(sink,
+                ok = bool(self._push_graph(key,
                                            restore["graph"]))
                 state["restored"] = ok
                 if not ok:
-                    self._restore_failed(sink, restore["graph"])
+                    self._restore_failed(key, restore["graph"])
             if m["muted"]:
                 self._push_stream_mutes(sink, False,
                                         restore["mutes"])
