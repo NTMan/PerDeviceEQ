@@ -83,3 +83,31 @@ def test_undo_of_a_taste_or_a_ride_is_written_and_republished():
     calls = _calls(_gui()["_restore"])
     assert "self._listener_state" in calls
     assert "self._save_preamp_state" in calls
+
+
+# ---- undo puts the ride back as it was ---------------------------------------
+
+def test_the_snapshot_holds_every_key_the_restore_reads():
+    """The restore reads the preamp mode with Auto as the default. From Aug 7
+    no snapshot carried the mode, so every undo in Manual switched to Auto,
+    and since the restore writes the ride (5.1.0) the manual value was lost
+    with it."""
+    fns = _gui()
+    written = {ast.literal_eval(k)
+               for n in ast.walk(fns["_snapshot"]) if isinstance(n, ast.Return)
+               for k in n.value.keys}
+    read = set()
+    for n in ast.walk(fns["_restore"]):
+        if isinstance(n, ast.Call) and ast.unparse(n.func) == "snap.get":
+            read.add(ast.literal_eval(n.args[0]))
+        elif isinstance(n, ast.Subscript) and ast.unparse(n.value) == "snap":
+            read.add(ast.literal_eval(n.slice))
+    assert "preamp_auto" in read
+    assert read <= written
+
+
+def test_a_press_of_auto_is_a_step_of_the_timeline():
+    """With the mode in the snapshot and the press left off the timeline,
+    undoing an edit made after pressing Auto would land the entry from
+    before the press and release Auto."""
+    assert "self._schedule_save" in _calls(_gui()["_set_preamp_auto"])

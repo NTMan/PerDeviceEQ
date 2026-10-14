@@ -2732,6 +2732,7 @@ class EqWindow(Adw.ApplicationWindow):
         keys = list(self.ch_keys)
         return {"pid": self.current_pid,
                 "preamp": float(self.preamp),
+                "preamp_auto": bool(self.preamp_auto),
                 "ch_keys": list(self.ch_keys),
                 "slots": {k: self._slot_to_dict(k) for k in keys},
                 "taste": {
@@ -2969,7 +2970,11 @@ class EqWindow(Adw.ApplicationWindow):
         return GLib.SOURCE_REMOVE
 
     def _set_preamp_auto(self, on, land=False):
-        """Flip the follow mode and sync the toggle without echo."""
+        """Flip the follow mode and sync the toggle without echo. The
+        mode rides undo: the snapshot records it, and a flip lands a
+        history entry through the save timer, as a taste edit does --
+        otherwise undoing an edit made after pressing Auto would
+        release Auto."""
         on = bool(on)
         changed = on != self.preamp_auto
         self.preamp_auto = on
@@ -2982,6 +2987,7 @@ class EqWindow(Adw.ApplicationWindow):
             self._land_safe()
         if changed and not self._loading and not self._restoring:
             self._save_preamp_state()
+            self._schedule_save()
 
     def _on_auto_toggled(self, btn):
         if self._auto_syncing or self._loading:

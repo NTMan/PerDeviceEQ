@@ -523,19 +523,20 @@ His goal lines ride each task verbatim.
     does not report the graph a node has loaded, so the field
     cannot see it before a release carries master's d4329600d.
 
-    (c) *Undo resets a manual preamp to Auto.* The restore
+    (c) *Undo reset a manual preamp to Auto.* The restore
     reads the preamp mode from the history snapshot, with Auto
     as the default. From Jul 17 the snapshot recorded the mode
     and a press of Auto was an undo step; on Aug 7, when the
     preamp moved out of the profile (eafdade), both were
-    dropped and the restore kept reading. Since then every undo
-    or redo in Manual has switched to Auto for the session.
-    Since 5.1.0 the restore also writes the ride and republishes
-    every device, so the switch now persists and the manual
-    value is lost. Found Oct 14 by reading the code. The
-    snapshot has to record the mode again, and the press has
-    to be a step again, or an undo after pressing Auto would
-    release it.
+    dropped and the restore kept reading. From then every undo
+    or redo in Manual switched to Auto for the session. In
+    5.1.0 the restore also writes the ride and republishes
+    every device, so the switch persisted and the manual value
+    was lost. Found Oct 14 by reading the code. **Fixed in the
+    code the same day:** both halves are back, because the
+    snapshot alone would turn the fault around -- an undo after
+    pressing Auto would release it. Not yet tried in the
+    window.
 
     (d) *A floor on Default.* The floor button is live on
     Default, and toggling it saves the built-in Clean profile as
