@@ -74,6 +74,20 @@ His goal lines ride each task verbatim.
    about choosing desktop speakers for a computer, and it is
    what the yardstick is for.
 
+   **Status (Oct 14): waiting on where the sub can stand.** A
+   notch of about 20 dB at 40-41 Hz stays with the monitors
+   switched off, so it is the room and not the crossover. The
+   sub was tried under the desk, in the front corner and at
+   the back wall (Sep 12-20). In the corner the bass became
+   localisable. At the middle of the back wall the notch is
+   gone, and that spot cannot be used: the kitchen cabinets
+   begin 60 cm behind the chair, and a sub there stands in the
+   passage. The sub is back under the desk, and its own
+   limiter starts at about 45-48% of the volume fader. An Adam
+   Sub8 is under consideration and waits on the same question:
+   it would bring headroom and its own phase and crossover
+   controls, and it does not move a room mode.
+
 3. **Preamp automation closes its loop.** His bug filed as a
    question -- why must the automation be jiggled after a
    floor toggle -- root found (the loading gate muted the
@@ -216,6 +230,17 @@ His goal lines ride each task verbatim.
    it did not -- so there is nothing to convert, and the notes
    must say plainly that earlier profiles want re-measuring.
 
+   **Shipped (Oct 4) as 5.0.2, on profile schema 7** (6 on
+   Aug 29 for `unasked_db`, 7 on Sep 8 for the level map). The
+   5.0.0 and 5.0.1 builds failed in every COPR chroot: the
+   spec's `%check` imported a module deleted on Aug 4, and the
+   spec is built only on a release, so nothing saw it for two
+   months. `%check` now runs the installed launcher, and the
+   Tests lane builds the RPM on every push. The tag was cut on
+   a tree whose three version carriers still said 5.0.0, so
+   5.0.2 called itself 5.0.0 in About and in AppStream; 5.1.0
+   (Oct 14) was bumped before it was tagged.
+
 10. **The globals-row icon family.** Goal: visual polish
     -- icons for the eye, Floor and Auto strip when the family
     is picked.
@@ -338,6 +363,188 @@ His goal lines ride each task verbatim.
     a better measurement; it is a broken earphone with a
     number attached.
 
+    **The open list, Oct 14.** (a) stands, and its cheap fix
+    needs a second look: since Sep 10 the step a rung took is
+    read from the rise of its own curve, because the capture
+    peak over-reads by the harmonics riding on it (e2b5225), so
+    the peak is not the clean common axis (a) took it for. (b)
+    stands: rungs are single and judged against the base pair's
+    scatter. `tools/scatter_probe.py` (Sep 8) plays every rung
+    twice and keeps every sweep, to settle by arithmetic whether
+    every rung needs two; that is not settled. (c) and (d)
+    stand. On (d), the UMIK-2's preamp is reachable only through
+    miniDSP's tool for Mac and Windows, and moving it moves the
+    sensitivity its calibration file states, which is computed
+    for the factory +18 dB.
+
+    **Second shipment (Sep 7-11): the level passport.** The map
+    left the session block, where a remeasure pruned it, and
+    became a passport per channel, kept in the profile beside
+    the takes with the conditions it was walked in. His reversal
+    of Sep 8 shaped it: the search stays as the passport's first
+    phase, because it alone looks at distortion, and the ladder
+    reads the rest. One press on the channel in view runs both --
+    probes from 15% towards a capture peak of -10.5 dBFS, then a
+    ladder from 12 dB below the settled level whose first rung
+    is a pair, two 6 dB strides, then 2 dB steps until the
+    capture or the knob runs out. A rung's step is the rise of
+    its own curve, and every reading is judged against the base
+    pair's own scatter over a third of an octave. The fader
+    carries the search's answer, one for all channels, the
+    louder answer when there is no knee, a 2 dB step under a
+    knee found below it. The passport card at the top of the
+    right column is the walk's only picture: rungs above a rule,
+    probes below it, the coming sweep dashed. A chosen rung is
+    measured again with everything above it, without a search; a
+    chosen probe resumes the search. Profile schema 7 (Sep 8)
+    makes the passport the source of a profile's measurement
+    level.
+
+    **Open, his to decide (Sep 10):**
+    - the first sweep of a search draws nothing, having no
+      neighbour. The two priced answers are playing the first
+      probe as a pair (one more sweep) or the mirror rule;
+      neither is chosen;
+    - the mirror mark waits for an event on the step picture,
+      and the iLoud is the rig to judge it on;
+    - trying a rebuild from a rung and from a probe in the field
+      together, as he wanted;
+    - whether takes from sittings with different conditions may
+      share one canvas.
+
+    **Found Oct 14 by reading the code against what was agreed**
+    (not yet seen in the field):
+    - the passport's conditions are written and never read, so a
+      passport walked through another output or microphone still
+      sets and holds the fader. Agreed Sep 8 was that diverged
+      conditions free the fader and the window says why;
+    - the knee cap depends on the order of the channel names: a
+      louder answer met after a capped channel lifts the fader
+      back over that channel's knee (the working level in
+      level_run.py);
+    - the seating check on a rebuild compares only when the kept
+      top rung is the base, the one rung with a scatter of its
+      own, so a rebuild from a higher rung is not checked;
+    - the heading says "the capture ran out first" whenever there
+      is no knee, also for a walk ended by the knob, the rung
+      budget or Stop;
+    - the fader's tooltip still says the weaker side sets the
+      level, and the level button's says "probe sweeps only",
+      though a press walks the ladder too;
+    - a click on a row below the rule can select its neighbour:
+      the hit test does not count the rule's height.
+    - TRUST.md said clipped and flagged takes earn nothing. The
+      code gives them no base, but lets every take on the canvas
+      into the average and the spread and counts it toward the
+      two takes a band needs, so two clipped takes certify a band
+      at a score of 25. Which of the two is meant is his call;
+      TRUST.md now says what the code does and points here.
+
+13. **A device is its node and the port in use.** His decision
+    of Sep 15: a device is identified the same way everywhere,
+    and once the port was chosen, everywhere includes the
+    microphone side. A Bluetooth headset in Headphones and in
+    Handsfree, or one card's line out and its headphone out,
+    are different devices with their own profiles. Keying by
+    channel width was abandoned (he removed those patches
+    himself) and keying by card profile was rejected. The
+    microphone side moved in the same series -- a measurement
+    rig is its node and its jack -- at the price of re-binding
+    his microphone profiles, which he did not count: data made
+    again in a second is not worth protecting.
+    **Shipped (Sep 15-17)**, with one spelling for every key
+    (`port_key`): the port by its name, never by a route index.
+    The input list once wrote `#3` where the device door wrote
+    `#analog-input-mic`, and stored keys never matched.
+
+    **The limit he accepted (Oct 7).** The key does not carry
+    the USB path. His two M62s report the same serial, so the
+    bus path is the only thing that tells them apart;
+    WirePlumber names them `-00` and `-00.2` in the order it
+    sees them, and with both in Pro mode their profiles swap if
+    that order changes. Between the two evils he chose
+    independence from the USB port a card is plugged into. A
+    name WirePlumber gives while the previous object still
+    holds the usual one (`...sink.2`, `-00.3`) is a new device
+    to the app, and a profile bound under it plays only while
+    the card carries that name.
+
+14. **The taste on every device, and what the hook is told.**
+    Four faults found in the field on Oct 7, fixed in one
+    release:
+    - A Bluetooth headset in Handsfree crackled under any EQ
+      from this app. `param_eq` declares eight ports whatever
+      its config names, a graph naming no ports takes that
+      width, and on a mono node PipeWire up to 1.6.9 turns the
+      seven unwritten outputs into full-scale DC
+      (pipewire#5473). Every graph now names one port pair per
+      chain, and Clean and Bypass remove the graph instead of
+      applying a flat one, which was eight wide too.
+    - Since Sep 15 a measurement played through the device's
+      own EQ: graphs were keyed `node#port` while the
+      moratorium still spoke the bare node name. It strips and
+      restores the graph under the device key now.
+    - The hook's state file could not be read back for a key
+      with a space or a bracket in it, which every UCM port
+      has, because WirePlumber escapes them.
+    - A device with no profile played the taste only after the
+      window had been opened on it, and the window and the hook
+      feed built a device's graph two different ways.
+
+    One function now builds what a device plays -- correction,
+    taste and preamp -- for the window and the feed alike. He
+    chose to merge in the app rather than in the Lua hook once
+    `--apply` over his 14 bound devices measured 0.75 s, and
+    said the choice may come up again. A change of the taste or
+    of the manual preamp republishes every bound device. The
+    hook speaks protocol 3: a common entry `@taste` (the taste
+    and the preamp, in a form that fits any width) plays on
+    every node with a card and no value of its own; `""` is
+    explicitly nothing (Bypass, a measurement); a device told
+    to follow the common entry gets `@taste` written as its
+    value, never a deleted key, because the metadata announces
+    a delete only for a key it holds; and a table persisted
+    under another protocol is not read. A device whose port is
+    not known for a moment keeps its last key, in the app and
+    in the hook. **Shipped as 5.1.0 (Oct 14).**
+
+    **Open:**
+
+    (a) *Old entries in the hook's table.* A new protocol
+    starts from an empty table, but within protocol 3 `--apply`
+    only writes: an entry whose binding was removed stays until
+    something writes over it. Two dead M62 keys were removed by
+    hand after the protocol 3 install. His question of Oct 7,
+    whether `--apply` should clear the table and at what cost,
+    is undecided.
+
+    (b) *The hook's half of "a node seen before its card".* It
+    is covered by `tests/hook_harness.lua` only: PipeWire 1.6.x
+    does not report the graph a node has loaded, so the field
+    cannot see it before a release carries master's d4329600d.
+
+    (c) *Undo resets a manual preamp to Auto.* The restore
+    reads the preamp mode from the history snapshot, with Auto
+    as the default. From Jul 17 the snapshot recorded the mode
+    and a press of Auto was an undo step; on Aug 7, when the
+    preamp moved out of the profile (eafdade), both were
+    dropped and the restore kept reading. Since then every undo
+    or redo in Manual has switched to Auto for the session.
+    Since 5.1.0 the restore also writes the ride and republishes
+    every device, so the switch now persists and the manual
+    value is lost. Found Oct 14 by reading the code. The
+    snapshot has to record the mode again, and the press has
+    to be a step again, or an undo after pressing Auto would
+    release it.
+
+    (d) *A floor on Default.* The floor button is live on
+    Default, and toggling it saves the built-in Clean profile as
+    `clean.json` among the user's profiles. Since 5.1.0 a device
+    on Default plays only the common entry, so that floor is
+    drawn and does not play. What Default with a floor should
+    mean is undecided: no floor on Default, or a device on
+    Default with a floor publishing a graph of its own.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not
@@ -411,7 +618,9 @@ His goal lines ride each task verbatim.
   Flatpak: manifest built for both arches on every push, bundles
   attached to releases. Acceptance met in the field: the lane turned
   red on a real import-time error (a missing typelib) before it ever
-  went green.
+  went green. Since Oct 4 the Tests lane also builds the RPM from the
+  pushed tree in a clean Fedora container, the way COPR's build root
+  does, so a spec that would fail a release fails the push first.
 - **Export wizard.** One window-level action (the primary menu is its
   home) that bakes the COMPOSED chain -- device + active taste, preamp
   included -- and asks one question: where is this going? Shipped in
@@ -431,7 +640,9 @@ His goal lines ride each task verbatim.
   owns the gain.
 - **Taste layer.** Named preference EQs over any profile on any device,
   a Taste card with an in-place editor, picker with rename/delete, and
-  honest interaction with headroom.
+  honest interaction with headroom. Since 5.1.0 it also plays on a
+  device with no profile of its own, through the hook's common entry,
+  and a change reaches every device at once (task 14).
 - **One undo timeline.** Device, taste and profile switches share a
   single history: selection is not an edit, steps are single, births and
   deletions are revocable within the session (the graveyard), and the
@@ -587,7 +798,8 @@ His goal lines ride each task verbatim.
 - **The foreign hand.** Gated on PipeWire's filter-graph read-back
   shipping in a release and reaching Fedora (master already exposes
   applied graphs on the properties -- pipewire#5345 carries our
-  use case). Then: read `filter-graph.0` before writing; non-empty
+  use case; as of Oct 14 no release does, 1.6.9 reports an empty
+  string). Then: read `filter-graph.0` before writing; non-empty
   and not what we last wrote means another writer -- surface a
   takeover-or-leave choice, per device, remembered. Ownership of a
   sink's EQ belongs to the user; the tool's job is to make the
@@ -624,7 +836,12 @@ His goal lines ride each task verbatim.
   STANDS BEFORE THE CONVERTER. A digital input gain scales the peak in
   the file and leaves the voltage at the converter alone, so a take can
   read -24 dBFS with the converter at full scale and nothing in the
-  recording shows the difference.
+  recording shows the difference. **Corrected Sep 10: within a walk
+  the step a rung took is the rise of its own curve, not of the
+  peak.** The raw recording's largest sample is where the harmonics
+  add to the fundamental, so the peak rose 0.14 dB more than the
+  curve at the top of the Origin's walk and 0.29 dB on the Denon
+  (Farina 2000; e2b5225).
 - **Both capture gains the UMIK-2 publishes are digital**, and the
   descriptor says so without any measurement: its whole audio topology
   is input terminal 1 (Microphone) -> feature unit 11 -> output
@@ -694,12 +911,66 @@ His goal lines ride each task verbatim.
   hardware -- the FL/FR trust-band asymmetry on the first live bridge
   was left-bud-in-right-ear repeatability. One coupler + one cal also
   keeps the fit's cross-channel balance trims valid by construction.
+- **A room is not stationary.** On a coupler the error of a
+  rung-to-rung difference does not grow down to an SNR of -15 dB
+  (median 0.03 dB, spread 0.1 dB): a swept-sine deconvolution spreads
+  stationary hiss. In a room three sweeps at one level on a UMIK-2
+  disagreed by 20.5 dB in the bins below 0 dB SNR. So the scatter
+  between repeated sweeps gates a reading, not a model of noise by SNR
+  (06d1f42, 856503d).
+- **`param_eq` is eight ports wide whatever its config names.** A
+  filter graph that names no ports takes its width from that
+  descriptor, and on a mono node PipeWire up to 1.6.9 averages the
+  seven unwritten outputs into the one channel: full-scale DC
+  (pipewire#5473, fixed in master by 42cef4c). Naming one port pair per
+  chain makes a graph exactly as wide as its sink on every version. It
+  also keeps eight filter banks: `filtersN` is clamped to 1..8, so on a
+  ten-channel node `filters9` and `filters10` land in bank 8 on top of
+  `filters8`, and channels past the eighth need a second node.
+- **An empty string removes a filter graph** (audioconvert's
+  `load_filter_graph()`); a flat `param_eq` is still a graph, with all
+  of its width.
+- **PipeWire's metadata announces a delete only for a key it holds**
+  (`impl_set_property`). After a PipeWire restart it holds nothing a
+  hook persisted, so a delete is not a signal a hook can rely on; a
+  written value is.
+- **WirePlumber escapes the keys of its state files**: a backslash, a
+  space, `=`, `[` and `]` become `\\`, `\s`, `\e`, `\o` and `\c`, so the
+  UCM port `[Out] Line1` is stored as `\oOut\c\sLine1`.
+- **Restarting WirePlumber drops Bluetooth audio.** The bluez5 monitor
+  lives in WirePlumber's process, so the endpoints it registered with
+  BlueZ go with it; whether a headset comes back by itself depends on
+  the headset (his JBL does not).
+- **Two identical USB cards differ only by their bus path.** His two
+  M62s report the same `device.serial`, and ALSA card numbers follow
+  the probe order. WirePlumber makes names unique by appending `.2`,
+  `.3` in the order it sees objects, and frees a name only when its
+  object is removed.
+- **PipeWire 1.6.x does not report a node's loaded filter graph.** Its
+  Props carry `audioconvert.filter-graph.disable` and an empty
+  `audioconvert.filter-graph`; master reports what is loaded
+  (d4329600d). Until a release carries that, what a node plays is
+  checked by ear.
 
 ## Upstream notes
 
 * **Resolved:** PipeWire filter-graph ate softVolume/softMute so channel
   volumes applied twice and the level collapsed after enabling EQ --
   fixed in 1.6.8 (work item 5344).
+* **Resolved in master, not released:** a filter graph on a mono sink
+  turned silence into full-scale DC -- pipewire#5473, filed Sep 14. Our
+  MR 3003 was closed: Wim Taymans fixed it in 42cef4c ("filter-graph:
+  support PORT_PAIR nodes"), since the MR would have broken the sofa
+  filter. No release up to 1.6.9 carries it; 5.1.0 names its ports and
+  does not depend on it.
+* pipewire#5423 (an ALSA node under UCM: port names follow the
+  driver's channel map while audio.position does not), moved out of
+  wireplumber#983 on Aug 12 -- open, no reply as of Oct 14.
+* alsa-ucm-conf PR 826, the Topping M62 profile -- open. On Oct 3 he
+  asked for its CI run to be approved; alsa-ucm-conf master has not
+  moved since Aug 31 (checked Oct 14).
+* The M62 kernel series (analogue controls, the output selector) has
+  been under review as v8 since Oct 3.
 * WirePlumber: a fresh `stream.capture.sink` stream against a settled BT
   sink with an in-node filter-graph deterministically comes up with one
   monitor port unlinked; only a node reconfigure (graph republish)
