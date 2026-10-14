@@ -559,6 +559,22 @@ His goal lines ride each task verbatim.
     an import, a new channel -- and a turn of the preamp makes
     none. Not yet tried in the window.
 
+    (f) *A text import set the preamp of the device in view.*
+    The REW/AutoEQ import, written on Jul 5 when the preamp was
+    a number in the profile, kept the file's Preamp line on an
+    output with one channel and put Safe in its place on any
+    other. Aug 7 moved the preamp out of the profile and the
+    package and left this import as it was. Since then, in
+    Manual, an import gave that number to the device in view
+    only: nothing saved it, no other device got it, and a
+    restart brought the hand's value back; in Auto, Safe
+    replaced it at once. The file's number is REW's answer for
+    its own bands and knows nothing of the taste, the floor or
+    the other channels. Found Oct 15 by reading the code.
+    **Fixed in the code the same day:** the import takes the
+    bands only, and the preamp follows them as it follows any
+    edit. Not yet tried in the window.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not

@@ -130,3 +130,16 @@ def test_a_turn_of_the_preamp_forks_no_profile():
 @pytest.mark.parametrize("name", ["_on_view_changed", "_apply_rew_import"])
 def test_an_edit_of_the_bands_still_forks_a_built_in(name):
     assert "self._ensure_editable" in _calls(_gui()[name])
+
+
+# ---- a text import brings bands, not the preamp ------------------------------
+
+def test_a_text_import_leaves_the_preamp_alone():
+    """The file's Preamp line is REW's answer for its own bands; it knows
+    nothing of the taste, the floor or the other channels. In Manual the
+    import gave that number, or Safe on an output with more than one
+    channel, to the device in view only: nothing saved it and no other
+    device got it, and a restart brought the hand's value back."""
+    fn = _gui()["_apply_rew_import"]
+    assert not any(isinstance(n, ast.Attribute) and n.attr == "preamp"
+                   and isinstance(n.ctx, ast.Store) for n in ast.walk(fn))

@@ -3599,7 +3599,7 @@ class EqWindow(Adw.ApplicationWindow):
                     text = f.read()
             except OSError:
                 return
-            preamp, bands = eq.parse_autoeq(text)     # REW/AutoEQ is mono
+            bands = eq.parse_autoeq(text)[1]     # REW/AutoEQ is mono
             if not bands:
                 looks = False
                 try:
@@ -3622,24 +3622,18 @@ class EqWindow(Adw.ApplicationWindow):
                 err.set_default_response("close")
                 err.present(self)
                 return
-            self._apply_rew_import(preamp, bands)
+            self._apply_rew_import(bands)
         dialog.open(self, None, done)
 
-    def _apply_rew_import(self, preamp, bands):
-        """Load a parsed REW/AutoEQ result into the CURRENT slot. The file's
-        preamp is honored only where the file sees the whole picture -- a
-        single chain. A per-ear file cannot know the other channels, so
-        with more than one the number is ignored and the shared preamp is
-        recomputed from ALL channels' curves (the balanced-Auto
-        requirement): exact, never stale, and better math than REW's
-        -(largest gain) anyway. The content-aware tier-3 audit stays the
-        authority for refining below this static bound."""
+    def _apply_rew_import(self, bands):
+        """Load a parsed REW/AutoEQ result into the CURRENT slot. The
+        file's Preamp line is left out: it is REW's answer for these
+        bands alone, and the preamp here is the listener's -- computed
+        over the correction, the floor and the taste in Auto, one
+        number for every device in Manual. The import is an edit of
+        the bands like any other, and the preamp follows it the same
+        way."""
         self.slots[self.cur_ch] = {"bands": bands}
-        if len(self.ch_keys) <= 1:
-            self.preamp = float(preamp)
-        else:
-            v = self._auto_preamp_db()
-            self.preamp = -v if v else 0.0
         self._load_slot(self.cur_ch)
         self._ensure_editable()
         self._on_edit()
