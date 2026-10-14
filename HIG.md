@@ -28,6 +28,20 @@ Verdicts below are provisional, read from the code by someone
 who cannot run the GUI; [Mikhail] marks the items where the
 deciding eye must be yours.
 
+Since these rounds several of the widgets they judged have
+changed or gone (checked against the code on Oct 14). The sink
+dropdown is a two-level menu button, ports grouped by card. The
+FL / FR selector is the shared tab row (`chantabs.py`), linked
+only when there is more than one tab. In the measurement window
+the ComboRows became action rows with flat menu-button
+suffixes, the Capsules row is gone, and one calibration row
+serves the capture channel in view; the ring, its Gtk.Grid
+transport and the left-edge fader are gone too -- the fader is
+a row under Output with the auto-level button beside it, and
+play and stop are a centred box in the last card. The planned
+Profile name row is an editable label in the header. The
+entries below keep their verdicts as history.
+
 - Header bar: undo/redo linked pair -- borrowed (HeaderBar
   history pattern). Sink dropdown + pin toggle: [Mikhail]
   compare against Adw.SplitButton and the Settings device
@@ -155,10 +169,10 @@ rule, the path, and a suggested replacement.
 tools/hig_audit.py walks the LIVE widgets under a display
 (xvfb in CI); the rules themselves are pure dicts-in,
 findings-out and stay under test with no GTK in sight. Tier two
-is EVIDENCE: the CI screenshot rig (lands with the CI day)
-renders each surface to PNG artifacts so every merge request
-carries pictures, and a pixel diff flags unintended drift. Tier
-three is JUDGMENT: taste calls like dense-grid-vs-rows have no
+would be EVIDENCE: a CI screenshot rig rendering each surface to
+PNG artifacts, so every merge request carries pictures and a
+pixel diff flags unintended drift. It does not exist yet; the
+Tests lane runs tier one only. Tier three is JUDGMENT: taste calls like dense-grid-vs-rows have no
 mechanical judge -- GNOME reviews Circle apps with human eyes,
 and so do we. The tiers connect by a RATCHET: every judgment
 call this file settles gets minted into a tier-one rule, so the
@@ -167,22 +181,33 @@ gate grows stricter with every dispute instead of re-arguing it.
 Rules on the floor today: H1 linked means one instrument --
 facets of one control, or one value control with its
 ToggleButton modifiers (the --window round's verdict; a spin
-with its Auto, a picker with its follow pin) -- and, the letter
-of the libadwaita style-classes doc, a linked box carries no
-spacing;
-H2 an action group anchors to an edge; H3 flat needs a
-structured container; H4 an icon-only button describes itself;
-H5 spacing sits on the 6px grid; H6 dialog buttons name the
-action; H8 a label dresses from the type scale (the wardrobe:
-title-1..4, heading, caption, caption-heading, dim-label,
-numeric, monospace, accent, the stock colors, measure-count --
+with its Auto, a picker with its follow pin), where a menu
+button that shows a word counts as the value control and an
+icon-only one as an action -- and, the letter of the libadwaita
+style-classes doc, a linked box carries no spacing;
+H2 an action group takes a place, and fill is not one: a
+stretched group is always a finding, centring is one only for
+worded groups (an icon cluster such as play and stop may stand
+centred), and a vertical box of buttons is a menu, not a group;
+H3 flat needs a structured container; H4 an icon-only button
+describes itself; H5 spacing comes from the grid 0, 3, 6, 12,
+18, 24, 30, 36 -- multiples of six with 3 for tight pairs, so 42
+or more is a finding even on the six -- read from Gtk.Box
+spacing and widget margins, not from Gtk.Grid spacing; H6 dialog
+buttons name the action; H7 prose belongs to a card, a boxed
+list, a bar, a banner or a toast: a label of more than 40
+characters loose in a bare column is a finding, headings and
+titles excepted; H8 a label dresses from the type scale (the
+wardrobe: title-1..4, heading, caption, caption-heading,
+dim-label, numeric, monospace, accent, the stock colors,
+chantab-count --
 anything else on a GtkLabel is a hand-rolled style and a
 finding; the toolkit's own dress -- .title/.subtitle of Adw
 rows and AdwWindowTitle, EntryRow's floating .dimmed title,
 .body/.description of group headers, heading levels, GtkScale's
 value position -- is the toolkit's business and exempt, and the
-app stylesheet's state trio done/warn/bad on the speaker count
-is sanctioned, and the cal cloud's pill with its three moods
+app stylesheet's state trio done/warn/bad on the channel tab's
+count is sanctioned, and the cal cloud's pill with its three moods
 joined by name after the ratchet accused its own birth; the
 first live run taught both); H10 the list
 dresses evenly (the architect's law from the cal-cloud round:
@@ -190,7 +215,10 @@ information fills the interface uniformly -- a row hoarding
 text against its own sisters is cramped and must decompose or
 shed its noise to the tooltip; the jurisdiction is the row's
 OWN population, so the uniformly verbose archive is uniformly
-clean and no constant decides); H9 the Tab walk
+clean: a row is a finding when its subtitle runs to more lines
+than its sisters' most common count, or its text past the larger
+of twice their median length and the median plus 80 characters);
+H9 the Tab walk
 must round the room -- the audit
 presses Tab itself, and a walk that repeats a stop without
 returning to its first is a trapped subset (born from the
@@ -198,9 +226,9 @@ field's play -> auto-level loop; a custom jump without a
 forward neighbor is the classic cause). H1-H3 are the .pdeq sprint's earned rules; H4-H6 are the
 HIG's own letter. Run: `xvfb-run -a python3 tools/hig_audit.py
 --peq-view` for the band card alone, `--window` for the whole
-house: both windows in both channel costumes, the command
-dialog, About, the export wizard with every preview, the cal
-history.
+house: the main window in both channel costumes, the measurement
+window once, the command dialog, About, the export wizard with
+every preview, the cal history.
 
 ## The manual half
 
@@ -214,15 +242,22 @@ same way rounds do.
   icon name in perdeviceeq/ and data/ ends in -symbolic (two
   multiline call sites verified by eye: pan-down, go-next).
 - [x] Responses name the action -- the inventory: Cancel,
-  Delete, Play sweep, Import, Not now, Quit, Install, Re-fit,
-  Move, Remove, Update/Reinstall integration. One word is OPEN
-  below.
+  Delete, Play sweep, Play and rebuild, Play and resume, Play
+  and replace the map, Import, Install, Re-fit, Move, Remove.
+  The first-run modal with Not now and Quit became the hook
+  banner (Install, Retry), and Update/Reinstall integration
+  became the main menu's Install and Remove integration. One
+  word is OPEN below.
 - [x] Dialog against popover -- pickers ride popovers,
   confirmations ride alerts, focused surfaces (command, cal
   history, export) ride Adw.Dialog; the transient/focused
   split of the HIG.
-- [x] Esc and defaults -- every alert sets a close response
-  and a default; Adw.Dialog closes on Esc by stock.
+- [ ] Esc and defaults -- the alerts that ask set a close
+  response and a default, and the seven single-Close
+  acknowledgements rely on the stock close response, `close`,
+  which their one response carries; Adw.Dialog closes on Esc by
+  stock. Open: the Import confirmation (Cancel / Import) sets no
+  close response.
 - [x] About -- version pinned by test_version_sync, links
   follow the renamed repository, GPL-3.0, icon by app id.
 - [x] Acknowledgments say Close -- the architect's word: every
@@ -230,11 +265,12 @@ same way rounds do.
   matches the stock close-response so Esc lands on it, and
   Enter does too (a default on all twelve sites; ten had
   none before this sitting).
-- [x] The drawings introduce themselves -- every DrawingArea
+- [ ] The drawings introduce themselves -- every DrawingArea
   in the tree carries an accessible label: per-channel output
-  meters, the speaker ring, the overlaid responses, take
-  curves, the EQ range, the EQ curve, band color dots, the
-  export residual.
+  meters, the overlaid responses, take curves, the EQ range,
+  the EQ curve, band color dots, the export residual. Open: the
+  passport canvas (`ladder_area`) has none. The speaker ring is
+  gone.
 - [x] Width appetites, the sweep's verdict: data-fed labels
   yield (take-row metrics ellipsize, tooltips carry the full
   passport), the CLAMP owns content width so a wider window
@@ -259,21 +295,27 @@ same way rounds do.
   twice: the forward neighbor's first aim skipped the takes
   list (a wrap can be round and still wrong), so the ring now
   hands the takes card, and H9 grew a coverage half -- a full
-  wrap must have visited every reachable stop.
+  wrap must have visited every reachable stop. Since then the
+  ring and its Tab walk are gone with the ring: the band grid is
+  focus.py's only user, and the fader's jump to the auto-level
+  button is a key handler in measure_window.py.
 - [x] The costume floor -- converted from a read to a rule on
   the architect's word ("I do not trust eyes"): H8 polices
   every label's size and style against the type-scale wardrobe
   under the CI ratchet. The words themselves -- case,
   terminology -- stay the author's pen, applied as text is
   written or touched.
-- [x] Take rows stand before the floor -- the architect's
+- [ ] Take rows stand before the floor -- the architect's
   word closed the last gap with mocks: the audit mounts a
   fixture session (three takes, three verdicts -- clean,
   flagged, clipped) through the REAL row builder before the
   snapshot, so the rows, their dots, their delete buttons and
   the rig headers are judged and walked like everything else.
   A lint tool never plays a sweep: the fixture is data, not
-  audio.
+  audio. Open: the third fixture take carries no SNR, and the
+  verdict now answers `silent` before it looks at clipping, so
+  the clipped row is no longer built; the fixture needs a heard
+  take that clipped.
 
 ## Process
 
