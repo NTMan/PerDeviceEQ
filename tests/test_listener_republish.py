@@ -111,3 +111,22 @@ def test_a_press_of_auto_is_a_step_of_the_timeline():
     undoing an edit made after pressing Auto would land the entry from
     before the press and release Auto."""
     assert "self._schedule_save" in _calls(_gui()["_set_preamp_auto"])
+
+
+# ---- a turn of the ride edits no profile -------------------------------------
+
+def test_a_turn_of_the_preamp_forks_no_profile():
+    """A turn on Default made an empty "Custom EQ" and bound the device to
+    it, and on a built-in profile made a copy of it: the turn ran the edit
+    pipeline, which began by forking anything that is not a user profile.
+    Since Aug 7 the preamp is not kept in a profile, so the copy held
+    nothing the turn changed."""
+    fns = _gui()
+    assert "self._on_edit" in _calls(fns["_on_preamp"])
+    for name in ("_on_preamp", "_on_edit"):
+        assert "self._ensure_editable" not in _calls(fns[name])
+
+
+@pytest.mark.parametrize("name", ["_on_view_changed", "_apply_rew_import"])
+def test_an_edit_of_the_bands_still_forks_a_built_in(name):
+    assert "self._ensure_editable" in _calls(_gui()[name])

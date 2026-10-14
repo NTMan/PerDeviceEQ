@@ -546,6 +546,19 @@ His goal lines ride each task verbatim.
     mean is undecided: no floor on Default, or a device on
     Default with a floor publishing a graph of its own.
 
+    (e) *A turn of the preamp forked the profile.* The turn ran
+    the edit pipeline, which began by forking anything that is
+    not a user profile: on Default it made an empty "Custom EQ"
+    and bound the device to it, on a built-in profile a
+    "(custom)" copy. That made sense while the preamp was kept
+    in the profile; since Aug 7 the copy holds nothing the turn
+    changed, and since 5.1.0 the device on Default got a graph
+    of its own instead of following the common entry. Found
+    Oct 14 by reading the code. **Fixed in the code on Oct 15:**
+    the fork stays with the edits of the profile -- the bands,
+    an import, a new channel -- and a turn of the preamp makes
+    none. Not yet tried in the window.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not

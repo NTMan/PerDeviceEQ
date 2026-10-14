@@ -485,6 +485,7 @@ class EqWindow(Adw.ApplicationWindow):
             return
         self._ensure_audible()
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
+        self._ensure_editable()
         self._on_edit()
 
     def _headroom_cubes(self, loss=None):
@@ -2389,10 +2390,12 @@ class EqWindow(Adw.ApplicationWindow):
         self.profile_button.set_label(self._display_name(self.store.get(pid)))
 
     def _on_edit(self):
-        """Any edit: fork built-ins if needed, redraw, debounce the save."""
+        """Any edit: redraw, debounce the save. An edit of the bands
+        forks a built-in first, in its caller (_ensure_editable); a
+        turn of the preamp does not -- the ride is the listener's, and
+        a copy of the profile would hold nothing the turn changed."""
         if self._loading:
             return
-        self._ensure_editable()
         # the edit may have just given the profile its first channel, so
         # the map is answered again BEFORE the siblings are handed the
         # slot -- that is what makes one channel spread as it is typed
@@ -2910,9 +2913,9 @@ class EqWindow(Adw.ApplicationWindow):
 
     # ---- band table --------------------------------------------------------
     def _on_preamp(self, spin):
-        """Preamp spin changed: one shared value for the whole
-        profile. A HAND turn is a compromise -- it un-presses
-        Auto."""
+        """Preamp spin changed: one value for every device. A HAND
+        turn is a compromise -- it un-presses Auto. It edits no
+        profile, so it forks none (_on_edit)."""
         self.preamp = float(spin.get_value())
         self.view.set_preamp(self.preamp)
         if self._loading or self._preamp_syncing:
@@ -3638,6 +3641,7 @@ class EqWindow(Adw.ApplicationWindow):
             v = self._auto_preamp_db()
             self.preamp = -v if v else 0.0
         self._load_slot(self.cur_ch)
+        self._ensure_editable()
         self._on_edit()
 
     def _import_profile(self):
