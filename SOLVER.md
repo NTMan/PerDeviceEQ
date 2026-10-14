@@ -9,12 +9,15 @@ graph; Part II is the mathematics.
 Five things are drawn. **measured** (white) is the smoothed
 measurement of your device, with a ribbon showing the spread
 between takes. **predicted** (green) is what the corrected
-device will measure like: measured plus the EQ. **EQ** (blue)
-is the correction itself, preamp included. **target** (gold
-dash) is the curve the solver is lawfully aiming at. Dashed
-gray verticals with a light shade beyond them are the edges of
-the **trust zone**: the band where the measurement is honest
-enough to act on.
+device will measure like: measured plus the EQ -- and, where
+the profile carries a level map, minus what the rig fails to
+deliver at the current volume; there the line turns red and is
+labelled *what you hear*. **EQ** (blue) is the correction
+itself, preamp included. **target** (gold dash) is the curve
+the solver is lawfully aiming at. Dashed gray verticals with a
+light shade beyond them are the edges of the **trust zone**
+stored with the last fit: the band where the measurement was
+honest enough to act on.
 
 ### The two jurisdictions
 
@@ -23,11 +26,21 @@ The law of the fit has two axes, and the graph draws both.
 The zone edges answer WHERE the law applies. Outside them the
 measurement is not trusted (a speaker's roll-off drowning in
 room noise, a rig running out of bandwidth), so the solver
-neither places bands there nor owes anything there.
+neither places bands there nor owes anything there. Strictly,
+the solver works over the fit's own range, `f_lo..f_hi` in the
+fit's parameters: the measurement window parks it at the
+trusted edges of the live session and the EQ range handles
+move it by hand, while the drawn edges are the zone stored
+with the last fit. The two can differ -- one profile here was
+fitted from the 20 Hz default while its zone began at 38.3 --
+and the trust court docks a fit range that reaches past the
+band (TRUST.md).
 
 The boost cap answers HOW MUCH may be given at a point. Every
 band may boost at most `max_boost` decibels (6 by default).
-Cuts are not capped. This is why the gold target is not a
+Cuts are not capped by the law; the only wall under a band is
+the app's -24 dB sanity limit, with Q kept within 0.3-8. This
+is why the gold target is not a
 straight line: wherever the measured curve sags below the
 level line by MORE than the cap, the target sags with it and
 runs at exactly `measured + cap`. That sag is not a failure
@@ -55,23 +68,24 @@ right after the start.
 
 The honest analogy is weight classes, not finish lines: fit
 says whether the declared class weight was lifted cleanly,
-flat is the absolute record, and the cap -- the class -- is
-printed on the scoreboard (it is a per-profile parameter, in
-the gold curve and in this document, movable only by the
-owner's hand). Claiming a record without naming the class
-would be cheating; naming both numbers is the cure. When flat
-equals fit, the strip shows only fit -- there is no second
-story to tell.
+flat is the absolute record, and the cap is the class.
+Claiming a record without naming the class would be cheating;
+naming both numbers is the cure. The class shows in the gold
+curve rather than on the strip: `max_boost` is a per-profile
+parameter stored with the fit, and no control in the window
+moves it. When flat equals fit, the strip shows only fit --
+there is no second story to tell.
 
 Both flat and the drawn gold target live inside the PLAYED
-band: the trust zone clipped by engaged protection. Below an
-engaged floor and above an engaged ceiling the system
-deliberately reproduces nothing -- sealed stages cut there to
-keep a small transducer alive -- and a band we chose to mute
-has no flatness to grade. This is not the target bending
-again: the floor is a visible playback decision with its own
-button, handles and drawn slope, not a fit convenience. The
-fit itself is still judged over the whole trust zone.
+band: the gold within the stored zone, flat within the fit's
+range, each clipped by an engaged floor. Below an engaged
+floor the system deliberately reproduces nothing -- sealed
+stages cut there to keep a small transducer alive -- and a
+band we chose to mute has no flatness to grade. This is not
+the target bending again: the floor is a visible playback
+decision with its own button, handle and drawn slope, not a
+fit convenience. The fit itself is still judged over its whole
+range.
 
 ### For the audiophile
 
@@ -121,8 +135,10 @@ buy. On in-ears, reseat the tips -- a low-mid sag is often
 the seal's signature, not the driver's.
 
 Pay for it. `max_boost` is a per-profile parameter: raising
-it to cover the deepest sag straightens the gold at a listed
-price -- every point where the correction rides above the
+it -- in the profile's fit parameters, or with `--max-boost` on
+the solver's own command line, since no control in the window
+does -- to cover the deepest sag straightens the gold at a
+listed price -- every point where the correction rides above the
 old cap raises the net response, and the preamp takes the
 same decibels back from the ENTIRE track, while the driver
 works hardest exactly where it was weakest. Sometimes worth
@@ -137,18 +153,27 @@ declined -- it is never faked by the scoreboard.
 
 Speaker protection (the Floor button and the handle strip) is
 about sealed high-pass stages that keep a small speaker alive
-below its cliff. It engages only where the measured zone
-testifies a cliff exists. The zone EDGES on the graph carry no
-such gate: they are drawn always, because telling the truth
-about where the measurement ends is not a protection feature.
+below its cliff. It is a hand's decision: the button engages
+it, the handle under the graph sets its frequency (seeded at
+40 Hz), and nothing measured switches it on (TRUST.md, *The
+Floor is a hand*). The zone EDGES on the graph carry no such
+gate: they are drawn always, because telling the truth about
+where the measurement ends is not a protection feature.
 
 ## Part II -- the mathematics
 
-### The grid, and why its top edge is 19897 Hz
+### The grids, and why a zone's top edge is 19897 Hz
 
-Everything below is computed on a grid uniform in log2: 96
-points per octave from 20 Hz, `f_lo * 2**(i/96)`. Three things
-are worth knowing about it, because the question comes back.
+Two grids are in play. The MEASUREMENT grid is uniform in
+log2: 96 points per octave from 20 Hz, `f_lo * 2**(i/96)`.
+Takes, smoothing, the spread and the trust court live on it,
+so every zone edge is one of its nodes. The SOLVER interpolates
+the smoothed measurement onto a grid of its own: 400 points
+spaced evenly in log frequency between the fit range's two
+edges, so both edges are nodes and the spacing follows the
+range -- about 43 points per octave for 20-12000 Hz. Three
+things are worth knowing about the measurement grid, because
+the question comes back.
 
 **It was chosen freely, not from a standard.** There is a
 standard next door and it does not govern us: IEC 61260-1
@@ -182,19 +207,22 @@ divide by, while the round edge is a quantity the eye likes.
 So the last node inside the band is 19897 Hz, and a fit that
 reaches it has discarded nothing. A zone ending BELOW it --
 19330, 18114 -- is a real edge, four or thirteen nodes down,
-and means what it says.
+and means what it says. The solver makes the other trade: it
+neither smooths nor divides by octaves, so its grid can be
+defined by its endpoints.
 
 ### The target
 
-The grid is clipped to the trust zone `[lo, hi]`. The level
-line is the mean of the smoothed measurement over the zone.
-The desired correction is `line - measured`, and the lawful
-target caps its boosts:
+The solver's grid spans the fit range `[f_lo, f_hi]`. The
+level line is the mean of the smoothed measurement over that
+range. The desired correction is `line - measured`, and the
+lawful target caps its boosts:
 
     target = min(line - measured, max_boost)
 
-Cuts are unbounded below. Everything the solver does is
-measured against this curve.
+Cuts are unbounded below in the target; a band itself stops at
+-24 dB. Everything the solver does is measured against this
+curve.
 
 ### The metric
 
@@ -208,14 +236,17 @@ The mean is removed because the preamp owns the constant.
 ### The greedy
 
 Bands are placed one seat at a time at the argmax of the
-masked residual. The masks are the laws: points outside the
-zone are not pickable (jurisdiction); a boost point where the
-NET response already stands within epsilon of the cap is not
+masked residual. The masks are the laws: the grid spans only
+the fit range (jurisdiction); a boost point where the NET
+response already stands within epsilon of the cap is not
 pickable (the cap is a net law); anchors that parked twice are
-retired for their sign. Band type follows zone position
-(shelves at the edges, peaks inside), and a shelf that parks
-at zero gain gets a second opinion as a narrow peak before its
-anchor is written off.
+retired for their sign. Band type follows position: a shelf
+within an octave of either edge, a peak inside -- unless the
+residual changes sign within an octave on the edge's side, an
+island that only a peak can answer (a shelf born for a narrow
+coupler resonance at 8281 Hz once left the whole top octave
+unservable). A shelf that parks at zero gain gets a second
+opinion as a narrow peak before its anchor is written off.
 
 Each band wears two leashes: its frequency may travel one
 octave around its anchor, and its gain is boxed to the sign it
@@ -237,7 +268,10 @@ same-sign bands into ONE seat -- parameter for parameter, a
 clipped into the sign's box so a boost pair pays the cap's
 price visibly, and the survivor's crown is parked in a narrow
 halo so the pair cannot re-form forever (place, converge,
-merge, re-pick provably cycles without the park).
+merge, re-pick provably cycles without the park). A crown
+already at the cap, or one a merge left unmoved, parks a full
+octave either side instead: re-forming there is futile by
+construction.
 
 ### The Jacobian
 
@@ -283,8 +317,12 @@ tolerance:
 Its gradient is assembled analytically from the band columns:
 centering subtracts the column means, softmax weights pick the
 working points, the penalty adds its own term. Local solves
-are L-BFGS-B with that gradient; hops are seeded uniform steps
-accepted by a Metropolis rule.
+are L-BFGS-B with that gradient; hops are seeded uniform
+steps, except every third, which is a fixed move -- in turn,
+re-seating the weakest peak at the residual's extreme, and a
+catalyst that adds a temporary band there, converges the
+longer chain and drops the weakest band -- all accepted by a
+Metropolis rule.
 
 Guarantees: the walk is SEEDED (one canvas, one answer, so
 provenance holds), and the polish is NEVER worse -- the
@@ -300,6 +338,15 @@ comb-shaped optima: on a field canvas the best legal solution
 was a picket fence -- three pinned narrow boosts with cuts
 woven between -- that beat the greedy's best by half a
 decibel, and no ordering of greedy placements finds it.
+
+### The solver's version
+
+`SOLVER_VERSION` (3 now) is folded into every fit's
+fingerprint, so a stored fit made by another version reads as
+stale and **Auto** refits it on one press. It moves with any
+commit that changes what a fit produces: 2 brought the rail law
+and the walker's two kicks, 3 the island law and the retiring
+of futile merges.
 
 ### The ceilings
 
