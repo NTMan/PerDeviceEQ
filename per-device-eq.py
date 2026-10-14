@@ -58,7 +58,8 @@ def main():
     g.add_argument("--list-profiles", action="store_true", help="list profiles")
     g.add_argument("--inspect", metavar="NODE_NAME", help="dump node params")
     g.add_argument("--apply", action="store_true",
-                   help="push bound profiles into the per-device-eq metadata now")
+                   help="push every bound device's EQ, and the taste "
+                        "for the rest, into the per-device-eq metadata now")
     g.add_argument("--install", action="store_true",
                    help="install the WirePlumber hook + the desktop entry")
     g.add_argument("--uninstall", action="store_true",
