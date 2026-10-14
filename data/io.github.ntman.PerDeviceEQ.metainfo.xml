@@ -60,6 +60,24 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="5.1.0" date="2026-10-14">
+      <description>
+        <p>Measurements no longer play through the app's own EQ, mono outputs no longer crackle, and the taste plays on every device</p>
+        <p>Since 5.0 a measurement did not take the app's EQ off the
+        device it measured: on a device with a profile, a taste or a
+        preamp the sweep played through them, so a profile fitted from
+        those takes also undoes the EQ that was already there. A device
+        that had EQ on it when it was measured with 5.0 should be
+        measured again.</p>
+        <p>A Bluetooth headset in Handsfree, like any mono output, no
+        longer crackles. A device with no profile of its own plays the
+        taste and the preamp even if the window has never been opened
+        on it, and changing either reaches every device at once.</p>
+        <p>The WirePlumber integration changes with this release: after
+        updating, the window reports that the hook speaks protocol 2
+        and the app 3, and its Retry button installs the new hook.</p>
+      </description>
+    </release>
     <release version="5.0.0" date="2026-10-04">
       <description>
         <p>pro audio interface support and acoustic passport</p>
