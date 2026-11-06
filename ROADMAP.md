@@ -514,9 +514,29 @@ His goal lines ride each task verbatim.
     starts from an empty table, but within protocol 3 `--apply`
     only writes: an entry whose binding was removed stays until
     something writes over it. Two dead M62 keys were removed by
-    hand after the protocol 3 install. His question of Oct 7,
+    hand after the protocol 3 install. The question of Oct 7,
     whether `--apply` should clear the table and at what cost,
-    is undecided.
+    was settled on Nov 7: **no sweep.** An entry goes wrong only
+    when a binding is dropped and the hook is not told. A device
+    under another name, like second M62, or one switched
+    off, like earbuds, keeps its binding and is not touched by
+    that rule; both come back. A change of the key format is a
+    new protocol, and since protocol 3 the hook reads only a
+    table written under its own, so it starts empty. The window
+    writes what a device's binding says whenever it shows the
+    device, so it cannot show a device as uncorrected while it
+    plays a correction. What is left are devices not shown after
+    bindings.json was edited by hand, and finding those would
+    take a new protocol: the app sees the hook's table only
+    through the metadata, which holds what was written since
+    PipeWire started, and reading the hook's file behind
+    WirePlumber's back is ruled out. (The measurement still
+    reads that file when the metadata has no value; that is a
+    question of its own.) The one case the app caused itself, a
+    deleted profile leaving its other devices on its graph, is
+    fixed at the source the same day: they are told to follow
+    the common entry when the profile goes. Not yet tried in the
+    window.
 
     (b) *The hook's half of "a node seen before its card".* It
     is covered by `tests/hook_harness.lua` only: PipeWire 1.6.x

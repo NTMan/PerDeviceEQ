@@ -2865,7 +2865,7 @@ class EqWindow(Adw.ApplicationWindow):
                     # undoing a birth: bury it (redo resurrects)
                     self._graveyard[bpid] = json.loads(
                         json.dumps(self.store.get(bpid)))
-                    self.store.delete_user(bpid)
+                    self._publish_unbound(self.store.delete_user(bpid))
                     self.favorites.discard(bpid)
                     _save_favorites(self.favorites)
                     self._populate_picker()
@@ -2971,6 +2971,24 @@ class EqWindow(Adw.ApplicationWindow):
         auth = pw_backend.backend()
         pw_backend.in_thread(lambda: auth.publish_state(wire))
         return GLib.SOURCE_REMOVE
+
+    def _publish_unbound(self, keys):
+        """Devices whose profile was just deleted have no binding now
+        and play the common entry, and the hook must hear it now. It
+        keeps a device's value until that key is written again, and no
+        later pass writes a key that has no binding: they would go on
+        playing the deleted profile. The device in view is the window's
+        to publish, as in _republish_others."""
+        if self.live and self.node:
+            keys = [k for k in keys if k != self._dev()]
+        if not keys:
+            return
+        auth = pw_backend.backend()
+
+        def follow():
+            for k in keys:
+                auth.clear_graph(k)
+        pw_backend.in_thread(follow)
 
     def _set_preamp_auto(self, on, land=False):
         """Flip the follow mode and sync the toggle without echo. The
@@ -3402,7 +3420,7 @@ class EqWindow(Adw.ApplicationWindow):
             # profile can resurrect it, takes and all
             self._graveyard[pid] = json.loads(
                 json.dumps(self.store.get(pid)))
-            self.store.delete_user(pid)
+            self._publish_unbound(self.store.delete_user(pid))
             self.favorites.discard(pid)
             _save_favorites(self.favorites)
             if self.current_pid == pid:

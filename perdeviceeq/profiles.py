@@ -265,19 +265,23 @@ class ProfileStore:
         return pid
 
     def delete_user(self, pid):
+        """Delete a user profile. Every device bound to it falls back
+        to no profile, and the devices are returned: the store does not
+        publish, so whoever deletes must tell the hook, or the hook
+        keeps the deleted profile's graph under their keys."""
         p = self.profiles.get(pid)
         if not p or p.get("builtin") or not p.get("path"):
-            return False
+            return []
         try:
             os.remove(p["path"])
         except OSError:
             pass
         self.profiles.pop(pid, None)
-        # any bindings pointing here fall back to Clean (drop the entry)
-        for node in [n for n, i in self.bindings.items() if i == pid]:
+        dropped = [n for n, i in self.bindings.items() if i == pid]
+        for node in dropped:
             self.bindings.pop(node, None)
         self.save_bindings()
-        return True
+        return dropped
 
     # ---- bindings ----
     def _load_bindings(self):
