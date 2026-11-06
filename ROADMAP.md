@@ -559,12 +559,24 @@ His goal lines ride each task verbatim.
     window.
 
     (d) *A floor on Default.* The floor button is live on
-    Default, and toggling it saves the built-in Clean profile as
-    `clean.json` among the user's profiles. Since 5.1.0 a device
-    on Default plays only the common entry, so that floor is
-    drawn and does not play. What Default with a floor should
-    mean is undecided: no floor on Default, or a device on
-    Default with a floor publishing a graph of its own.
+    Default, and toggling it saved the built-in Clean profile as
+    `clean.json` among the user's profiles; on another built-in
+    profile it wrote that profile in place under its own id.
+    Since 5.1.0 a device on Default plays only the common entry,
+    so that floor was drawn and did not play. **Decided Nov 7,
+    the rule:** a correction changes a profile of the user's
+    own, the floor included, and Default is linear and nobody's
+    to change. **Fixed in the code the same day:** the floor
+    makes the copy a band edit makes ("Custom EQ" from Default),
+    and the copy is an undo step; the store no longer lets a
+    user file stand in for Default, so an old `clean.json` is
+    ignored. Making that copy undoable exposed an older fault,
+    fixed with it: an undo that switched profiles kept the floor
+    of the profile it left and saved it into the one it returned
+    to. I has mixed feelings (Nov 6) about a profile being born
+    in the main window at all, from taste rather than from a
+    measurement; only someone without a measuring microphone
+    needs it. Not yet tried in the window.
 
     (e) *A turn of the preamp forked the profile.* The turn ran
     the edit pipeline, which began by forking anything that is

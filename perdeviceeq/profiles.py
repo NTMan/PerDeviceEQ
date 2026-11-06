@@ -168,10 +168,10 @@ class ProfileStore:
         for d in SYS_PROFILE_DIRS:          # system first (read-only)
             self._load_dir(d, builtin=True)
         self._load_dir(USER_PROFILES_DIR, builtin=False)   # user can override
-        if CLEAN_ID not in self.profiles:
-            self.profiles[CLEAN_ID] = _clean_profile()
-        else:
-            self.profiles[CLEAN_ID]["builtin"] = True
+        # Default is linear and nobody's to change: no file stands in
+        # for it, so a clean.json that the floor button once wrote
+        # among the user's profiles is ignored
+        self.profiles[CLEAN_ID] = _clean_profile()
         self.bindings = self._load_bindings()
 
     def _load_dir(self, d, builtin):

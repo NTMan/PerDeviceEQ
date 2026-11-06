@@ -1924,6 +1924,17 @@ class EqWindow(Adw.ApplicationWindow):
         s = self.slots.get(ch) or _new_slot()
         return {"bands": [bnd.to_dict() for bnd in s["bands"]]}
 
+    def _load_floor(self):
+        """The floor is the profile's: whatever puts another profile in
+        view, a load or an undo, takes that profile's floor. The editor
+        writes its own floor into the profile on every save, so a floor
+        left over from the previous profile would be saved into this
+        one."""
+        p = self.store.get(self.current_pid)
+        self.floor_off = bool(p.get("floor_off"))
+        self.floor_hz = p.get("floor_hz")
+        self._sync_floor_btn()
+
     def _sync_floor_btn(self):
         """Speaker protection, the architect's manual decree:
         the floor button ALWAYS shows (the old visibility rule
@@ -1949,9 +1960,22 @@ class EqWindow(Adw.ApplicationWindow):
         self.view.set_protection(
             lo, visible=on, on_change=self._on_protect_edges)
 
+    def _fork_for_floor(self):
+        """The floor is a correction, and a correction changes a
+        profile of the user's own: on Default or a built-in profile
+        the floor makes the same copy a band edit makes and leaves the
+        original as it was. The copy is a step of the timeline, so
+        undo takes it back; the save that pushes the step carries the
+        mark that the copy was born here, and marking the edit dirty
+        lets a switch to another profile land that save first."""
+        if self._ensure_editable():
+            self._dev_dirty = True
+            self._schedule_save()
+
     def _on_floor_toggled(self, btn):
         if self._loading or getattr(self, "_floor_sync", False):
             return
+        self._fork_for_floor()
         p = self.store.get(self.current_pid)
         if not p:
             return
@@ -1983,6 +2007,7 @@ class EqWindow(Adw.ApplicationWindow):
         lands verbatim. Intermediate moves republish the graph
         so the sweep is HEARD; only the final one touches the
         disk."""
+        self._fork_for_floor()
         p = self.store.get(self.current_pid)
         if not p:
             return
@@ -2271,9 +2296,7 @@ class EqWindow(Adw.ApplicationWindow):
         try:
             self.current_pid = pid
             p = self.store.get(pid)
-            self.floor_off = bool(p.get("floor_off"))
-            self.floor_hz = p.get("floor_hz")
-            self._sync_floor_btn()
+            self._load_floor()
 
             # off the heartbeat's snapshot, not a fresh pw-dump: this
             # runs on every profile load, and a subprocess on the main
@@ -2367,9 +2390,10 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _ensure_editable(self):
         """If the current profile is read-only (built-in / Clean), fork it to a
-        new user profile so edits have somewhere to live."""
+        new user profile so edits have somewhere to live. True when it
+        forked."""
         if self._editable(self.current_pid):
-            return
+            return False
         body = self._working_body()
         src = self.store.get(self.current_pid)
         if self.current_pid == CLEAN_ID:
@@ -2388,6 +2412,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.current_pid = pid
         self.store.set_binding(self._dev(), pid)
         self.profile_button.set_label(self._display_name(self.store.get(pid)))
+        return True
 
     def _on_edit(self):
         """Any edit: redraw, debounce the save. An edit of the bands
@@ -2766,6 +2791,7 @@ class EqWindow(Adw.ApplicationWindow):
                 # rewind the sink binding too, or a restart would
                 # resurrect the selection undo just unwound
                 self.store.set_binding(self._dev(), pid)
+            self._load_floor()
             self._sync_map(widen=False)
             self._populate_picker()
         view = self.cur_ch          # keep the user's current tab if still valid

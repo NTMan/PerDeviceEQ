@@ -327,6 +327,11 @@ woofer asked for excursion it does not have. Sweeping it, everything
 above follows the handle live — the strip's shading, the curve, the
 marks and the line — so the trade is visible while it is made.
 
+The floor is kept in the device's profile. On `Default (no EQ)` or a
+built-in profile, pressing it makes a copy of the profile, as a band
+edit does (`Custom EQ` from Default), and the original stays as it was.
+Undo takes the copy back.
+
 Two things about it are worth knowing before reaching for it.
 
 **With Auto preamp on, a floor buys no volume.** Auto follows the
