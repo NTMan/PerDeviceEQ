@@ -2972,15 +2972,22 @@ class EqWindow(Adw.ApplicationWindow):
                 bool(self.preamp_auto),
                 None if self.preamp_auto else round(float(self.preamp), 1))
 
-    def _listener_changed(self):
+    def _listener_changed(self, settled=True):
         """The taste or the preamp ride changed. Both belong to every
         device and every device's graph carries them, so every bound
         device is published again once the edits settle. The device in
-        view is published by the caller at once, as before."""
+        view is published by the caller at once, as before.
+
+        A drag in progress has not settled: it calls off a pass still
+        waiting instead of setting one, and its end sets it. Setting
+        one on every move ran a pass on every pause of the hand longer
+        than the debounce, and the device in view waited for each."""
         if self._republish_source:
             GLib.source_remove(self._republish_source)
-        self._republish_source = GLib.timeout_add(
-            _SAVE_DEBOUNCE_MS, self._republish_others)
+            self._republish_source = 0
+        if settled:
+            self._republish_source = GLib.timeout_add(
+                _SAVE_DEBOUNCE_MS, self._republish_others)
 
     def _republish_others(self):
         """The same answer the hook feed gives (wire_state), with the
@@ -3935,7 +3942,7 @@ class EqWindow(Adw.ApplicationWindow):
             return
         self.pref_layers.upsert(dict(act, bands=bands))
         self._apply_now()
-        self._listener_changed()
+        self._listener_changed(final)
         self._schedule_save()        # one global-history entry per
         if final:                    # settled gesture
             self._update_headroom()

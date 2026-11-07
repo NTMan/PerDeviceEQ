@@ -626,7 +626,13 @@ His goal lines ride each task verbatim.
     the code the same day:** a device is written no sooner than
     50 ms after its last write ended, at most 20 times a second,
     and what is heard can trail the hand by up to 50 ms and two
-    writes. Not yet tried in the window.
+    writes. The same capture showed a second flood: every move
+    of a taste drag set the pass over the other bound devices
+    anew, so a pass of 14 writes ran on every pause of the hand
+    longer than 200 ms -- 14 of them in two drags -- and the
+    device in view waited for each. **Fixed in the code the
+    same day:** a drag calls off a waiting pass, and its end
+    sets one. Not yet tried in the window.
 
 ## Shipped
 

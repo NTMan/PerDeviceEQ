@@ -7,6 +7,7 @@ device again, once the edits settle.
 import ast
 import os
 import pathlib
+import types
 
 import pytest
 
@@ -77,6 +78,57 @@ def test_the_republish_is_the_feed_s_answer_without_the_device_in_view():
     assert "wire.pop" in calls
     assert not any(c.endswith("profile_graph") or c.endswith("device_graph")
                    for c in calls)
+
+
+class _Loop:
+    """GLib's timeouts, kept instead of run."""
+
+    def __init__(self):
+        self.timers = {}
+        self.made = 0
+
+    def timeout_add(self, ms, cb):
+        self.made += 1
+        self.timers[self.made] = cb
+        return self.made
+
+    def source_remove(self, sid):
+        del self.timers[sid]
+
+
+def _method(name, **names):
+    """A window method run without GTK: its own source, with the names
+    it reads handed in."""
+    module = ast.Module(body=[_gui()[name]], type_ignores=[])
+    exec(compile(module, "gui.py", "exec"), names)
+    return names[name]
+
+
+def test_a_drag_calls_off_the_pass_and_its_end_sets_one():
+    """From Oct 7 every move of a taste drag set the pass anew, so one ran
+    on every pause of the hand longer than the debounce: fourteen in two
+    drags of a field capture. The press that gives a band birth is a
+    settled edit and sets one; the drag after it calls it off."""
+    loop = _Loop()
+    changed = _method("_listener_changed", GLib=loop, _SAVE_DEBOUNCE_MS=200)
+    win = types.SimpleNamespace(_republish_source=0,
+                                _republish_others=object())
+    changed(win)                        # the press: a band is born
+    assert len(loop.timers) == 1
+    changed(win, False)                 # the drag
+    changed(win, False)
+    assert loop.timers == {} and win._republish_source == 0
+    changed(win, True)                  # its end
+    assert list(loop.timers.values()) == [win._republish_others]
+    assert win._republish_source in loop.timers
+
+
+def test_the_taste_view_says_whether_its_edit_settled():
+    fn = _gui()["_on_taste_view_changed"]
+    args = [[ast.unparse(a) for a in c.args] for c in ast.walk(fn)
+            if isinstance(c, ast.Call)
+            and ast.unparse(c.func) == "self._listener_changed"]
+    assert args == [["final"]]
 
 
 def test_undo_of_a_taste_or_a_ride_is_written_and_republished():
