@@ -634,6 +634,16 @@ His goal lines ride each task verbatim.
     same day:** a drag calls off a waiting pass, and its end
     sets one. Not yet tried in the window.
 
+    (h) *A graph write could fail without a word.* One pass in
+    the same capture had no write for one of its devices, which
+    kept a band the undo had removed until the next pass 49 s
+    later. The capture cannot tell whether that write was made
+    and refused, and the program would not have said: the
+    writer dropped the answer of each write, and the window's
+    pass dropped the count. **Since the same day** a write the
+    server did not accept is said on stderr with its key. Why
+    the write was missing is open.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not

@@ -219,12 +219,21 @@ class AudioBackend(ABC):
     def _put_graph(self, device, value):
         """Every graph write, from every path, with the server held:
         a device's turn counts from the end of its last write,
-        whoever made it."""
+        whoever made it.
+
+        A write the server did not accept is said on stderr with its
+        key, whoever made it, too. The writer dropped the answer and
+        the window's pass over the other devices dropped the count,
+        so such a write left nothing behind."""
         try:
-            return self._push_graph(device, value)
+            ok = self._push_graph(device, value)
         finally:
             with self._wish_lock:
                 self._written[device] = time.monotonic()
+        if not ok:
+            debug.log("the server did not accept the graph for %s"
+                      % device)
+        return ok
 
     def flush(self, timeout=None):
         """Wait until every graph wished so far is on the server, or

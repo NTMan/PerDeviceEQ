@@ -403,6 +403,29 @@ def test_a_drag_writes_its_device_once_per_turn_and_ends_on_its_last_wish():
     assert len(f.writes) <= 0.3 / f.GRAPH_PACE_S + 2
 
 
+class Refusing(FakeBackend):
+    """A server that does not accept the graph for one device."""
+
+    def _push_graph(self, device, value):
+        super()._push_graph(device, value)
+        return device != "bad"
+
+
+def test_a_graph_the_server_did_not_accept_is_said_with_its_key(capsys):
+    """Through the writer and through a whole pass alike. In a field
+    capture (Nov 7) one key was missing from one pass, and nothing in
+    the program would have said so."""
+    f = Refusing()
+    f.publish_graph("bad", "G")
+    f.publish_graph("good", "G")
+    assert f.flush(5)
+    assert f.publish_state({"bad": "P", "good": "P"}) == (1, 2)
+    err = capsys.readouterr().err.splitlines()
+    said = "per-device-eq: the server did not accept the graph for bad"
+    assert err.count(said) == 2
+    assert not any("good" in line for line in err)
+
+
 def test_a_turn_counts_from_a_write_the_whole_pass_made():
     f = Timed()
     f.publish_state({"dev": "P"})
