@@ -2,6 +2,7 @@
 no PipeWire, no GTK -- the platform-free half must hold everywhere."""
 
 import threading
+import time
 
 import pytest
 
@@ -359,3 +360,53 @@ def test_a_wish_waiting_when_a_measurement_starts_lands_after_it():
 
 def test_flush_answers_at_once_when_nothing_waits():
     assert FakeBackend().flush(0)
+
+
+# ---- the pace: a device only in its turn, and the last wish still last -----
+
+class Timed(FakeBackend):
+    """A write that takes `cost` seconds, logged with its start and its
+    end on the clock the writer reads."""
+
+    def __init__(self, cost=0.002):
+        super().__init__()
+        self.cost = cost
+        self.writes = []
+
+    def _push_graph(self, device, value):
+        start = time.monotonic()
+        time.sleep(self.cost)
+        self.writes.append((device, value, start, time.monotonic()))
+        return super()._push_graph(device, value)
+
+
+def _gaps(writes, device):
+    """From the end of each write of `device` to the start of the next."""
+    w = [x for x in writes if x[0] == device]
+    return [b[2] - a[3] for a, b in zip(w, w[1:])]
+
+
+def test_a_drag_writes_its_device_once_per_turn_and_ends_on_its_last_wish():
+    """A wish every millisecond for 0.3 s. Each gap is at least the pace
+    however busy the machine is -- a busy machine only widens it -- so
+    the count has a ceiling: the writes inside the drag, and one after."""
+    f = Timed()
+    stop = time.monotonic() + 0.3
+    n = 0
+    while time.monotonic() < stop:
+        f.publish_graph("dev", "G%d" % n)
+        n += 1
+        time.sleep(0.001)
+    assert f.flush(5)
+    assert min(_gaps(f.writes, "dev")) >= f.GRAPH_PACE_S
+    assert f.writes[-1][:2] == ("dev", "G%d" % (n - 1))
+    assert len(f.writes) <= 0.3 / f.GRAPH_PACE_S + 2
+
+
+def test_a_turn_counts_from_a_write_the_whole_pass_made():
+    f = Timed()
+    f.publish_state({"dev": "P"})
+    f.publish_graph("dev", "W")
+    assert f.flush(5)
+    assert [w[1] for w in f.writes] == ["P", "W"]
+    assert _gaps(f.writes, "dev")[0] >= f.GRAPH_PACE_S

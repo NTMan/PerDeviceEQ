@@ -609,17 +609,24 @@ His goal lines ride each task verbatim.
 
     (g) *Graph writes flooded the server.* Every graph the
     window wished went out on a thread of its own as a
-    pw-metadata run of about 50 ms, and for each one the hook
-    rewrote its state file and set the graph on the node again.
-    A drag of a taste band, of a band in Auto while Safe moved,
-    or of the floor's handle wished faster than that, and the
-    writes queued up behind the hand. Band edits in Manual were
-    spared only by the 200 ms timer written on Jul 1 for undo.
-    His point, Nov 7: it belongs at the one door. **Fixed in the
-    code the same day:** a wish replaces the one still waiting
-    for its device, one writer puts the newest on the server,
-    one write at a time, and the last wish lands last. Not yet
-    tried in the window.
+    pw-metadata run, and for each one the hook rewrote its
+    state file and set the graph on the node again. A drag of a
+    taste band, of a band in Auto while Safe moved, or of the
+    floor's handle wished a graph on every move of the mouse.
+    Band edits in Manual were spared only by the 200 ms timer
+    written on Jul 1 for undo. His point, Nov 7: it belongs at
+    the one door. **Fixed in the code the same day:** a wish
+    replaces the one still waiting for its device, one writer
+    puts the newest on the server, one write at a time, and the
+    last wish lands last. **Tried the same day, and it bounded
+    nothing:** in his pw-metadata -m capture of a taste drag, 73
+    writes went out in one second, so a write took 14 ms or
+    less -- not the 50 ms taken from a whole --apply run -- and
+    the device in view got up to 72 writes a second. **Fixed in
+    the code the same day:** a device is written no sooner than
+    50 ms after its last write ended, at most 20 times a second,
+    and what is heard can trail the hand by up to 50 ms and two
+    writes. Not yet tried in the window.
 
 ## Shipped
 
