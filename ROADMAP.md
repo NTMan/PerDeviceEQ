@@ -607,6 +607,20 @@ His goal lines ride each task verbatim.
     bands only, and the preamp follows them as it follows any
     edit. Not yet tried in the window.
 
+    (g) *Graph writes flooded the server.* Every graph the
+    window wished went out on a thread of its own as a
+    pw-metadata run of about 50 ms, and for each one the hook
+    rewrote its state file and set the graph on the node again.
+    A drag of a taste band, of a band in Auto while Safe moved,
+    or of the floor's handle wished faster than that, and the
+    writes queued up behind the hand. Band edits in Manual were
+    spared only by the 200 ms timer written on Jul 1 for undo.
+    His point, Nov 7: it belongs at the one door. **Fixed in the
+    code the same day:** a wish replaces the one still waiting
+    for its device, one writer puts the newest on the server,
+    one write at a time, and the last wish lands last. Not yet
+    tried in the window.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not

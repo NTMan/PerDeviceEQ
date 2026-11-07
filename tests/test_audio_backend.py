@@ -1,6 +1,8 @@
 """The AudioBackend contract, proven against a fake heir: no shims,
 no PipeWire, no GTK -- the platform-free half must hold everywhere."""
 
+import threading
+
 import pytest
 
 from perdeviceeq.audio_backend import AudioBackend
@@ -66,6 +68,7 @@ def test_publish_outside_moratorium_hits_the_server():
     f = FakeBackend()
     f.publish_graph("dev", "G1")
     f.set_volume("dev", 0.5)
+    assert f.flush(5)
     assert ("graph", "dev", "G1") in f.log
     assert ("volume", "dev", 0.5) in f.log
 
@@ -73,6 +76,7 @@ def test_publish_outside_moratorium_hits_the_server():
 def test_moratorium_coalesces_last_write_wins():
     f = FakeBackend()
     f.publish_graph("dev", "G1")
+    assert f.flush(5)
     f.moratorium_begin("dev", 0.074)
     f.publish_graph("dev", "G2")
     f.publish_graph("dev", "G3")
@@ -115,6 +119,7 @@ def test_end_restores_when_nothing_pended():
 def test_pending_on_the_measured_sink_outranks_restore():
     f = FakeBackend()
     f.publish_graph("dev", "TASTE")
+    assert f.flush(5)
     f.moratorium_begin("dev", 0.074)
     f.clear_graph("dev")
     f.moratorium_end()
@@ -180,6 +185,7 @@ def test_a_device_with_no_value_of_its_own_is_stripped_too():
 def test_volume_none_skips_the_dose_and_the_restore():
     f = FakeBackend()
     f.publish_graph("dev", "TASTE")
+    assert f.flush(5)
     f.moratorium_begin("dev", None)
     f.moratorium_end()
     assert all(e[0] != "volume" for e in f.log)
@@ -276,3 +282,80 @@ def test_a_write_queued_for_the_device_outranks_the_restore():
     graphs = [e for e in f.log if e[0] == "graph"]
     assert graphs == [("graph", "dev#port", STRIP),
                       ("graph", "dev#port", "NEW")]
+
+
+# ---- one writer: the newest wish of a device lands, and lands last ---------
+
+class Gated(FakeBackend):
+    """A server write that waits for the test to let it through, so that
+    wishes can be made while one is in flight."""
+
+    def __init__(self):
+        super().__init__()
+        self.gate = threading.Event()
+        self.entered = threading.Event()
+
+    def _push_graph(self, device, value):
+        self.entered.set()
+        self.gate.wait(5)
+        return super()._push_graph(device, value)
+
+
+def _graphs(f, device=None):
+    return [e[1:] for e in f.log
+            if e[0] == "graph" and device in (None, e[1])]
+
+
+def test_a_drag_lands_its_first_wish_and_its_last_only():
+    """A wish made while a write is in flight replaces the one waiting:
+    the eight in between never reach the server, and the last one does,
+    after everything else."""
+    f = Gated()
+    f.publish_graph("dev", "G0")
+    assert f.entered.wait(5)
+    for i in range(1, 10):
+        f.publish_graph("dev", "G%d" % i)
+    f.gate.set()
+    assert f.flush(5)
+    assert _graphs(f) == [("dev", "G0"), ("dev", "G9")]
+
+
+def test_a_wish_made_during_a_whole_pass_goes_out_after_it():
+    f = Gated()
+    t = threading.Thread(target=f.publish_state,
+                         args=({"a": "A", "b": "B"},))
+    t.start()
+    assert f.entered.wait(5)
+    f.publish_graph("c", "C")
+    f.publish_graph("a", "A2")          # newer than the pass's own
+    f.gate.set()
+    t.join(5)
+    assert f.flush(5)
+    out = _graphs(f)
+    assert out[:2] == [("a", "A"), ("b", "B")]
+    assert sorted(out[2:]) == [("a", "A2"), ("c", "C")]
+
+
+def test_a_wish_waiting_when_a_measurement_starts_lands_after_it():
+    """Whether the writer gets to it before the strip or the strip comes
+    first, nothing lands on the measured device while it is stripped,
+    and the wish is what it wears afterwards."""
+    f = Gated()
+    f.publish_graph("other", "X")
+    assert f.entered.wait(5)
+    f.publish_graph("dev", "NEW")
+    t = threading.Thread(target=f.moratorium_begin, args=("dev", None),
+                         kwargs={"mute_others": False})
+    t.start()
+    f.gate.set()
+    t.join(5)
+    assert f.moratorium_active
+    assert f.flush(5)
+    assert _graphs(f, "dev")[-1] == ("dev", STRIP)
+    f.moratorium_end()
+    assert f.flush(5)
+    assert _graphs(f, "dev")[-1] == ("dev", "NEW")
+
+
+def test_flush_answers_at_once_when_nothing_waits():
+    assert FakeBackend().flush(0)

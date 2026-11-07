@@ -59,7 +59,9 @@ def rig(monkeypatch):
 def test_graph_publish_and_clear_speak_metadata(rig):
     b, calls = rig
     b.publish_graph("test_sink", "{ nodes = [] }")
+    assert b.flush(5)
     b.clear_graph("test_sink")
+    assert b.flush(5)
     assert ["pw-metadata", "-n", "per-device-eq", "0",
             "test_sink", "{ nodes = [] }",
             "Spa:String:JSON"] in calls or any(
@@ -170,6 +172,7 @@ def test_read_volume_takes_the_cube_root(rig):
 def test_moratorium_full_cycle_over_the_fake_server(rig):
     b, calls = rig
     b.publish_graph("test_sink", "TASTE")
+    assert b.flush(5)
     b.moratorium_begin("test_sink", 0.074)
     b.publish_graph("test_sink", "NEW")
     b.moratorium_end()

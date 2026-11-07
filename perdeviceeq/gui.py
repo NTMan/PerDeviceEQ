@@ -2712,10 +2712,13 @@ class EqWindow(Adw.ApplicationWindow):
 
         The publish rides the backend authority: the editor's wish
         lands in its desired store and the store pushes the server,
-        one door for the whole program. During a measurement the
-        authority queues it -- last write per key -- and applies it
-        once the moratorium lifts; the queueing is logged there with
-        the caller's path. No window gates any code here.
+        one door for the whole program. A wish returns at once, so it
+        is made right here on the main thread, in the order the window
+        makes them; the authority's writer sends the newest. During a
+        measurement the authority queues it -- last write per key --
+        and applies it once the moratorium lifts; the queueing is
+        logged there with the caller's path. No window gates any code
+        here.
         """
         self._update_meter()
         if not self.live or not self.node:
@@ -2723,26 +2726,22 @@ class EqWindow(Adw.ApplicationWindow):
         node = self._dev()
         auth = pw_backend.backend()
         if self.bypass_row.get_active():
-            pw_backend.in_thread(lambda: auth.publish_graph(node, STRIP))
+            auth.publish_graph(node, STRIP)
             return
         taste = self.pref_layers.active_bands()
         manual = None if self.preamp_auto else self.preamp
         if self.current_pid == CLEAN_ID:
             common = common_graph(taste, manual)
-
-            def follow():
-                auth.publish_graph(COMMON_KEY, common)
-                auth.clear_graph(node)
-            pw_backend.in_thread(follow)
+            auth.publish_graph(COMMON_KEY, common)
+            auth.clear_graph(node)
             return
         body = self._working_body()
         graph = eq.device_graph(body, self._graph_slots(body), taste,
                                 manual)
         if graph is None:
-            pw_backend.in_thread(lambda: auth.clear_graph(node))
+            auth.clear_graph(node)
         else:
-            pw_backend.in_thread(lambda: auth.publish_graph(node,
-                                                           graph))
+            auth.publish_graph(node, graph)
 
     def _graph_slots(self, body):
         """One entry per channel the CARD has: the profile channel that
@@ -3007,14 +3006,9 @@ class EqWindow(Adw.ApplicationWindow):
         to publish, as in _republish_others."""
         if self.live and self.node:
             keys = [k for k in keys if k != self._dev()]
-        if not keys:
-            return
         auth = pw_backend.backend()
-
-        def follow():
-            for k in keys:
-                auth.clear_graph(k)
-        pw_backend.in_thread(follow)
+        for k in keys:
+            auth.clear_graph(k)
 
     def _set_preamp_auto(self, on, land=False):
         """Flip the follow mode and sync the toggle without echo. The

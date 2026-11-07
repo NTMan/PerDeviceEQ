@@ -57,6 +57,20 @@ def test_the_window_publishes_the_contract():
     assert ["COMMON_KEY", "common"] in pubs
 
 
+def test_the_window_wishes_in_the_order_it_makes_them():
+    """A wish returns at once, so the window makes it on its own thread.
+    Handed to a thread each, two wishes could be recorded in either
+    order, and the newest would not be the one that lands last."""
+    tree = ast.parse(pathlib.Path(eq.__file__).with_name("gui.py")
+                     .read_text(encoding="utf-8"))
+    for name in ("_apply_now", "_publish_unbound"):
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == name)
+        calls = {ast.unparse(c.func) for c in ast.walk(fn)
+                 if isinstance(c, ast.Call)}
+        assert "pw_backend.in_thread" not in calls
+
+
 # ---- Auto -------------------------------------------------------------------
 
 def test_auto_counts_a_channel_no_profile_channel_feeds():
