@@ -1992,7 +1992,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._sync_floor_btn()
 
     def _on_protect_edges(self, lo, final):
-        """The strip's drags land here, throttled by the view.
+        """The strip's drags land here, every move of them.
         No zone, no snap: the handle is the law, the frequency
         lands verbatim. Intermediate moves republish the graph
         so the sweep is HEARD; only the final one touches the
@@ -2076,16 +2076,12 @@ class EqWindow(Adw.ApplicationWindow):
                 f, meas, spread, band = ov
                 self.view.set_curves(f, meas, spread, band)
                 self.view.set_target(self._lawful_target(f, meas))
-        # THE PICTURE FOLLOWS THE HAND; THE GRAPH DOES NOT HAVE TO.
-        # Publishing rebuilds the filter chain in the server, and at
-        # motion rate that is thirty of them a second for an ear that
-        # cannot hear the difference between one sweep step and the
-        # next. The sweep is still heard continuously -- just not
-        # thirty times a second.
-        now = time.monotonic()
-        if final or now - getattr(self, "_floor_applied", 0.0) > 0.12:
-            self._floor_applied = now
-            self._apply_now()
+        # THE SOUND FOLLOWS THE HAND AS THE PICTURE DOES. Every move
+        # is a wish, and the audio backend writes the newest in its
+        # turn (WRITE_PACE_S). The window used to pace this itself, at
+        # most once per 120 ms, so the last place the hand stopped at
+        # could go unheard until the release.
+        self._apply_now()
         if final:
             self._sync_floor_btn()
 

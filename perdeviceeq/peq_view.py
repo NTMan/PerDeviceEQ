@@ -19,7 +19,6 @@ frequency guard for sub-plot trim bands, remove on right click.
 import contextlib
 import math
 import os
-import time
 
 import gi
 from . import focus
@@ -166,7 +165,6 @@ class PeqView(Gtk.Box):
         self._protect = None
         self._protect_cb = None
         self._protect_drag = None
-        self._protect_emit = 0.0
 
         self.grid = focus.OrderedGrid(column_spacing=4,
                                       row_spacing=4)
@@ -209,7 +207,7 @@ class PeqView(Gtk.Box):
         frequency, the ONE handle -- the ceiling came down and
         the zone lost its ticks here (a fit organ has no
         business marking a manual one). on_change(lo, final)
-        fires throttled during a drag and once with final=True
+        fires on every move of a drag and once with final=True
         at its end."""
         self._protect = lo if visible else None
         self._protect_cb = on_change
@@ -335,16 +333,13 @@ class PeqView(Gtk.Box):
         lo = max(FMIN, min(f, FMAX / 1.2))
         self._protect = lo
         self.protect_strip.queue_draw()
-        # EVERY MOTION IS DRAWN; the caller decides what is expensive.
-        # This used to hand the handle over six or seven times a
-        # second, which is what a hand feels as steps -- the volume
-        # fader beside it redraws on every event and throttles only
-        # its write. Since the response is summed in one pass the
-        # drawing costs a few milliseconds, so the throttle here is
-        # only wide enough to skip a burst of coalesced events.
-        now = time.monotonic()
-        if self._protect_cb and now - self._protect_emit > 0.03:
-            self._protect_emit = now
+        # EVERY MOTION IS DRAWN AND HANDED OVER. This used to hand
+        # the handle over six or seven times a second, which is what a
+        # hand feels as steps; then at most once per 30 ms, so the
+        # curves moved every other frame and the last place the hand
+        # stopped at could wait for the release. The window's work per
+        # move is cheap, and what it writes the audio backend paces.
+        if self._protect_cb:
             self._protect_cb(lo, False)
 
     def _protect_drag_end(self, *_a):

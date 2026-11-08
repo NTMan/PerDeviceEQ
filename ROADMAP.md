@@ -658,11 +658,9 @@ His goal lines ride each task verbatim.
     for the hand to stop feels like the program lagging. **Fixed
     in the code the same day:** the edit publishes; the timer
     keeps the save and the history step. Still waiting for the
-    hand: the floor's handle publishes at most every 120 ms on
-    its own, so the last position it reached can go unheard
-    until release; and the other bound devices get a taste
-    change when the drag ends, which is heard only if one of
-    them plays at the same time.
+    hand: the floor's handle (see (k)), and the other bound
+    devices, which get a taste change when the drag ends -- heard
+    only if one of them plays at the same time.
 
     (j) *One drag, many undo steps.* The history step rides the
     same 200 ms timer, so a drag gets a step at every pause of
@@ -679,7 +677,15 @@ His goal lines ride each task verbatim.
     **Fixed in the code the same day:** a level is a wish like a
     graph, with the same turn, and the fader hands over every level
     it shows; a volume write finds its sink in the heartbeat's
-    listing instead of a pw-dump per write.
+    listing instead of a pw-dump per write. The floor's handle
+    was paced twice of its own: the strip handed a move over at
+    most once per 30 ms, so the curves moved every other frame,
+    and the window published at most once per 120 ms, so the last
+    place the hand stopped at could go unheard until the release.
+    His word on the strip: that is the picture, where a lag shows
+    sooner than to the ear. **Fixed in the code the same day:**
+    the strip hands over every move and the window publishes
+    each; the door paces the writes.
 
 ## Shipped
 
