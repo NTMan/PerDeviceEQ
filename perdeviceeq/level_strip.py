@@ -46,7 +46,6 @@ class LevelStrip(Gtk.DrawingArea):
         self._unknown = None        # where measurement stopped
         self._cb = on_change
         self._drag = None
-        self._emit = 0.0            # last write, for the throttle
         self._held = 0.0            # until when to ignore the server
         g = Gtk.GestureDrag()
         g.connect("drag-begin", self._begin)
@@ -56,15 +55,17 @@ class LevelStrip(Gtk.DrawingArea):
 
     # WHAT MAKES A FADER FEEL LIKE PORRIDGE, and both halves of it
     # were here. One: a write per motion event, each one a wpctl
-    # subprocess, so the hand outruns the pipe. Two: the poller then
-    # hands back a level it read up to three seconds ago and the
-    # handle jumps back to where the hand no longer is.
+    # subprocess, so the hand outruns the pipe. That is the audio
+    # backend's to pace now: the strip hands over every level it
+    # shows, and the backend writes the newest in its turn and lands
+    # the last. Two: the poller then hands back a level it read up to
+    # three seconds ago and the handle jumps back to where the hand
+    # no longer is.
     #
     # pavucontrol's answer, and it is the right one: while a control
     # is being dragged it belongs to the hand, and what the server
     # says about it is ignored until the hand lets go and the server
     # has had a moment to agree.
-    _WRITE_EVERY = 0.05
     _HOLD_AFTER = 0.60
 
     def set_state(self, volume=None, unsafe=None, unknown=None):
@@ -114,24 +115,22 @@ class LevelStrip(Gtk.DrawingArea):
 
     def _begin(self, g, sx, sy):
         self._drag = sx
-        self._level = self._at(sx)
-        self.queue_draw()
+        self._move(self._at(sx))
 
     def _update(self, g, dx, dy):
         if self._drag is None:
             return
-        self._level = self._at(self._drag + dx)
+        self._move(self._at(self._drag + dx))
+
+    def _move(self, level):
+        """The handle goes where the hand is, and the level with it."""
+        self._level = level
         self.queue_draw()
-        now = time.monotonic()
-        if self._cb and now - self._emit > self._WRITE_EVERY:
-            self._emit = now
-            self._cb(self._level)
+        if self._cb:
+            self._cb(level)
 
     def _end(self, g, dx, dy):
         if self._drag is None:
             return
         self._drag = None
-        # the last position always goes through, throttle or not
         self._held = time.monotonic() + self._HOLD_AFTER
-        if self._cb:
-            self._cb(self._level)

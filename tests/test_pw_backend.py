@@ -79,7 +79,22 @@ def test_graph_publish_and_clear_speak_metadata(rig):
 def test_volume_resolves_the_sink_and_speaks_wpctl(rig):
     b, calls = rig
     b.set_volume("test_sink", 0.42)
+    assert b.flush(5)
     assert ["wpctl", "set-volume", "10", "0.4200"] in calls
+
+
+def test_a_volume_finds_its_sink_in_the_listing_without_a_dump(rig,
+                                                               monkeypatch):
+    """A fader writes many times a second; a pw-dump per write to learn
+    the sink's id was a poll per write. The heartbeat's listing has it."""
+    b, calls = rig
+    dumps = []
+    monkeypatch.setattr(pwb, "pw_dump", lambda: dumps.append(1) or [])
+    b.sinks = [{"id": 10, "name": "test_sink"}]
+    b.set_volume("test_sink", 0.42)
+    assert b.flush(5)
+    assert ["wpctl", "set-volume", "10", "0.4200"] in calls
+    assert dumps == []
 
 
 def test_a_sinks_mute_speaks_wpctl_not_props(rig):

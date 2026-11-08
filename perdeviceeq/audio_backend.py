@@ -34,13 +34,13 @@ The moratorium (a measurement in progress):
     way. One moratorium at a time; nesting is a programming error
     and raises.
 
-Outside a measurement a graph wish is coalesced too. publish_graph
-and clear_graph record the wish and return at once; one writer
-thread puts the newest wish of each device on the server, one write
-at a time and a device no sooner than GRAPH_PACE_S after its last
-write, so the last wish always lands last however fast they come. A
-whole wire state, the moratorium and a volume still write before
-they return. flush() waits for the writer.
+Outside a measurement a wish is coalesced too, a graph or a volume.
+publish_graph, clear_graph and set_volume record the wish and return
+at once; one writer thread puts the newest wish of each device on the
+server, one write at a time and a device no sooner than WRITE_PACE_S
+after its last write of that kind, so the last wish always lands
+last however fast they come. A whole wire state and the moratorium
+still write before they return. flush() waits for the writer.
 
 No GTK, no windows, no knowledge of who calls: the presence of a
 measure window must never gate code anywhere else.
@@ -94,9 +94,11 @@ class AudioBackend(ABC):
         # desired
         self._graphs = {}          # device -> value or None (clean)
         self._volumes = {}         # device -> cubic float
-        self._dirty = {}           # devices whose newest wish is not out
+        self._dirty = {}           # (kind, device) whose newest wish is
+                                   # not out; kind is "graph" or "volume"
         self._writing = False      # the writer thread is at work
-        self._written = {}         # device -> when its last write ended
+        self._written = {}         # (kind, device) -> when its last
+                                   # write ended
         # moratorium
         self._moratorium = None    # None or dict(sink=, restore=)
         self._pending = {}         # ("graph"|"volume", device) -> value
@@ -132,54 +134,68 @@ class AudioBackend(ABC):
         puts it on the server (_wish). During a measurement it is
         queued until the moratorium lifts (last write per key wins;
         the queueing is logged with the caller's path)."""
-        self._wish(device, value)
+        self._wish("graph", device, value)
 
     def clear_graph(self, device):
         """Desire no value of its own for `device`: with a card behind
         it, it plays the common entry (config.COMMON_KEY)."""
-        self._wish(device, None)
+        self._wish("graph", device, None)
 
-    # A DEVICE IS WRITTEN NO SOONER THAN THIS AFTER ITS LAST WRITE
-    # ENDED. Every write is a pw-metadata run, after which the hook
-    # rewrites its state file and sets the graph on the node again,
-    # and a drag wishes a graph on every move of the mouse. Merging
-    # what arrives during a write bounds nothing when a write is
-    # short: on his machine (Nov 7) 73 writes went out in one second,
-    # so a write took 14 ms or less, and a taste drag put up to 72
-    # writes a second on the device in view. 50 ms is the cap agreed
-    # with him, not a measured threshold: at most 20 writes a second
-    # for one device. The newest wish waits for its turn, so what is
-    # heard can trail the hand by up to 50 ms and two writes -- the
-    # one in flight when the hand stopped, and its own.
-    GRAPH_PACE_S = 0.05
+    def set_volume(self, device, cubic):
+        """Desire a device volume (cubic, 0..1) and return at once,
+        like a graph: the writer puts it on the server in its turn.
+        During a measurement it is queued until the moratorium lifts.
 
-    def _wish(self, device, value):
-        """Record a graph wish; one writer thread delivers the wishes.
+        A fader used to pace its own writes and put each one on a
+        thread of its own, around this door: in no order, so the last
+        level to land need not have been the last the hand chose, and
+        unseen by a measurement's moratorium."""
+        self._wish("volume", device, cubic)
 
-        A drag wishes a graph on every move of the mouse. Written one
-        per wish, each on a thread of its own carrying its own value,
-        the writes waited on a lock that keeps no order, so the write
-        that landed last need not have been the last wish. Now a wish
-        only replaces the one still waiting for its device, and the
-        writer takes one device at a time, each in its turn
-        (GRAPH_PACE_S): the newest value every time, and the last
-        wish lands last."""
+    # A DEVICE IS WRITTEN NO SOONER THAN THIS AFTER ITS LAST WRITE OF
+    # THE SAME KIND ENDED. A graph write is a pw-metadata run, after
+    # which the hook rewrites its state file and sets the graph on the
+    # node again; a volume is a wpctl run; and a drag wishes one on
+    # every move of the mouse. Merging what arrives during a write
+    # bounds nothing when a write is short: on his machine (Nov 7) 73
+    # graph writes went out in one second, so a write took 14 ms or
+    # less, and a taste drag put up to 72 writes a second on the
+    # device in view. 50 ms is the cap agreed with him, not a measured
+    # threshold: at most 20 writes a second for one device, and he
+    # does not feel the lag (Nov 8). The newest wish waits for its
+    # turn, so what is heard can trail the hand by up to 50 ms and two
+    # writes -- the one in flight when the hand stopped, and its own.
+    WRITE_PACE_S = 0.05
+
+    def _store(self, kind):
+        return self._graphs if kind == "graph" else self._volumes
+
+    def _wish(self, kind, device, value):
+        """Record a wish; one writer thread delivers the wishes.
+
+        A drag wishes on every move of the mouse. Written one per
+        wish, each on a thread of its own carrying its own value, the
+        writes waited on a lock that keeps no order, so the write that
+        landed last need not have been the last wish. Now a wish only
+        replaces the one still waiting for its device, and the writer
+        takes one at a time, each in its turn (WRITE_PACE_S): the
+        newest value every time, and the last wish lands last."""
         with self._wish_lock:
-            self._graphs[device] = value
+            self._store(kind)[device] = value
             if self._moratorium is not None:
-                self._queue("graph", device, value)
+                self._queue(kind, device, value)
                 return
-            self._dirty[device] = None
+            self._dirty[(kind, device)] = None
             if self._writing:
                 return
             self._writing = True
         threading.Thread(target=self._write_wishes, daemon=True,
-                         name="pde-graph-writer").start()
+                         name="pde-writer").start()
 
     def _write_wishes(self):
         """The writer: the newest wish of each waiting device, one
-        write at a time and a device only in its turn; of the devices
-        whose turn has come, the one wished first. It sleeps, holding
+        write at a time and a device only in its turn; of those whose
+        turn has come, the one wished first. It sleeps, holding
         nothing, until the soonest turn, and stands down in the same
         moment it finds nothing waiting, so a wish made after that
         starts a new writer."""
@@ -190,29 +206,33 @@ class AudioBackend(ABC):
                         self._writing = False
                         self._idle.notify_all()
                         return
-                    device, wait = self._next_turn()
-                    if device is not None:
-                        del self._dirty[device]
-                        value = self._graphs[device]
-                if device is not None:
+                    item, wait = self._next_turn()
+                    if item is not None:
+                        del self._dirty[item]
+                        kind, device = item
+                        value = self._store(kind)[device]
+                if item is not None:
                     try:
-                        self._put_graph(device, value)
+                        if kind == "graph":
+                            self._put_graph(device, value)
+                        else:
+                            self._put_volume(device, value)
                     except Exception:
                         traceback.print_exc()
                     continue
             time.sleep(wait)
 
     def _next_turn(self):
-        """(device, 0) for the first waiting device whose turn has
-        come, else (None, seconds until the soonest turn). Called with
-        the stores held."""
+        """((kind, device), 0) for the first waiting wish whose turn
+        has come, else (None, seconds until the soonest turn). Called
+        with the stores held."""
         now = time.monotonic()
         soonest = None
-        for device in self._dirty:
-            ended = self._written.get(device)
-            if ended is None or now - ended >= self.GRAPH_PACE_S:
-                return device, 0.0
-            turn = ended + self.GRAPH_PACE_S
+        for item in self._dirty:
+            ended = self._written.get(item)
+            if ended is None or now - ended >= self.WRITE_PACE_S:
+                return item, 0.0
+            turn = ended + self.WRITE_PACE_S
             soonest = turn if soonest is None else min(soonest, turn)
         return None, soonest - now
 
@@ -229,15 +249,26 @@ class AudioBackend(ABC):
             ok = self._push_graph(device, value)
         finally:
             with self._wish_lock:
-                self._written[device] = time.monotonic()
+                self._written[("graph", device)] = time.monotonic()
         if not ok:
             debug.log("the server did not accept the graph for %s"
                       % device)
         return ok
 
+    def _put_volume(self, device, cubic):
+        """Every volume write, from every path, with the server held:
+        a turn counts from the end of the last write, as for a graph.
+        A refusal raises, as _push_volume does."""
+        try:
+            self._push_volume(device, cubic)
+        finally:
+            with self._wish_lock:
+                self._written[("volume", device)] = time.monotonic()
+
     def flush(self, timeout=None):
-        """Wait until every graph wished so far is on the server, or
-        queued behind a measurement. True if that happened in time."""
+        """Wait until every graph and volume wished so far is on the
+        server, or queued behind a measurement. True if that happened
+        in time."""
         with self._idle:
             return self._idle.wait_for(lambda: not self._writing,
                                        timeout)
@@ -270,7 +301,7 @@ class AudioBackend(ABC):
                     if queued:
                         self._queue("graph", device, value)
                     else:
-                        self._dirty.pop(device, None)
+                        self._dirty.pop(("graph", device), None)
                 if value is not None:
                     total += 1
                 if queued:
@@ -279,18 +310,6 @@ class AudioBackend(ABC):
                 if value is not None:
                     sent += 1 if ok else 0
         return sent, total
-
-    def set_volume(self, device, cubic):
-        """Desire a device volume (cubic, 0..1). Written before it
-        returns, between the writer's graph writes."""
-        with self._lock:
-            with self._wish_lock:
-                self._volumes[device] = cubic
-                queued = self._moratorium is not None
-                if queued:
-                    self._queue("volume", device, cubic)
-            if not queued:
-                self._push_volume(device, cubic)
 
     # -- the moratorium ------------------------------------------------
 
@@ -345,8 +364,9 @@ class AudioBackend(ABC):
                 # measurement with every later one: none may land
                 # inside it. One for the measured device is newer than
                 # what the server had, so it outranks the restore
-                for device in self._dirty:
-                    self._pending[("graph", device)] = self._graphs[device]
+                for kind, device in self._dirty:
+                    self._pending[(kind, device)] = \
+                        self._store(kind)[device]
                 self._dirty.clear()
                 if ("graph", key) not in self._pending:
                     self._graphs[key] = value
@@ -360,7 +380,7 @@ class AudioBackend(ABC):
             if restore["mute"]:
                 self._push_mute(sink, False)
             if measure_cubic is not None:
-                self._push_volume(sink, measure_cubic)
+                self._put_volume(sink, measure_cubic)
             # AND IT DOES NOT RETURN UNTIL IT IS IN FORCE. Every push
             # above is a metadata write the server applies when it
             # gets to it, and this returned the instant they were
@@ -447,7 +467,7 @@ class AudioBackend(ABC):
             state = restore["state"]
             if ("volume", sink) not in pending \
                     and restore["volume"] is not None:
-                self._push_volume(sink, restore["volume"])
+                self._put_volume(sink, restore["volume"])
             # after the volume, not before: a card set back to muted
             # and then given a level would be left silent with a
             # number on the fader. Outside that branch, though: the
@@ -469,7 +489,7 @@ class AudioBackend(ABC):
                 if kind == "graph":
                     self._put_graph(device, value)
                 else:
-                    self._push_volume(device, value)
+                    self._put_volume(device, value)
 
     def moratorium_muted_ids(self):
         """Stream ids the active moratorium muted -- the session's

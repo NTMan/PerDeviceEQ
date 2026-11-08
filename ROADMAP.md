@@ -670,6 +670,17 @@ His goal lines ride each task verbatim.
     ten presses of Ctrl+Z, and each press more than 200 ms after
     the last ran a pass of 14 writes. Open.
 
+    (k) *Writes were paced in the window, not in the backend.* The
+    point, Nov 8: the pace belongs to the sound backend, not to the
+    controls. The playback fader paced its own writes every 50 ms
+    and sent each on a thread of its own around the door: in no
+    order, so the last level to land need not have been the last
+    the hand chose, and unseen by a measurement's moratorium.
+    **Fixed in the code the same day:** a level is a wish like a
+    graph, with the same turn, and the fader hands over every level
+    it shows; a volume write finds its sink in the heartbeat's
+    listing instead of a pw-dump per write.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not

@@ -34,6 +34,7 @@ class FakeBackend(AudioBackend):
 
     def _push_volume(self, device, cubic):
         self.log.append(("volume", device, cubic))
+        self.server_volume = cubic
 
     def _read_mute(self, device):
         return self.server_mute
@@ -372,12 +373,19 @@ class Timed(FakeBackend):
         super().__init__()
         self.cost = cost
         self.writes = []
+        self.volumes = []
 
     def _push_graph(self, device, value):
         start = time.monotonic()
         time.sleep(self.cost)
         self.writes.append((device, value, start, time.monotonic()))
         return super()._push_graph(device, value)
+
+    def _push_volume(self, device, cubic):
+        start = time.monotonic()
+        time.sleep(self.cost)
+        self.volumes.append((device, cubic, start, time.monotonic()))
+        super()._push_volume(device, cubic)
 
 
 def _gaps(writes, device):
@@ -398,9 +406,9 @@ def test_a_drag_writes_its_device_once_per_turn_and_ends_on_its_last_wish():
         n += 1
         time.sleep(0.001)
     assert f.flush(5)
-    assert min(_gaps(f.writes, "dev")) >= f.GRAPH_PACE_S
+    assert min(_gaps(f.writes, "dev")) >= f.WRITE_PACE_S
     assert f.writes[-1][:2] == ("dev", "G%d" % (n - 1))
-    assert len(f.writes) <= 0.3 / f.GRAPH_PACE_S + 2
+    assert len(f.writes) <= 0.3 / f.WRITE_PACE_S + 2
 
 
 class Refusing(FakeBackend):
@@ -432,4 +440,58 @@ def test_a_turn_counts_from_a_write_the_whole_pass_made():
     f.publish_graph("dev", "W")
     assert f.flush(5)
     assert [w[1] for w in f.writes] == ["P", "W"]
-    assert _gaps(f.writes, "dev")[0] >= f.GRAPH_PACE_S
+    assert _gaps(f.writes, "dev")[0] >= f.WRITE_PACE_S
+
+
+# ---- a level is a wish like a graph -----------------------------------------
+
+def test_a_fader_drag_keeps_the_turn_and_ends_on_its_last_level():
+    """The fader paced its own writes and put each on a thread of its
+    own, around this door. Through it, its levels keep the same turn
+    as a graph, and the last level the hand chose is the last to land."""
+    f = Timed()
+    stop = time.monotonic() + 0.3
+    n = 0
+    while time.monotonic() < stop:
+        f.set_volume("dev", n / 1000.0)
+        n += 1
+        time.sleep(0.001)
+    assert f.flush(5)
+    assert min(_gaps(f.volumes, "dev")) >= f.WRITE_PACE_S
+    assert f.volumes[-1][:2] == ("dev", (n - 1) / 1000.0)
+    assert len(f.volumes) <= 0.3 / f.WRITE_PACE_S + 2
+
+
+def test_a_level_does_not_wait_for_the_turn_of_a_graph():
+    """Two knobs of one device are two turns."""
+    f = Timed()
+    f.WRITE_PACE_S = 10.0
+    f.publish_graph("dev", "G")
+    assert f.flush(2)
+    f.set_volume("dev", 0.5)
+    assert f.flush(2)
+    assert f.volumes[-1][:2] == ("dev", 0.5)
+
+
+def test_a_level_waiting_when_a_measurement_starts_lands_after_it():
+    """Whether the writer gets to it before the measurement or not, the
+    measurement plays at its own level, and afterwards the device keeps
+    the level the hand chose -- not the one the measurement found."""
+    f = Gated()
+    f.server_volume = 0.61
+    f.publish_graph("other", "X")
+    assert f.entered.wait(5)
+    f.set_volume("dev", 0.3)
+    t = threading.Thread(target=f.moratorium_begin, args=("dev", 0.074),
+                         kwargs={"mute_others": False})
+    t.start()
+    f.gate.set()
+    t.join(5)
+    assert f.moratorium_active
+    assert f.flush(5)
+    levels = [e[2] for e in f.log if e[:2] == ("volume", "dev")]
+    assert levels[-1] == 0.074
+    f.moratorium_end()
+    assert f.flush(5)
+    levels = [e[2] for e in f.log if e[:2] == ("volume", "dev")]
+    assert levels[-1] == 0.3

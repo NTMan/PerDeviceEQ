@@ -645,29 +645,19 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _level_dragged(self, volume):
         """The strip is a duplicate of the system knob, so it writes
-        THROUGH to the sink rather than keeping a level of its own."""
-        name = getattr(self, "node", None)
-        if not name:
-            return
-        sid = None
-        for snk in (pw_backend.backend().sinks or []):
-            if snk.get("name") == name:
-                sid = snk["id"]
-                break
-        if sid is None:
-            return
+        THROUGH to the sink rather than keeping a level of its own.
 
-        # OFF THE MAIN LOOP. set_sink_volume spawns wpctl, and a
-        # subprocess started between two motion events is felt as
-        # exactly the porridge he described -- the handle arriving
-        # after the hand. gnome-control-center's fader does nothing
-        # per motion but move a handle, and neither should this one.
-        def write():
-            try:
-                pw_backend.set_sink_volume(sid, volume)
-            except (RuntimeError, OSError):
-                pass
-        pw_backend.in_thread(write)
+        Through the one door, like every write. It used to pace its
+        own writes and send each on a thread of its own: in no order,
+        and unseen by a measurement. A wish returns at once and the
+        wpctl runs on the backend's writer, so nothing per motion
+        happens on the main loop but the handle and the picture."""
+        name = getattr(self, "node", None)
+        auth = pw_backend.backend()
+        if not name or not any(s.get("name") == name
+                               for s in (auth.sinks or [])):
+            return
+        auth.set_volume(name, volume)
 
         # the poll runs every few seconds; the picture should not wait
         self._loss_vol = None
@@ -2424,7 +2414,7 @@ class EqWindow(Adw.ApplicationWindow):
         heard only after 200 ms of stillness: a slow drag of a band
         stayed silent until the hand stopped, and one click of an
         arrow came 200 ms late. The door paces the writes now
-        (GRAPH_PACE_S); the save keeps the disk and the timeline."""
+        (WRITE_PACE_S); the save keeps the disk and the timeline."""
         if self._loading:
             return
         # the edit may have just given the profile its first channel, so

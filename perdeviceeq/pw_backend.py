@@ -1473,8 +1473,18 @@ class PipeWireBackend(AudioBackend):
         return metadata_set(device, COMMON_KEY if value is None else value)
 
     def _push_volume(self, device, cubic):
-        sink_id = resolve_sink_id(device)
-        set_sink_volume(sink_id, cubic)
+        set_sink_volume(self._sink_id(device), cubic)
+
+    def _sink_id(self, name):
+        """The sink's id off the heartbeat's listing, which is already
+        in hand. A fader writes many times a second, and asking the
+        server for the id with a pw-dump per write was a poll per
+        write; the server is asked only for a sink the listing does
+        not have yet."""
+        for s in self.sinks or []:
+            if s.get("name") == name:
+                return s["id"]
+        return resolve_sink_id(name)
 
     def _read_mute(self, device):
         """The sink's OWN mute, not its streams'. A desktop fader at
