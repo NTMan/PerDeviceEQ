@@ -632,7 +632,11 @@ His goal lines ride each task verbatim.
     longer than 200 ms -- 14 of them in two drags -- and the
     device in view waited for each. **Fixed in the code the
     same day:** a drag calls off a waiting pass, and its end
-    sets one. Not yet tried in the window.
+    sets one. **Tried the same day:** in his second capture the
+    device in view got at most 16 writes a second, no pass ran
+    while the button was held, one ran after each release, and
+    every pass carried all its keys. Nov 8 he reports the lag is
+    not felt.
 
     (h) *A graph write could fail without a word.* One pass in
     the same capture had no write for one of its devices, which
@@ -643,6 +647,28 @@ His goal lines ride each task verbatim.
     pass dropped the count. **Since the same day** a write the
     server did not accept is said on stderr with its key. Why
     the write was missing is open.
+
+    (i) *An edit in the main window was heard late.* Its publish
+    rode the save timer written on Jul 1 for undo, so a band
+    edit or a turn of the preamp was heard only after 200 ms of
+    stillness: a slow drag stayed silent until the hand stopped,
+    and one click of an arrow came 200 ms late. His rule, Nov 8:
+    what a control changes is heard at once, and the door only
+    sends it less often, with a delay nobody notices -- waiting
+    for the hand to stop feels like the program lagging. **Fixed
+    in the code the same day:** the edit publishes; the timer
+    keeps the save and the history step. Still waiting for the
+    hand: the floor's handle publishes at most every 120 ms on
+    its own, so the last position it reached can go unheard
+    until release; and the other bound devices get a taste
+    change when the drag ends, which is heard only if one of
+    them plays at the same time.
+
+    (j) *One drag, many undo steps.* The history step rides the
+    same 200 ms timer, so a drag gets a step at every pause of
+    the hand: in his second capture, undoing one taste drag took
+    ten presses of Ctrl+Z, and each press more than 200 ms after
+    the last ran a pass of 14 writes. Open.
 
 ## Shipped
 

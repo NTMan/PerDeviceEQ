@@ -2415,10 +2415,16 @@ class EqWindow(Adw.ApplicationWindow):
         return True
 
     def _on_edit(self):
-        """Any edit: redraw, debounce the save. An edit of the bands
-        forks a built-in first, in its caller (_ensure_editable); a
-        turn of the preamp does not -- the ride is the listener's, and
-        a copy of the profile would hold nothing the turn changed."""
+        """Any edit: redraw, publish, debounce the save. An edit of the
+        bands forks a built-in first, in its caller (_ensure_editable);
+        a turn of the preamp does not -- the ride is the listener's,
+        and a copy of the profile would hold nothing the turn changed.
+
+        The publish used to ride the debounced save, so an edit was
+        heard only after 200 ms of stillness: a slow drag of a band
+        stayed silent until the hand stopped, and one click of an
+        arrow came 200 ms late. The door paces the writes now
+        (GRAPH_PACE_S); the save keeps the disk and the timeline."""
         if self._loading:
             return
         # the edit may have just given the profile its first channel, so
@@ -2435,6 +2441,7 @@ class EqWindow(Adw.ApplicationWindow):
         for b in self._bal:
             b.reset_session()
         self._update_headroom()
+        self._apply_now()
         self._schedule_save()
 
     def _build_pair_controls(self):
@@ -2685,16 +2692,17 @@ class EqWindow(Adw.ApplicationWindow):
         self._save_source = GLib.timeout_add(_SAVE_DEBOUNCE_MS, self._save_now)
 
     def _save_now(self):
-        """Land the debounce: persist and apply the device profile
-        when a device-side edit is pending, and record ONE history
-        entry either way -- the timeline is global, taste edits
-        arrive here through the same timer."""
+        """Land the debounce: persist the device profile when a
+        device-side edit is pending, and record ONE history entry
+        either way -- the timeline is global, taste edits arrive here
+        through the same timer. It publishes nothing: an edit was
+        heard when it was made (_on_edit), and the floor's edits by
+        their own handlers."""
         self._save_source = 0
         if self._dev_dirty:
             self._dev_dirty = False
             if self._editable(self.current_pid):
                 self.store.save_user(self._working_body())
-            self._apply_now()
             if not self._restoring:
                 self._push_history(born=self._born_pending)
                 self._born_pending = None

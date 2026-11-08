@@ -183,3 +183,23 @@ def test_the_window_publishes_through_the_shared_answer():
              if isinstance(n, ast.Call)}
     assert "eq.device_graph" in calls
     assert not any(c.endswith("profile_graph") for c in calls)
+
+
+def test_an_edit_is_heard_when_it_is_made():
+    """The publish rode the debounced save, so an edit in the main window
+    was heard only after 200 ms of stillness: a slow drag of a band stayed
+    silent until the hand stopped. The edit publishes, once the siblings
+    hold the slot; the save keeps the disk and the timeline."""
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "perdeviceeq" / "gui.py").read_text(encoding="utf-8")
+    fns = {n.name: n for n in ast.walk(ast.parse(src))
+           if isinstance(n, ast.FunctionDef)}
+
+    def lines(fn, name):
+        return [c.lineno for c in ast.walk(fns[fn])
+                if isinstance(c, ast.Call) and ast.unparse(c.func) == name]
+
+    published = lines("_on_edit", "self._apply_now")
+    assert published
+    assert lines("_on_edit", "self._mirror_siblings")[0] < published[0]
+    assert lines("_save_now", "self._apply_now") == []
