@@ -24,7 +24,7 @@ import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
 from perdeviceeq import level_run
-from perdeviceeq.config import LISTENER_KEY, STRIP
+from perdeviceeq.config import MEASURE_KEY, STRIP
 from perdeviceeq import measure_session as ms
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,16 +80,16 @@ def test_end_to_end_two_takes(tmp_path):
     assert r["takes"]["delay_jitter_ms"] < 2.0        # no BT warning
     assert r["foreign_streams"] == []
 
-    # bypass: found in the metadata -> cleared for the sound -> restored
+    # bare: the device named for each sound, then given back; its own
+    # value is never written
     eq = r["eq_profile_state"]
     assert eq == {"metadata_key": "test_sink", "profile": GRAPH,
-                  "profile_source": "metadata", "bypass": True,
-                  "restored": True}
-    assert meta_now(state) == {"test_sink": GRAPH}
+                  "bypass": True, "restored": True}
+    assert meta_now(state) == {"test_sink": GRAPH, MEASURE_KEY: STRIP}
     for n in (1, 2):
         snap = json.loads((state / ("meta_at_play_%d.json" % n))
                           .read_text())
-        assert snap.get("test_sink") == STRIP     # nothing during the sound
+        assert snap == {"test_sink": GRAPH, MEASURE_KEY: "test_sink"}
 
     # path verification: direct link into the real device, nothing else,
     # and the capture pinned to the requested source
@@ -161,11 +161,11 @@ def test_profile_restored_when_playback_fails(tmp_path):
     assert proc.returncode == 1
     assert "pw-play failed" in proc.stderr
     assert not out.exists()
-    # the device played nothing for the (failed) sound...
+    # the device was named for the (failed) sound...
     snap = json.loads((state / "meta_at_play_1.json").read_text())
-    assert snap.get("test_sink") == STRIP
-    # ...and put back verbatim by the context exit
-    assert meta_now(state) == {"test_sink": GRAPH}
+    assert snap.get(MEASURE_KEY) == "test_sink"
+    # ...and given back by the context exit
+    assert meta_now(state) == {"test_sink": GRAPH, MEASURE_KEY: STRIP}
 
 
 # --- auto-level -------------------------------------------------------------
@@ -238,7 +238,8 @@ def test_faulty_channel_aborts(tmp_path):
     assert "faulty" in proc.stderr
     assert "--channel" in proc.stderr
     assert not out.exists()
-    assert meta_now(state) == {"test_sink": GRAPH}    # profile restored
+    assert meta_now(state) == {"test_sink": GRAPH,    # given back
+                               MEASURE_KEY: STRIP}
     # the healthy channel is still usable
     proc, out, _ = run_measure(
         tmp_path, extra=["--channels", "2", "--channel", "1"],
@@ -276,7 +277,8 @@ def test_capture_wrong_source_aborts(tmp_path):
     assert "the target was not honored" in proc.stderr
     assert "obsbot_wrong_default" in proc.stderr
     assert not out.exists()
-    assert meta_now(state) == {"test_sink": GRAPH}    # profile restored
+    assert meta_now(state) == {"test_sink": GRAPH,    # given back
+                               MEASURE_KEY: STRIP}
 
 
 def test_playback_pinned_when_default_changes(tmp_path):
@@ -293,28 +295,13 @@ def test_playback_pinned_when_default_changes(tmp_path):
     assert pc["target"]["name"] == "test_sink"
 
 
-# --- no profile bound: nothing to bypass, nothing to restore ---------------
+# --- nothing in the metadata: a cold start, the window never opened -------
 
-def test_a_sink_with_no_value_of_its_own_is_stripped_too(tmp_path):
-    """It plays the listener's taste and preamp, so it is stripped like
-    any other, and afterwards it follows the listener again."""
-    proc, out, state = run_measure(tmp_path, seed_meta=False)
-    assert proc.returncode == 0, proc.stderr
-    eq = json.loads(out.read_text())["eq_profile_state"]
-    assert eq["profile"] is None
-    assert eq["profile_source"] is None
-    assert eq["bypass"] is True
-    assert eq["restored"] is True
-    snap = json.loads((state / "meta_at_play_1.json").read_text())
-    assert snap.get("test_sink") == STRIP
-    assert meta_now(state) == {"test_sink": LISTENER_KEY}
-
-
-# --- persisted-only profile (cold boot, GUI unopened): seed from WpState ----
-
-def test_bypass_seeds_from_wpstate_when_metadata_empty(tmp_path):
-    # the hook applies a persisted profile without publishing it to the
-    # metadata; bypass must still find it (in WpState) and restore it
+def test_a_sink_the_metadata_knows_nothing_of_is_named_too(tmp_path):
+    """After a cold start the hook plays what it kept, or the listener's
+    taste and preamp, and the metadata holds nothing for the device. It
+    is named like any other, and nothing is read back -- not the hook's
+    own state file either: the hook gives the device back from it."""
     wp = tmp_path / "xdg-state" / "wireplumber"
     wp.mkdir(parents=True)
     (wp / "per-device-eq").write_text(
@@ -322,12 +309,11 @@ def test_bypass_seeds_from_wpstate_when_metadata_empty(tmp_path):
     proc, out, state = run_measure(tmp_path, seed_meta=False)
     assert proc.returncode == 0, proc.stderr
     eq = json.loads(out.read_text())["eq_profile_state"]
-    assert eq["profile"] == GRAPH
-    assert eq["profile_source"] == "wpstate"
-    assert eq["bypass"] is True
-    assert eq["restored"] is True
-    # restore re-publishes it to the metadata
-    assert meta_now(state) == {"test_sink": GRAPH}
+    assert eq == {"metadata_key": "test_sink", "profile": None,
+                  "bypass": True, "restored": True}
+    snap = json.loads((state / "meta_at_play_1.json").read_text())
+    assert snap == {MEASURE_KEY: "test_sink"}
+    assert meta_now(state) == {MEASURE_KEY: STRIP}
 
 
 # --- pure helpers: the auto-level controller safety properties --------------

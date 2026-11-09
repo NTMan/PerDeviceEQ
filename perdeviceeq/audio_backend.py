@@ -23,26 +23,29 @@ every window -- keeps the observed side in sync.
 
 The moratorium (a measurement in progress):
 
-  * moratorium_begin(sink, volume) strips the DSP off the measured
-    sink, mutes foreign streams, sets the measurement volume, and
-    remembers what to restore;
-  * while active, every publish/clear/set_volume from anywhere in
-    the program is COALESCED into a pending map -- last write per
-    key wins -- and nothing touches the server;
-  * moratorium_end() restores mutes and volume, then applies the
-    pending map in one pass. A forced sweep stop ends it the same
-    way. One moratorium at a time; nesting is a programming error
-    and raises.
+  * moratorium_begin(sink, volume) names the measured device to the
+    hook, which keeps every graph off it (config.MEASURE_KEY), mutes
+    foreign streams, sets the measurement volume, and remembers the
+    level and the mutes to restore;
+  * while active, every set_volume from anywhere in the program is
+    COALESCED into a pending map -- last write per device wins -- and
+    no level touches the server. A graph goes out as ever: the hook
+    keeps the measured device bare whatever it is told, and plays
+    what it was told last once the name goes;
+  * moratorium_end() restores mutes and volume, clears the name, then
+    applies the pending levels in one pass. A forced sweep stop ends
+    it the same way. One moratorium at a time; nesting is a
+    programming error and raises.
 
-Outside a measurement a wish is coalesced too, a graph or a volume.
-publish_graph, clear_graph and set_volume record the wish and return
-at once; one writer thread puts the newest wish of each device on the
-server, one write at a time and a device no sooner than WRITE_PACE_S
-after its last write of that kind, so the last wish always lands
-last however fast they come. Graph values go out in the order they
-were last wished, whatever their keys (_next_turn). A whole wire
-state and the moratorium still write before they return. flush()
-waits for the writer.
+The writer coalesces the rest, a graph always and a level outside a
+measurement. publish_graph, clear_graph and set_volume record the
+wish and return at once; one writer thread puts the newest wish of
+each device on the server, one write at a time and a device no
+sooner than WRITE_PACE_S after its last write of that kind, so the
+last wish always lands last however fast they come. Graph values go
+out in the order they were last wished, whatever their keys
+(_next_turn). A whole wire state and the moratorium still write
+before they return. flush() waits for the writer.
 
 No GTK, no windows, no knowledge of who calls: the presence of a
 measure window must never gate code anywhere else.
@@ -55,7 +58,7 @@ import traceback
 from abc import ABC, abstractmethod
 
 from . import debug
-from .config import STRIP
+from .config import MEASURE_KEY, STRIP
 
 
 def _route_sig(routes):
@@ -103,7 +106,7 @@ class AudioBackend(ABC):
                                    # write ended
         # moratorium
         self._moratorium = None    # None or dict(sink=, restore=)
-        self._pending = {}         # ("graph"|"volume", device) -> value
+        self._pending = {}         # device -> level wished meanwhile
         # observed
         self.sinks = []
         self.sources = []
@@ -122,22 +125,20 @@ class AudioBackend(ABC):
         devices are its nodes keeps this default."""
         return sink
 
-    def _queue(self, kind, device, value):
-        # in the order last wished, as the writer takes them
-        self._pending.pop((kind, device), None)
-        self._pending[(kind, device)] = value
+    def _queue(self, device, cubic):
+        self._pending[device] = cubic
         names = [f.name for f in
                  traceback.extract_stack(limit=7)][:-2]
-        print("backend: queued %s for %s until the moratorium "
+        print("backend: queued volume for %s until the moratorium "
               "lifts (caller: %s)"
-              % (kind, device, " > ".join(names)),
+              % (device, " > ".join(names)),
               file=sys.stderr)
 
     def publish_graph(self, device, value):
         """Desire `value` on `device` and return at once: the writer
-        puts it on the server (_wish). During a measurement it is
-        queued until the moratorium lifts (last write per key wins;
-        the queueing is logged with the caller's path)."""
+        puts it on the server (_wish). A measurement does not hold it
+        back: the hook keeps the measured device bare, and plays the
+        newest value it was told when the measurement ends."""
         self._wish("graph", device, value)
 
     def clear_graph(self, device):
@@ -187,8 +188,8 @@ class AudioBackend(ABC):
         wish goes behind every graph wish made before it (_next_turn)."""
         with self._wish_lock:
             self._store(kind)[device] = value
-            if self._moratorium is not None:
-                self._queue(kind, device, value)
+            if self._moratorium is not None and kind == "volume":
+                self._queue(device, value)
                 return
             if kind == "graph":
                 self._dirty.pop((kind, device), None)
@@ -290,8 +291,9 @@ class AudioBackend(ABC):
 
     def flush(self, timeout=None):
         """Wait until every graph and volume wished so far is on the
-        server, or queued behind a measurement. True if that happened
-        in time."""
+        server, a level wished during a measurement excepted: that one
+        waits for the measurement's end. True if that happened in
+        time."""
         with self._idle:
             return self._idle.wait_for(lambda: not self._writing,
                                        timeout)
@@ -320,15 +322,9 @@ class AudioBackend(ABC):
             for device, value in (wire or {}).items():
                 with self._wish_lock:
                     self._graphs[device] = value
-                    queued = self._moratorium is not None
-                    if queued:
-                        self._queue("graph", device, value)
-                    else:
-                        self._dirty.pop(("graph", device), None)
+                    self._dirty.pop(("graph", device), None)
                 if value is not None:
                     total += 1
-                if queued:
-                    continue          # queued, not sent: do not count it
                 ok = self._put_graph(device, value)
                 if value is not None:
                     sent += 1 if ok else 0
@@ -339,14 +335,19 @@ class AudioBackend(ABC):
     def moratorium_begin(self, sink, measure_cubic=None,
                          mute_others=True):
         """A measurement claims the server for ONE sweep: mute foreign
-        streams (when asked), strip the DSP off `sink`, set the
-        measurement volume (when given). The restore is read from the
-        SERVER at this very begin -- graph (with its source), volume
-        and the sink's own mute -- so any process, however fresh,
-        restores what the server actually had, every sweep, exactly as
-        the old per-sweep law did. Returns the evidence dict the
-        session records as eq_profile_state. Raises if one is already
-        active.
+        streams (when asked), name the device `sink` plays through to
+        the hook, which keeps every graph off it (config.MEASURE_KEY),
+        set the measurement volume (when given). The level and the
+        sink's own mute to restore are read from the SERVER at this
+        very begin, so any process, however fresh, restores what the
+        server actually had, every sweep. The EQ needs no restore: the
+        device's value is never written here, and the hook gives the
+        device back what it holds once the name goes. Returns the
+        evidence dict the session records as eq_profile_state: the
+        device's key, the value the metadata held under it (None when
+        it holds nothing, which after a cold start of PipeWire says
+        nothing of what the hook plays), that it was played bare and
+        that it was given back. Raises if one is already active.
 
         THE SINK'S OWN MUTE IS CLEARED with the volume, and this is
         his finding: a desktop fader dragged to its far left does not
@@ -360,13 +361,10 @@ class AudioBackend(ABC):
                 if self._moratorium is not None:
                     raise RuntimeError("moratorium already active")
             key = self._graph_key(sink)
-            value, source = self._read_graph(key)
-            state = {"metadata_key": key, "profile": value,
-                     "profile_source":
-                         source if value is not None else None,
+            state = {"metadata_key": key,
+                     "profile": self._read_graph(key),
                      "bypass": False, "restored": None}
             restore = {
-                "graph": value,
                 "volume": (self._read_volume(sink)
                            if measure_cubic is not None else None),
                 # ALWAYS, not only when a level is written. A mute is
@@ -383,23 +381,21 @@ class AudioBackend(ABC):
                 "state": state,
             }
             with self._wish_lock:
-                # wishes still waiting for the writer go behind the
+                # levels still waiting for the writer go behind the
                 # measurement with every later one: none may land
-                # inside it. One for the measured device is newer than
-                # what the server had, so it outranks the restore
-                for kind, device in self._dirty:
-                    self._pending[(kind, device)] = \
-                        self._store(kind)[device]
-                self._dirty.clear()
-                if ("graph", key) not in self._pending:
-                    self._graphs[key] = value
-                self._moratorium = {"sink": sink, "key": key,
-                                    "restore": restore,
+                # inside it. One for the measured sink is newer than
+                # what the server had, so it outranks the restore. A
+                # graph waiting there goes out: the hook keeps the
+                # measured device bare
+                for kind, device in list(self._dirty):
+                    if kind == "volume":
+                        del self._dirty[(kind, device)]
+                        self._pending[device] = self._volumes[device]
+                self._moratorium = {"sink": sink, "restore": restore,
                                     "muted": mute_others}
-            # ALWAYS, found or not: a device with no correction of its
-            # own plays the listener's taste and preamp, so there are
-            # graphs on it either way
-            self._put_graph(key, STRIP)
+            # ALWAYS, whatever the device holds: one with no correction
+            # of its own still plays the listener's taste and preamp
+            self._put_graph(MEASURE_KEY, key)
             state["bypass"] = True
             if restore["mute"]:
                 self._push_mute(sink, False)
@@ -452,12 +448,9 @@ class AudioBackend(ABC):
         t0 = time.monotonic()
         while time.monotonic() - t0 < self.SETTLE_TIMEOUT_S:
             try:
-                value, _src = self._read_graph(key)
+                ok = self._read_graph(MEASURE_KEY) == key
             except Exception:
-                value = None
-            # STRIP itself: None is "follows the listener", which is
-            # the state before the write, not after it
-            ok = value == STRIP
+                ok = False
             if ok and measure_cubic is not None:
                 try:
                     now = self._read_volume(sink)
@@ -474,10 +467,11 @@ class AudioBackend(ABC):
     def moratorium_end(self):
         """Measurement over (normal end or forced stop): restore in
         the sweep's own order -- volume and the sink's own mute back,
-        EQ back, foreign streams unmuted -- then
-        apply everything that accumulated, one pass, last write per
-        key. Pending writes for the measured sink outrank its
-        restore. Fills state["restored"]."""
+        the device's name cleared so the hook gives it its EQ back,
+        foreign streams unmuted -- then apply the levels wished
+        meanwhile, one pass, last write per device. A level wished for
+        the measured sink outranks its restore. Fills
+        state["restored"]: whether the name was cleared."""
         with self._lock:
             with self._wish_lock:
                 m = self._moratorium
@@ -487,33 +481,26 @@ class AudioBackend(ABC):
                 # a wish made from here on goes to the writer, which
                 # waits for the server until this pass is done
                 pending, self._pending = self._pending, {}
-            sink, key, restore = m["sink"], m["key"], m["restore"]
+            sink, restore = m["sink"], m["restore"]
             state = restore["state"]
-            if ("volume", sink) not in pending \
-                    and restore["volume"] is not None:
+            if sink not in pending and restore["volume"] is not None:
                 self._put_volume(sink, restore["volume"])
             # after the volume, not before: a card set back to muted
             # and then given a level would be left silent with a
             # number on the fader. Outside that branch, though: the
             # mute is restored whether or not a level was written,
             # because it is now cleared the same way
-            if ("volume", sink) not in pending \
-                    and restore.get("mute"):
+            if sink not in pending and restore.get("mute"):
                 self._push_mute(sink, True)
-            if ("graph", key) not in pending:
-                ok = bool(self._put_graph(key,
-                                          restore["graph"]))
-                state["restored"] = ok
-                if not ok:
-                    self._restore_failed(key, restore["graph"])
+            ok = bool(self._put_graph(MEASURE_KEY, STRIP))
+            state["restored"] = ok
+            if not ok:
+                self._restore_failed(MEASURE_KEY, STRIP)
             if m["muted"]:
                 self._push_stream_mutes(sink, False,
                                         restore["mutes"])
-            for (kind, device), value in pending.items():
-                if kind == "graph":
-                    self._put_graph(device, value)
-                else:
-                    self._put_volume(device, value)
+            for device, cubic in pending.items():
+                self._put_volume(device, cubic)
 
     def moratorium_muted_ids(self):
         """Stream ids the active moratorium muted -- the session's
@@ -654,8 +641,9 @@ class AudioBackend(ABC):
 
     @abstractmethod
     def _read_graph(self, device):
-        """(value, source) the server holds for `device` right now --
-        for seeding the restore in a process that never published."""
+        """The value the metadata holds under `device` right now, None
+        when nothing or the listener: what a measurement records as on
+        the device, and how it sees its own name land."""
 
     @abstractmethod
     def _read_volume(self, device):
@@ -671,7 +659,8 @@ class AudioBackend(ABC):
         """Set the device's own mute."""
 
     def _restore_failed(self, device, value):
-        """A graph restore was refused; heirs say how to recover."""
+        """A write that hands a device back after a measurement was
+        refused; heirs say how to recover."""
 
     @abstractmethod
     def _pull(self):

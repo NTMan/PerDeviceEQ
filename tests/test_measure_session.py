@@ -18,7 +18,7 @@ import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
 from perdeviceeq import level_run
-from perdeviceeq.config import STRIP
+from perdeviceeq.config import MEASURE_KEY, STRIP
 from perdeviceeq import measure_core as mc
 from perdeviceeq import measure_session as ms
 from perdeviceeq import sweep_io
@@ -117,9 +117,9 @@ def test_take_spread_discard_finalize(shim_state, tmp_path):
         assert np.all(np.isfinite(spread))
         assert float(np.max(spread)) < 0.5            # synthetic: tiny fan
 
-        # the profile was bypassed DURING the sound
+        # the device was named DURING the sound, its value untouched
         snap = json.loads((shim_state / "meta_at_play_1.json").read_text())
-        assert snap.get("test_sink") == STRIP
+        assert snap == {"test_sink": GRAPH, MEASURE_KEY: "test_sink"}
 
         dropped = ses.discard(0, out1.take.id)
         assert dropped.id == 1
@@ -132,12 +132,11 @@ def test_take_spread_discard_finalize(shim_state, tmp_path):
         assert os.path.basename(out3.take.wav_path) == "take03.wav"
         assert out3.spread_db is not None
 
-    # bypass restored verbatim on exit
+    # given back on exit: the name cleared
     assert json.loads((shim_state / "metadata.json").read_text()) \
-        == {"test_sink": GRAPH}
+        == {"test_sink": GRAPH, MEASURE_KEY: STRIP}
     assert ses.eq_state == {"metadata_key": "test_sink", "profile": GRAPH,
-                            "profile_source": "metadata", "bypass": True,
-                            "restored": True}
+                            "bypass": True, "restored": True}
 
     out_json = tmp_path / "result.json"
     r = ses.finalize(0, str(out_json))

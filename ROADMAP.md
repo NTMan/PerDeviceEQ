@@ -84,6 +84,9 @@ listener, headroom that never lies.
     on a node (hook protocol 5): a change of the taste or the preamp is
     one write, and every device that is playing hears it as the hand
     moves. A device's preamp travels with its correction.
+  - A measurement no longer writes the device's EQ: it names the device
+    to the hook, which keeps it bare for the sweep and then plays what
+    it holds for it.
   - A saved profile plays on every device bound to it.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a

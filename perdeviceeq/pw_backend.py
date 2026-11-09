@@ -1214,57 +1214,6 @@ def metadata_get(key):
     return m.group(1) if m else None
 
 
-# WirePlumber escapes a key before it writes it into a state file
-# (escape_string in lib/wp/state.c): a backslash, a space, '=', '['
-# and ']' become \\, \s, \e, \o and \c. A UCM port is named like
-# "[Out] Line1", so its key reaches the file as ...#\oOut\c\sLine1.
-_WP_ESCAPES = {"\\": "\\", "s": " ", "e": "=", "o": "[", "c": "]"}
-
-
-def _wp_unescape(text):
-    """A state-file key as WirePlumber was given it, see _WP_ESCAPES."""
-    out = []
-    chars = iter(text)
-    for ch in chars:
-        if ch == "\\":
-            nxt = next(chars, "")
-            out.append(_WP_ESCAPES.get(nxt, "\\" + nxt))
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def wpstate_get(key):
-    """Read a device's value from the WirePlumber hook's persisted state
-    (a GKeyFile at $XDG_STATE_HOME/wireplumber/per-device-eq). The hook
-    seeds its runtime table from here on a cold start and does NOT
-    publish persisted values into the metadata, so a freshly-booted
-    session where the GUI was never opened has the profile ONLY here.
-    The hook keeps a device there as its key's value would say it: its
-    correction with the preamp it plays (eq.device_value), or STRIP;
-    no entry follows the listener.
-
-    Keys are compared unescaped (_wp_unescape). Values need nothing:
-    GKeyFile escapes only backslashes, control characters and a leading
-    space, and a device's value -- graphs, braces and quotes -- carries
-    none of them."""
-    base = os.environ.get("XDG_STATE_HOME") \
-        or os.path.expanduser("~/.local/state")
-    path = os.path.join(base, "wireplumber", "per-device-eq")
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.rstrip("\n")
-                if line.startswith("[") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)     # a key's own '=' is \e
-                if _wp_unescape(k) == key:
-                    return v                  # "" is STRIP, kept as is
-    except OSError:
-        pass
-    return None
-
-
 def set_stream_mute(node_id, mute):
     """Props mute on a stream node; True on success. The backend's
     verb; the session's private twin retires when the weaving step
@@ -1612,10 +1561,7 @@ class PipeWireBackend(AudioBackend):
 
     def _read_graph(self, device):
         value = metadata_get(device)
-        if value is not None:
-            return (None if value == LISTENER_KEY else value), "metadata"
-        value = wpstate_get(device)
-        return value, ("wpstate" if value is not None else None)
+        return None if value == LISTENER_KEY else value
 
     def _read_volume(self, device):
         dump = pw_dump()
@@ -1634,10 +1580,9 @@ class PipeWireBackend(AudioBackend):
         return None
 
     def _restore_failed(self, device, value):
-        print("CRITICAL: failed to restore the EQ profile; put it "
-              "back manually:\n  pw-metadata -n per-device-eq 0 "
-              "'%s' '%s'" % (device, LISTENER_KEY if value is None
-                             else value), file=sys.stderr)
+        print("CRITICAL: the measured device was not given its EQ "
+              "back; do it by hand:\n  pw-metadata -n per-device-eq 0 "
+              "'%s' '%s'" % (device, value), file=sys.stderr)
 
     def missing_requirements(self):
         """Command-line tools the platform still needs."""

@@ -30,7 +30,8 @@ SYS_PROFILE_DIRS = ["/usr/share/per-device-eq/profiles",
 #   * a PipeWire metadata object ("per-device-eq", created by WP's own
 #     metadata.lua) carries live edits from the app to the hook,
 #   * the hook persists graphs to WpState (~/.local/state/wireplumber/) and
-#     reloads them at startup, so the EQ survives reboot with no user process.
+#     reloads them at startup, so the EQ survives reboot with no user process;
+#     that file is the hook's alone, and the app never reads it.
 # WirePlumber 0.5 looks up user scripts in ~/.local/share/wireplumber/scripts.
 WP_SCRIPT_DIR  = os.path.expanduser("~/.local/share/wireplumber/scripts")
 WP_SCRIPT_NAME = "90-per-device-eq.lua"
@@ -51,17 +52,17 @@ METADATA_NAME  = "per-device-eq"
 # its hook is old. 4 is the final-node rule (pw_backend.is_final_node);
 # 5 is three graphs on a node: correction, taste and preamp.
 PROTOCOL = "5"
-# The metadata contract, the same in the hook (LISTENER and STRIP there,
-# keep them equal). A node carries three graphs (eq.py, "what a node
-# plays"): 0 the device's correction, 1 the listener's taste, 2 the
-# preamp. A key names a device or the listener.
+# The metadata contract, the same in the hook (LISTENER, MEASURE and
+# STRIP there, keep them equal). A node carries three graphs (eq.py,
+# "what a node plays"): 0 the device's correction, 1 the listener's
+# taste, 2 the preamp. A key names a device, the listener or the
+# measurement.
 #
 # A device's value is one of three:
 #   eq.device_value  its correction (graph 0) with its preamp (graph 2)
 #                    in one write, so the correction never plays with a
 #                    preamp made for another;
-#   STRIP            explicitly nothing, every graph off -- Bypass, or a
-#                    measurement in progress;
+#   STRIP            explicitly nothing, every graph off -- Bypass;
 #   LISTENER_KEY     no correction of its own: graph 0 off, and the
 #                    listener's taste and "*" preamp on. Written, never a
 #                    deleted key: the metadata announces a delete only
@@ -75,7 +76,14 @@ PROTOCOL = "5"
 # the preamp that is right when it is made (audio_backend writes graph
 # values in the order they were made). A device is a final node
 # (pw_backend.is_final_node); the hook sets nothing on any other.
+#
+# The value under MEASURE_KEY is the key of the device a measurement
+# is sweeping, STRIP when none is: while it is named there the hook
+# keeps every graph off it, and gives back what it holds for the device
+# when the name goes (audio_backend, moratorium). A measurement never
+# writes a device's value, so nothing is read back afterwards.
 LISTENER_KEY = "@listener"
+MEASURE_KEY = "@measure"
 STRIP = ""
 # the static hook is shipped next to the package (repo) or system-wide (package)
 HOOK_SRC_CANDIDATES = [os.path.join(_DATA_ROOT, "wireplumber", WP_SCRIPT_NAME),

@@ -470,21 +470,97 @@ scenarios["a table of this protocol seeds the hook"] = function()
   eq(show(w.applied[CARD]), "- T S", "the listener from the table")
 end
 
-scenarios["what the table keeps for a device is a value it reads back"] =
+scenarios["a measurement holds its device bare and gives back what it holds"] =
 function()
-  -- a measurement strips a device and writes back what the app read,
-  -- from the metadata or, after a restart, from this table
   local w = world(nil)
   w.device(70, { HP })
   w.metadata()
   w.node(BT, 70, 1)
+  w.write("@listener", LIS("T", { ["*"] = "S" }))
   w.write(KEY, DEV("OWN", "P"))
-  w.write("@listener", LIS("T", { ["*"] = "S", [KEY] = "P2" }))
-  local kept = w.saved[KEY]
+  local before = w.calls[BT]
+  w.write("@measure", KEY)
+  eq(w.calls[BT] - before, 1, "one call")
+  eq(show(w.last[BT]), "- - -", "bare for the sweep")
+  -- what arrives meanwhile is kept and not set
+  w.write(KEY, DEV("OWN2", "P2"))
+  w.write("@listener", LIS("T2", { ["*"] = "S", [KEY] = "P3" }))
+  eq(w.calls[BT] - before, 1, "nothing set during the sweep")
+  eq(w.saved[KEY], DEV("OWN2", "P3"), "but kept, with the last preamp")
+  eq(w.saved["@measure"], nil, "the name is not kept")
+  w.write("@measure", "")
+  eq(w.calls[BT] - before, 2, "one call to give it back")
+  eq(show(w.last[BT]), "OWN2 T2 P3", "what the hook holds now")
+end
+
+scenarios["a measured device stays bare when it starts to play"] = function()
+  local w = world(nil)
+  w.device(70, { HP })
+  w.metadata()
+  local n = w.node(BT, 70, 1, "idle")
+  w.write("@listener", LIS("T", { ["*"] = "S" }))
+  w.write(KEY, DEV("OWN", "P"))
+  w.write("@measure", KEY)
+  w.running(n)
+  eq(show(w.applied[BT]), "- - -", "bare on running")
+  w.write("@measure", "")
+  eq(show(w.applied[BT]), "OWN T P", "back")
+end
+
+scenarios["a device in Bypass stays bare after a measurement"] = function()
+  local w = world(nil)
+  w.device(70, { HP })
+  w.metadata()
+  w.node(BT, 70, 1)
+  w.write("@listener", LIS("T", { ["*"] = "S" }))
   w.write(KEY, "")
-  eq(show(w.applied[BT]), "- - -", "stripped for the sweep")
-  w.write(KEY, kept)
-  eq(show(w.applied[BT]), "OWN T P2", "back as it played")
+  w.write("@measure", KEY)
+  w.write("@measure", "")
+  eq(show(w.applied[BT]), "- - -", "still explicitly nothing")
+end
+
+scenarios["a device nothing is known about stays as the measurement left it"] =
+function()
+  local w = world(nil)
+  w.device(70, { HP })
+  w.metadata()
+  w.node(BT, 70, 1)
+  eq(w.applied[BT], nil, "left alone")
+  w.write("@measure", KEY)
+  eq(show(w.applied[BT]), "- - -", "bare for the sweep all the same")
+  local before = w.calls[BT]
+  w.write("@measure", "")
+  eq(w.calls[BT], before, "nothing to give back")
+end
+
+scenarios["a node that comes during a measurement comes bare"] = function()
+  -- even of a device nothing is known about: whatever it brings, the
+  -- sweep is played bare
+  local w = world(nil)
+  w.device(70, { HP })
+  w.metadata()
+  w.write("@measure", KEY)
+  w.node(BT, 70, 1)
+  eq(show(w.applied[BT]), "- - -", "bare")
+end
+
+scenarios["naming another device gives the first one back"] = function()
+  local w = world(nil)
+  w.device(70, { HP })
+  w.device(71, {})
+  w.metadata()
+  w.node(BT, 70, 1)
+  w.node(CARD, 71, 0)
+  w.write("@listener", LIS("T", { ["*"] = "S" }))
+  w.write(KEY, DEV("OWN", "P"))
+  w.write("@measure", KEY)
+  w.write("@measure", CARD)
+  eq(show(w.applied[BT]), "OWN T P", "the first is back")
+  eq(show(w.applied[CARD]), "- - -", "the second is bare")
+  w.write("@listener", LIS("T2", { ["*"] = "S2" }))
+  eq(show(w.applied[CARD]), "- - -", "the listener does not reach it")
+  w.write("@measure", nil)               -- a deleted name names none
+  eq(show(w.applied[CARD]), "- T2 S2", "back, under the newest record")
 end
 
 scenarios["a table of another protocol is not read"] = function()

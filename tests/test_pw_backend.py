@@ -124,58 +124,30 @@ def test_mutes_touch_only_unmuted_foreigners(rig):
             "{ mute = false }"] in calls
 
 
-def test_read_graph_falls_back_to_wpstate(rig, monkeypatch):
+def test_the_graph_is_read_from_the_metadata_only(rig, monkeypatch):
+    """The hook's own state file is the hook's: a key the metadata does
+    not hold reads as nothing, whatever that file says."""
     b, _ = rig
     monkeypatch.setattr(pwb, "metadata_get", lambda k: None)
-    monkeypatch.setattr(pwb, "wpstate_get",
-                        lambda k: "PERSISTED")
-    assert b._read_graph("test_sink") == ("PERSISTED", "wpstate")
-    monkeypatch.setattr(pwb, "metadata_get",
-                        lambda k: "LIVE")
-    assert b._read_graph("test_sink") == ("LIVE", "metadata")
+    assert b._read_graph("test_sink") is None
+    monkeypatch.setattr(pwb, "metadata_get", lambda k: "LIVE")
+    assert b._read_graph("test_sink") == "LIVE"
 
 
 def test_following_the_listener_reads_as_no_value_of_its_own(
         rig, monkeypatch):
     b, _ = rig
     monkeypatch.setattr(pwb, "metadata_get", lambda k: "@listener")
-    assert b._read_graph("test_sink") == (None, "metadata")
+    assert b._read_graph("test_sink") is None
     monkeypatch.setattr(pwb, "metadata_get", lambda k: "")
-    assert b._read_graph("test_sink") == ("", "metadata")
+    assert b._read_graph("test_sink") == ""
 
 
-def test_explicitly_nothing_is_read_back_from_the_state_file(
-        tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    (tmp_path / "wireplumber").mkdir()
-    (tmp_path / "wireplumber" / "per-device-eq").write_text(
-        "[per-device-eq]\n@protocol=3\ndev#port=\n", encoding="utf-8")
-    assert pwb.wpstate_get("dev#port") == ""
-    assert pwb.wpstate_get("other") is None
-
-
-def test_wpstate_escapes_are_undone():
-    assert pwb._wp_unescape("a\\sb\\ec\\od\\ce\\\\f") == "a b=c[d]e\\f"
-    assert pwb._wp_unescape("plain.name#headset-output") == \
-        "plain.name#headset-output"
-
-
-def test_wpstate_finds_a_key_wireplumber_escaped(tmp_path, monkeypatch):
-    """A UCM output's port is "[Out] Line1", which WirePlumber writes
-    as \\oOut\\c\\sLine1. The entry has to be found under the key the
-    program spells, or a measurement on that sink reads no graph."""
-    d = tmp_path / "wireplumber"
-    d.mkdir()
-    node = "alsa_output.usb-Topping_M62-00.HiFi__Line1__sink"
-    bt = "bluez_output.24_C4_06_42_AE_2A.1#headset-output"
-    (d / "per-device-eq").write_text(
-        "[per-device-eq]\n"
-        + node + "#\\oOut\\c\\sLine1=G-M62\n"
-        + bt + "=G-BT\n", encoding="utf-8")
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    assert pwb.wpstate_get(node + "#[Out] Line1") == "G-M62"
-    assert pwb.wpstate_get(bt) == "G-BT"
-    assert pwb.wpstate_get(node) is None
+def test_a_refused_release_prints_the_command_that_ends_it(rig, capsys):
+    b, _ = rig
+    b._restore_failed("@measure", "")
+    assert "pw-metadata -n per-device-eq 0 '@measure' ''" \
+        in capsys.readouterr().err
 
 
 def test_read_volume_takes_the_cube_root(rig):

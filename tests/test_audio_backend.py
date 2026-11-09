@@ -7,7 +7,7 @@ import time
 import pytest
 
 from perdeviceeq.audio_backend import AudioBackend
-from perdeviceeq.config import STRIP
+from perdeviceeq.config import MEASURE_KEY, STRIP
 
 
 class FakeBackend(AudioBackend):
@@ -16,18 +16,18 @@ class FakeBackend(AudioBackend):
     def __init__(self):
         super().__init__()
         self.log = []
+        self.server = {}           # the metadata: key -> value
 
-    server_graph = (None, None)
     server_volume = None
     server_mute = None
 
     def _push_graph(self, device, value):
         self.log.append(("graph", device, value))
-        self.server_graph = (value, "metadata")
+        self.server[device] = value
         return True
 
     def _read_graph(self, device):
-        return self.server_graph
+        return self.server.get(device)
 
     def _read_volume(self, device):
         return self.server_volume
@@ -75,60 +75,90 @@ def test_publish_outside_moratorium_hits_the_server():
     assert ("volume", "dev", 0.5) in f.log
 
 
-def test_moratorium_coalesces_last_write_wins():
+def test_moratorium_coalesces_levels_last_write_wins():
     f = FakeBackend()
-    f.publish_graph("dev", "G1")
-    assert f.flush(5)
     f.moratorium_begin("dev", 0.074)
-    f.publish_graph("dev", "G2")
-    f.publish_graph("dev", "G3")
+    f.set_volume("other", 0.4)
     f.set_volume("other", 0.5)
+    f.set_volume("third", 0.2)
     assert f.pending_count == 2
-    assert all(e != ("graph", "dev", "G2") for e in f.log)
-    assert all(e != ("graph", "dev", "G3") for e in f.log)
+    assert not [e for e in f.log if e[1] in ("other", "third")]
     f.moratorium_end()
-    assert ("graph", "dev", "G3") in f.log
-    assert ("volume", "other", 0.5) in f.log
-    assert all(e != ("graph", "dev", "G2") for e in f.log)
+    assert [e for e in f.log if e[1] == "other"] == \
+        [("volume", "other", 0.5)]
+    assert ("volume", "third", 0.2) in f.log
 
 
-def test_begin_strips_mutes_and_doses():
+def test_a_graph_goes_out_during_a_measurement():
+    """The hook keeps the measured device bare whatever it is told, so
+    nothing need wait: another device's value and the listener's go
+    out in their turn."""
     f = FakeBackend()
-    f.server_graph = ("TASTE", "metadata")
+    f.moratorium_begin("dev", None, mute_others=False)
+    f.publish_graph("other", "O")
+    f.publish_graph("@listener", "L")
+    assert f.flush(5)
+    assert f.pending_count == 0
+    assert [e for e in f.log if e[0] == "graph"] == \
+        [("graph", MEASURE_KEY, "dev"), ("graph", "other", "O"),
+         ("graph", "@listener", "L")]
+    f.moratorium_end()
+
+
+def test_begin_names_the_device_mutes_and_doses():
+    f = FakeBackend()
+    f.server["dev"] = "TASTE"
     f.server_volume = 0.61
     state = f.moratorium_begin("dev", 0.074)
     assert f.log[-3:] == [("mutes", "dev", True),
-                          ("graph", "dev", STRIP),
+                          ("graph", MEASURE_KEY, "dev"),
                           ("volume", "dev", 0.074)]
-    assert state["bypass"] is True
-    assert state["profile"] == "TASTE"
-    assert state["profile_source"] == "metadata"
+    assert state == {"metadata_key": "dev", "profile": "TASTE",
+                     "bypass": True, "restored": None}
 
 
-def test_end_restores_when_nothing_pended():
+def test_end_gives_back_the_level_then_the_device():
+    """The device's own value is never written: the hook gives back
+    what it holds once the name goes."""
     f = FakeBackend()
-    f.server_graph = ("TASTE", "metadata")
+    f.server["dev"] = "TASTE"
     f.server_volume = 0.61
     state = f.moratorium_begin("dev", 0.074)
     f.moratorium_end()
     assert f.log[-3:] == [("volume", "dev", 0.61),
-                          ("graph", "dev", "TASTE"),
+                          ("graph", MEASURE_KEY, STRIP),
                           ("mutes", "dev", False)]
     assert state["restored"] is True
     assert not f.moratorium_active
+    assert not [e for e in f.log if e[:2] == ("graph", "dev")]
 
 
-def test_pending_on_the_measured_sink_outranks_restore():
+def test_a_level_wished_for_the_measured_sink_outranks_its_restore():
     f = FakeBackend()
-    f.publish_graph("dev", "TASTE")
-    assert f.flush(5)
+    f.server_volume = 0.61
     f.moratorium_begin("dev", 0.074)
-    f.clear_graph("dev")
+    f.set_volume("dev", 0.3)
     f.moratorium_end()
-    tail = [e for e in f.log if e[0] == "graph"][-1]
-    assert tail == ("graph", "dev", None)
-    assert all(e != ("graph", "dev", "TASTE")
-               or f.log.index(e) < 2 for e in f.log)
+    assert [e[2] for e in f.log if e[:2] == ("volume", "dev")] == \
+        [0.074, 0.3]
+
+
+def test_a_refused_release_is_said_with_the_way_back():
+    class Refusing(FakeBackend):
+        failed = None
+
+        def _push_graph(self, device, value):
+            super()._push_graph(device, value)
+            return value != STRIP
+
+        def _restore_failed(self, device, value):
+            self.failed = (device, value)
+
+    f = Refusing()
+    state = f.moratorium_begin("dev", None, mute_others=False)
+    f.moratorium_end()
+    assert state["restored"] is False
+    assert f.failed == (MEASURE_KEY, STRIP)
 
 
 def test_nested_moratorium_raises():
@@ -157,28 +187,17 @@ def test_observe_notifies_on_change_only():
     assert f.sources == [{"name": "m1"}]
 
 
-def test_seed_restores_what_the_server_had():
-    f = FakeBackend()
-    f.server_graph = ("SRV", "wpstate")
-    f.server_volume = 0.61
-    state = f.moratorium_begin("dev", 0.074)
-    assert state["profile"] == "SRV"
-    assert state["profile_source"] == "wpstate"
-    f.moratorium_end()
-    tail = [e for e in f.log if e[0] == "graph"]
-    assert tail == [("graph", "dev", STRIP), ("graph", "dev", "SRV")]
-    assert ("volume", "dev", 0.61) in f.log
-
-
-def test_a_device_with_no_value_of_its_own_is_stripped_too():
-    """It plays the listener's taste and preamp, so there are graphs on
-    it to strip; the restore puts it back to following the listener."""
+def test_a_device_the_metadata_knows_nothing_of_is_named_too():
+    """It may play the listener's taste and preamp, or what the hook
+    kept from before a cold start of PipeWire: the hook knows, the
+    metadata need not. It is named either way, and nothing is read
+    back to give it back."""
     f = FakeBackend()
     state = f.moratorium_begin("dev", None, mute_others=False)
     assert state["bypass"] is True and state["profile"] is None
     f.moratorium_end()
     assert [e for e in f.log if e[0] == "graph"] == \
-        [("graph", "dev", STRIP), ("graph", "dev", None)]
+        [("graph", MEASURE_KEY, "dev"), ("graph", MEASURE_KEY, STRIP)]
     assert state["restored"] is True
     assert all(e[0] != "volume" for e in f.log)
     assert all(e[0] != "mutes" for e in f.log)
@@ -196,12 +215,12 @@ def test_volume_none_skips_the_dose_and_the_restore():
 def test_queueing_speaks_with_the_callers_voice(capsys):
     f = FakeBackend()
     f.moratorium_begin("dev", None, mute_others=False)
-    f.publish_graph("dev", "LATE")
+    f.set_volume("dev", 0.3)
     err = capsys.readouterr().err
-    assert "queued graph for dev" in err
+    assert "queued volume for dev" in err
     assert "caller:" in err
     f.moratorium_end()
-    assert ("graph", "dev", "LATE") in f.log
+    assert ("volume", "dev", 0.3) in f.log
 
 
 # --- a fader at its far left is a MUTE, not a zero ----------------
@@ -244,7 +263,7 @@ class DeviceKeyed(FakeBackend):
 
     def __init__(self):
         super().__init__()
-        self.server = {"dev#port": "G"}
+        self.server["dev#port"] = "G"
         self.graph_reads = []
 
     def _graph_key(self, sink):
@@ -252,38 +271,39 @@ class DeviceKeyed(FakeBackend):
 
     def _read_graph(self, device):
         self.graph_reads.append(device)
-        value = self.server.get(device)
-        return value, ("metadata" if value is not None else None)
-
-    def _push_graph(self, device, value):
-        self.server[device] = value
-        return super()._push_graph(device, value)
+        return super()._read_graph(device)
 
 
-def test_the_moratorium_strips_the_graph_the_device_wears():
+def test_the_moratorium_names_the_device_and_leaves_its_value_be():
     f = DeviceKeyed()
     state = f.moratorium_begin("dev", 0.074)
     assert state["metadata_key"] == "dev#port"
     assert state["profile"] == "G" and state["bypass"] is True
-    assert ("graph", "dev#port", STRIP) in f.log
-    assert set(f.graph_reads) == {"dev#port"}
+    assert ("graph", MEASURE_KEY, "dev#port") in f.log
+    assert set(f.graph_reads) == {"dev#port", MEASURE_KEY}
     assert ("volume", "dev", 0.074) in f.log        # the knob is the node's
     f.moratorium_end()
-    assert ("graph", "dev#port", "G") in f.log
+    assert ("graph", MEASURE_KEY, STRIP) in f.log
     assert state["restored"] is True
-    assert not [e for e in f.log if e[0] == "graph" and e[1] == "dev"]
+    assert f.server["dev#port"] == "G"
+    assert not [e for e in f.log
+                if e[0] == "graph" and e[1] in ("dev", "dev#port")]
 
 
-def test_a_write_queued_for_the_device_outranks_the_restore():
+def test_a_value_for_the_measured_device_goes_out_at_once():
     """The window publishes under the device key; while a measurement
-    runs that write is queued, and it is the newer wish."""
+    runs, the hook keeps the device bare and plays this value, the
+    newest, once the name goes. Nothing holds it back, and nothing
+    writes over it."""
     f = DeviceKeyed()
     f.moratorium_begin("dev", None)
     f.publish_graph("dev#port", "NEW")
+    assert f.flush(5)
     f.moratorium_end()
     graphs = [e for e in f.log if e[0] == "graph"]
-    assert graphs == [("graph", "dev#port", STRIP),
-                      ("graph", "dev#port", "NEW")]
+    assert graphs == [("graph", MEASURE_KEY, "dev#port"),
+                      ("graph", "dev#port", "NEW"),
+                      ("graph", MEASURE_KEY, STRIP)]
 
 
 # ---- one writer: the newest wish of a device lands, and lands last ---------
@@ -338,25 +358,21 @@ def test_a_wish_made_during_a_whole_pass_goes_out_after_it():
     assert sorted(out[2:]) == [("a", "A2"), ("c", "C")]
 
 
-def test_a_wish_waiting_when_a_measurement_starts_lands_after_it():
-    """Whether the writer gets to it before the strip or the strip comes
-    first, nothing lands on the measured device while it is stripped,
-    and the wish is what it wears afterwards."""
-    f = Gated()
-    f.publish_graph("other", "X")
-    assert f.entered.wait(5)
-    f.publish_graph("dev", "NEW")
-    t = threading.Thread(target=f.moratorium_begin, args=("dev", None),
-                         kwargs={"mute_others": False})
-    t.start()
-    f.gate.set()
-    t.join(5)
-    assert f.moratorium_active
+def test_a_graph_waiting_when_a_measurement_starts_goes_out():
+    """A wish still waiting for its device's turn when a measurement
+    starts lands in that turn, and the measurement writes nothing but
+    the name."""
+    f = FakeBackend()
+    f.WRITE_PACE_S = 0.3
+    f.publish_graph("dev", "OLD")
     assert f.flush(5)
-    assert _graphs(f, "dev")[-1] == ("dev", STRIP)
+    f.publish_graph("dev", "NEW")          # its turn is 0.3 s away
+    f.moratorium_begin("dev", None, mute_others=False)
+    assert f.flush(5)
+    assert _graphs(f, "dev") == [("dev", "OLD"), ("dev", "NEW")]
     f.moratorium_end()
-    assert f.flush(5)
-    assert _graphs(f, "dev")[-1] == ("dev", "NEW")
+    assert _graphs(f, MEASURE_KEY) == [(MEASURE_KEY, "dev"),
+                                       (MEASURE_KEY, STRIP)]
 
 
 def test_flush_answers_at_once_when_nothing_waits():
@@ -492,16 +508,6 @@ def test_a_value_made_again_goes_behind_the_ones_made_since():
     assert f.flush(5)
     assert [w[:2] for w in f.writes] == [("dev", "D0"),
                                          ("@listener", "L1"), ("dev", "D2")]
-
-
-def test_values_queued_behind_a_measurement_keep_their_order():
-    f = FakeBackend()
-    f.moratorium_begin("dev", None, mute_others=False)
-    f.publish_graph("other", "O1")
-    f.publish_graph("@listener", "L1")
-    f.publish_graph("other", "O2")
-    f.moratorium_end()
-    assert _graphs(f)[-2:] == [("@listener", "L1"), ("other", "O2")]
 
 
 # ---- a level is a wish like a graph -----------------------------------------

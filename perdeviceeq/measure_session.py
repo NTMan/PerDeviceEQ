@@ -21,18 +21,18 @@ from tools/measure_run.py, which remains the CLI on top.
 
 Method notes (worth not re-deriving):
 
-- EQ state (Task 4 lesson): the sweep runs with our own profile
-  bypassed on the target sink -- the backend's moratorium deletes that
-  sink's key from the 'per-device-eq' metadata, the same mechanism the
-  app's Bypass switch uses, and the WirePlumber hook flattens the node.
-  The graph string is read from the metadata, or, when the GUI has not
-  published it this session (a cold PipeWire start seeds the hook from
-  persisted state without touching the metadata), from that persisted
-  state. The claim is taken per sweep and released in a finally, so an
-  exception or a cancel restores it too. What was found and from where,
-  that it was bypassed and that it was restored is recorded in
-  `eq_profile_state`; a failed restore is loudly reported with the
-  manual recovery command.
+- EQ state (Task 4 lesson): the sweep runs with every graph off the
+  target device -- the backend's moratorium names the device under
+  '@measure' in the 'per-device-eq' metadata (config.MEASURE_KEY), and
+  the WirePlumber hook keeps it bare until the name goes, then gives it
+  back what the hook holds for it. Nothing is read back to restore, so
+  a cold PipeWire start, which seeds the hook from its own state and
+  leaves the metadata empty, needs nothing either. The claim is taken
+  per sweep and released in a finally, so an exception or a cancel
+  gives the device back too. The value the metadata held for the
+  device, that it was played bare and that it was given back are
+  recorded in `eq_profile_state`; a failed release is loudly reported
+  with the manual recovery command.
 - Foreign streams: anything else playing into the sink during the
   sweep is measured too. By default their presence refuses the run
   with a list; mute_others instead has the moratorium mute them for

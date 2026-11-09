@@ -2755,11 +2755,10 @@ class EqWindow(Adw.ApplicationWindow):
         lands in its desired store and the store pushes the server,
         one door for the whole program. A wish returns at once, so it
         is made right here on the main thread, in the order the window
-        makes them; the authority's writer sends the newest. During a
-        measurement the authority queues it -- last write per key --
-        and applies it once the moratorium lifts; the queueing is
-        logged there with the caller's path. No window gates any code
-        here.
+        makes them; the authority's writer sends the newest. A
+        measurement does not hold it back: the hook keeps the measured
+        device bare, and plays the newest value it was told when the
+        measurement ends. No window gates any code here.
 
         A node that is no device gets nothing under its key
         (_sync_device_state).
