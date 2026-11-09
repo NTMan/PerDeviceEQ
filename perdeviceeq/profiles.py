@@ -19,17 +19,11 @@ import hashlib
 import os, sys, json, uuid
 
 from .config import (SYS_PROFILE_DIRS, USER_PROFILES_DIR, BINDINGS_FILE,
-                     CONFIG_DIR, CLEAN_ID, COMMON_KEY, SCHEMA_VERSION,
-                     STRIP, V3_BLOCKS, load_ui_state, read_state)
-from .eq import device_graph, resolve_slots
-
-
-def common_graph(taste, manual=None):
-    """The common entry (config.COMMON_KEY): what a device with no
-    profile of its own plays -- the listener's taste and preamp, in the
-    form that fits a node of any width. STRIP when that is nothing."""
-    g = device_graph({}, None, taste, manual)
-    return STRIP if g is None else g
+                     CONFIG_DIR, CLEAN_ID, LISTENER_KEY, SCHEMA_VERSION,
+                     V3_BLOCKS, load_ui_state, read_state)
+from .eq import (correction_graph, device_value, gain_graph,
+                 has_correction, listener_value, preamp_db, resolve_slots,
+                 taste_graph)
 from .preferences import PreferenceLayers
 
 
@@ -474,8 +468,8 @@ class ProfileStore:
         # resolve_slots computes it from the profile's channels and the
         # sink's, and it is kept on disk for ONE reader -- the hook, at
         # login, with no sink to ask. A device with no profile gives
-        # that reader nothing to apply (graph_for_node leaves a Clean
-        # or unbound node alone before it ever looks at a map), so a
+        # that reader nothing to apply (device_value answers None for a
+        # Clean or unbound node before it ever looks at a map), so a
         # record holding only a map is residue of having opened the
         # window on that device. Merely selecting an output was enough
         # to mint one, and with a device now being a node AND a hole,
@@ -522,52 +516,70 @@ class ProfileStore:
                   else float(st.get("preamp", 0.0) or 0.0))
         return PreferenceLayers().active_bands(), manual
 
-    def graph_for_node(self, node, listener=None):
-        """What the device plays (eq.device_graph) from the stored profile,
-        the stored map and the listener's layers -- `listener` as
-        (taste, manual) when the caller holds them, else read from disk.
-        None for Clean, for an unbound device, and for one with nothing to
-        play."""
-        pid = self.bindings.get(node)
-        if not pid or pid == CLEAN_ID:
-            return None                      # hook leaves the node alone
-        p = self.profiles.get(pid)
-        if not p:
+    def _layers(self, listener):
+        return listener if listener is not None else self._listener()
+
+    def _correction(self, node, held=None):
+        """(body, slots) of the device's own correction, or None when it
+        has none: Clean, no binding, a profile that is gone, or one with
+        nothing to play. `held` answers instead of the store for the keys
+        it holds, None for no correction: the window's device in view,
+        which may be ahead of the store by an edit not saved yet."""
+        if held and node in held:
+            c = held[node]
+        else:
+            pid = self.bindings.get(node)
+            p = self.profiles.get(pid) if pid and pid != CLEAN_ID else None
+            c = (p, self.slots_for(node)) if p else None
+        return c if c is not None and has_correction(*c) else None
+
+    def device_value(self, node, listener=None, held=None):
+        """What the device's key carries (config.py has the contract): its
+        correction with its preamp, or None when it has no correction of
+        its own and follows the listener. The window asks this for the
+        device in view and the feed for every device -- one answer,
+        whoever writes it. `listener` is (taste, manual) when the caller
+        holds them, else they are read from disk."""
+        c = self._correction(node, held)
+        if c is None:
             return None
-        taste, manual = listener if listener is not None \
-            else self._listener()
-        return device_graph(p, self.slots_for(node), taste, manual)
+        taste, manual = self._layers(listener)
+        body, slots = c
+        return device_value(
+            correction_graph(body, slots),
+            gain_graph(preamp_db(body, slots, taste, manual)))
+
+    def listener_value(self, listener=None, held=None):
+        """The listener record (config.LISTENER_KEY): the taste, and the
+        preamp of every device. In Auto, a device with a correction of its
+        own gets the preamp that clears that correction under the taste,
+        and "*" clears the taste alone for the rest; in Manual "*" is the
+        ride, for all of them."""
+        taste, manual = self._layers(listener)
+        gains = {"*": gain_graph(preamp_db({}, None, taste, manual))}
+        if manual is None:
+            keys = list(self.bindings)
+            keys += [k for k in (held or {}) if k not in self.bindings]
+            for node in keys:
+                c = self._correction(node, held)
+                if c is not None:
+                    gains[node] = gain_graph(
+                        preamp_db(c[0], c[1], taste, None))
+        return listener_value(taste_graph(taste), gains)
 
     def wire_state(self, listener=None):
         """WHAT THE HOOK SHOULD BE HOLDING: {key: value}.
 
-        Pure data -- no publishing here. The common entry is always
-        there (common_graph). A device bound to a profile gets its
-        graph; a device bound to Clean, or one whose profile, taste and
-        preamp leave nothing to play, gets None: no value of its own,
-        so it plays the common entry. The store is the only thing that
-        knows this, and the backend is the only thing that knows how
-        to put it on the wire, so neither does the other's half.
+        Pure data -- no publishing here. The listener record is always
+        there. A device bound to a profile with something to play gets its
+        correction with its preamp; one bound to Clean, or whose profile
+        plays nothing, gets None: it follows the listener. The store is
+        the only thing that knows this, and the backend is the only thing
+        that knows how to put it on the wire, so neither does the other's
+        half.
         """
-        taste, manual = listener if listener is not None \
-            else self._listener()
-        wire = {COMMON_KEY: common_graph(taste, manual)}
-        graphs = self.presets((taste, manual))
-        for node, pid in self.bindings.items():
-            wire[node] = graphs.get(node) if pid and pid != CLEAN_ID \
-                else None
+        listener = self._layers(listener)
+        wire = {LISTENER_KEY: self.listener_value(listener)}
+        for node in self.bindings:
+            wire[node] = self.device_value(node, listener)
         return wire
-
-    def presets(self, listener=None):
-        """{device: graph} for every device bound to a profile that has
-        something to play. Pushed into the metadata by --apply, when the
-        hook is installed, and by the window when the taste or the
-        preamp ride changes."""
-        out = {}
-        for node, pid in self.bindings.items():
-            if not pid or pid == CLEAN_ID:
-                continue
-            g = self.graph_for_node(node, listener)
-            if g is not None:
-                out[node] = g
-        return out

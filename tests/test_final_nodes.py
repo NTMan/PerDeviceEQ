@@ -199,23 +199,32 @@ class _Auth:
 
 
 def test_no_device_gets_nothing_under_its_key():
-    """A taste or preamp edit made while it is in view still reaches
-    every device through the common entry. Its own key is not written,
-    not even by a Bypass left pressed."""
+    """Its own key is not written, not even by a Bypass left pressed.
+    A taste or preamp edit made while it is in view still reaches every
+    device, through the listener's record, with no device in view held
+    for it."""
     auth = _Auth()
-    apply_now = _method(
-        "_apply_now",
-        pw_backend=types.SimpleNamespace(backend=lambda: auth),
-        common_graph=lambda taste, manual: "common(%s)" % taste,
-        COMMON_KEY="@taste", CLEAN_ID="clean", STRIP="", eq=None)
+    backend = types.SimpleNamespace(backend=lambda: auth)
+    apply_now = _method("_apply_now", pw_backend=backend, STRIP="")
     win = types.SimpleNamespace(
         live=True, node=CHAIN, _update_meter=lambda: None,
         _dev=lambda: CHAIN, _is_device=lambda: False,
-        pref_layers=types.SimpleNamespace(active_bands=lambda: "bass"),
-        preamp_auto=True, preamp=0.0, current_pid="mine",
         bypass_row=types.SimpleNamespace(get_active=lambda: True))
     apply_now(win)
-    assert auth.calls == [("publish", "@taste", "common(bass)")]
+    assert auth.calls == []
+    held = _method("_held", CLEAN_ID="clean")
+    win.current_pid = "mine"
+    assert held(win) == {}
+    asked = []
+    publish = _method("_publish_listener", pw_backend=backend,
+                      LISTENER_KEY="@listener")
+    win.store = types.SimpleNamespace(
+        listener_value=lambda layers, h: asked.append(h) or "L")
+    win._listener_layers = lambda: ("bass", None)
+    win._held = lambda: held(win)
+    publish(win)
+    assert auth.calls == [("publish", "@listener", "L")]
+    assert asked == [{}]
 
 
 def test_the_window_binds_through_one_method_that_refuses_no_device():

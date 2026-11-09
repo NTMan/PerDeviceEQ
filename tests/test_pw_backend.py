@@ -68,11 +68,11 @@ def test_graph_publish_and_clear_speak_metadata(rig):
         c[:5] == ["pw-metadata", "-n", "per-device-eq", "0",
                   "test_sink"] and "{ nodes = [] }" in c
         for c in calls)
-    # no value of its own is WRITTEN: a delete of a key the metadata
-    # does not hold is never announced, and after a restart it holds
-    # none of what the hook persisted
+    # no correction of its own is WRITTEN: a delete of a key the
+    # metadata does not hold is never announced, and after a restart it
+    # holds none of what the hook persisted
     assert ["pw-metadata", "-n", "per-device-eq", "0", "test_sink",
-            "@taste"] in calls
+            "@listener"] in calls
     assert not any(c[:1] == ["pw-metadata"] and "-d" in c for c in calls)
 
 
@@ -135,10 +135,10 @@ def test_read_graph_falls_back_to_wpstate(rig, monkeypatch):
     assert b._read_graph("test_sink") == ("LIVE", "metadata")
 
 
-def test_following_the_common_entry_reads_as_no_value_of_its_own(
+def test_following_the_listener_reads_as_no_value_of_its_own(
         rig, monkeypatch):
     b, _ = rig
-    monkeypatch.setattr(pwb, "metadata_get", lambda k: "@taste")
+    monkeypatch.setattr(pwb, "metadata_get", lambda k: "@listener")
     assert b._read_graph("test_sink") == (None, "metadata")
     monkeypatch.setattr(pwb, "metadata_get", lambda k: "")
     assert b._read_graph("test_sink") == ("", "metadata")

@@ -24,7 +24,7 @@ import pytest
 
 from perdeviceeq.pde_audit import DEMO_PROFILE, chain_curve
 from perdeviceeq import level_run
-from perdeviceeq.config import COMMON_KEY, STRIP
+from perdeviceeq.config import LISTENER_KEY, STRIP
 from perdeviceeq import measure_session as ms
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -296,8 +296,8 @@ def test_playback_pinned_when_default_changes(tmp_path):
 # --- no profile bound: nothing to bypass, nothing to restore ---------------
 
 def test_a_sink_with_no_value_of_its_own_is_stripped_too(tmp_path):
-    """It plays the common entry, so it is stripped like any other, and
-    afterwards it follows that entry again."""
+    """It plays the listener's taste and preamp, so it is stripped like
+    any other, and afterwards it follows the listener again."""
     proc, out, state = run_measure(tmp_path, seed_meta=False)
     assert proc.returncode == 0, proc.stderr
     eq = json.loads(out.read_text())["eq_profile_state"]
@@ -307,7 +307,7 @@ def test_a_sink_with_no_value_of_its_own_is_stripped_too(tmp_path):
     assert eq["restored"] is True
     snap = json.loads((state / "meta_at_play_1.json").read_text())
     assert snap.get("test_sink") == STRIP
-    assert meta_now(state) == {"test_sink": COMMON_KEY}
+    assert meta_now(state) == {"test_sink": LISTENER_KEY}
 
 
 # --- persisted-only profile (cold boot, GUI unopened): seed from WpState ----

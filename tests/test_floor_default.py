@@ -60,7 +60,7 @@ def test_the_floor_makes_its_copy_before_it_writes(name):
     fn = _gui()[name]
     fork = _first(fn, "self._fork_for_floor")
     assert fork is not None
-    assert fork < _first(fn, "self.store.save_user")
+    assert fork < _first(fn, "self._save_profile")
 
 
 def test_a_floor_copy_is_a_step_of_the_timeline():
@@ -80,5 +80,5 @@ def test_switching_the_profile_takes_its_floor():
     restore = fns["_restore"]
     took = _first(restore, "self._load_floor")
     assert took is not None
-    assert took < _first(restore, "self.store.save_user",
+    assert took < _first(restore, "self._save_profile",
                          "self._working_body()")

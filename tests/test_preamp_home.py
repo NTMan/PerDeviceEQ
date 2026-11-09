@@ -99,19 +99,25 @@ def test_two_rides_are_the_same_package():
 def test_the_hook_computes_auto_when_no_one_chose(store, tmp_path):
     pid = store.save_user(_profile())
     store.set_binding("sink", pid)
-    assert "gain = -6" in store.graph_for_node("sink")
+    assert "gain = -6" in store.device_value("sink")
+    assert '"sink": { nodes' in store.listener_value()
 
 
 def test_the_hook_obeys_a_manual_ride(store, tmp_path):
     _ui(tmp_path, preamp_auto=False, preamp=-3.0)
     pid = store.save_user(_profile())
     store.set_binding("sink", pid)
-    assert "gain = -3" in store.graph_for_node("sink")
+    assert "gain = -3" in store.device_value("sink")
+    # one ride for every device: the record carries only "*"
+    rec = store.listener_value()
+    assert '"*": { nodes' in rec and "gain = -3" in rec
+    assert '"sink"' not in rec
 
 
 def test_auto_in_the_ui_state_still_computes(store, tmp_path):
     _ui(tmp_path, preamp_auto=True, preamp=-99.0)
     pid = store.save_user(_profile())
     store.set_binding("sink", pid)
-    assert "gain = -6" in store.graph_for_node("sink")
-    assert "-99" not in store.graph_for_node("sink")
+    assert "gain = -6" in store.device_value("sink")
+    assert "-99" not in store.device_value("sink")
+    assert "-99" not in store.listener_value()

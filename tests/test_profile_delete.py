@@ -1,8 +1,8 @@
 """Deleting a profile tells the hook about every device that wore it.
 
-The store drops their bindings, and a device with no binding plays the
-common entry. The hook keeps a device's last value until that key is
-written again, and no later pass writes a key that has no binding, so a
+The store drops their bindings, and a device with no binding follows the
+listener. The hook keeps a device's last value until that key is
+written again, and nothing else writes a key that has no binding, so a
 device not in view went on playing the deleted profile until the window
 was opened on it.
 """
@@ -76,7 +76,7 @@ def test_every_deletion_is_handed_to_the_hook(name):
     assert all(any(d is a for a in handed) for d in deletes)
 
 
-def test_the_unbound_follow_the_common_entry():
+def test_the_unbound_follow_the_listener():
     calls = _calls(_gui()["_publish_unbound"])
     assert "auth.clear_graph" in calls
     assert not any(c.endswith("publish_graph") for c in calls)

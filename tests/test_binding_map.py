@@ -195,8 +195,9 @@ def test_reconciling_an_unchanged_map_writes_nothing(store, tmp_path):
 # ---- what reaches the wire ------------------------------------------------
 
 def test_the_hook_s_graph_is_cut_by_the_stored_map(store):
-    """graph_for_node runs where the sink cannot be asked, so the map is the
-    only thing that knows how wide the node is."""
+    """The feed runs where the sink cannot be asked, so the map is the
+    only thing that knows how wide the node is. (A cut asks for no
+    preamp, so every filters list here is the correction's.)"""
     pid = store.save_user({"name": "Pair",
                            "floor_off": True, "preamp": 0.0,
                            "ch_keys": ["FL", "FR", "FC", "LFE"],
@@ -205,9 +206,10 @@ def test_the_hook_s_graph_is_cut_by_the_stored_map(store):
                                         "FC": {"bands": []},
                                         "LFE": {"bands": []}}})
     store.set_binding(NODE, pid)
-    assert store.graph_for_node(NODE).count("filters") == 4
+    layers = ([], None)
+    assert store.device_value(NODE, layers).count("filters") == 4
     store.set_map(NODE, {"AUX0": "FL", "AUX1": "FR"})
-    g = store.graph_for_node(NODE)
+    g = store.device_value(NODE, layers)
     assert g.count("filters") == 2
     assert g.count("gain = -3") == 2
 
@@ -464,22 +466,27 @@ def test_a_good_state_file_is_read_and_left_alone(tmp_path):
 
 
 def test_the_store_says_what_the_wire_should_hold(tmp_path, monkeypatch):
-    """Pure data: a graph for a device that has one, None for a device
-    with no value of its own, and the common entry always. No
-    publishing in the store."""
+    """Pure data: a value for a device that has a correction, None for a
+    device that follows the listener, and the listener's record always.
+    No publishing in the store."""
     from perdeviceeq import profiles
+    from perdeviceeq.config import LISTENER_KEY
     monkeypatch.setattr(profiles, "BINDINGS_FILE",
                         str(tmp_path / "b.json"), raising=False)
     st = profiles.ProfileStore()
     st.bindings = {"a": "p1", "b": profiles.CLEAN_ID, "c": None}
-    monkeypatch.setattr(st, "presets", lambda listener=None: {"a": "g"})
-    assert st.wire_state() == {profiles.COMMON_KEY: profiles.STRIP,
-                               "a": "g", "b": None, "c": None}
+    monkeypatch.setattr(st, "device_value",
+                        lambda node, listener=None, held=None:
+                        "g" if node == "a" else None)
+    monkeypatch.setattr(st, "listener_value",
+                        lambda listener=None, held=None: "L")
+    assert st.wire_state(([], None)) == {LISTENER_KEY: "L", "a": "g",
+                                         "b": None, "c": None}
 
 
 def test_the_backend_counts_only_what_it_could_send():
     """`total` counts the entries with a value to send -- a device
-    only told to follow the common entry is not counted -- and `sent`
+    only told to follow the listener is not counted -- and `sent`
     counts writes the server took. Neither is evidence the hook
     applied anything."""
     from perdeviceeq.audio_backend import AudioBackend

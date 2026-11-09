@@ -48,18 +48,34 @@ METADATA_NAME  = "per-device-eq"
 # mismatch. Bump it on ANY change to the hook, its contract or its
 # behaviour: the installed copy does not update with the package,
 # and a new number is the only thing that tells an installation
-# its hook is old. 4 is the final-node rule (pw_backend.is_final_node).
-PROTOCOL = "4"
-# The metadata contract, the same in the hook (COMMON and STRIP there,
-# keep them equal). A device's value is its own graph, STRIP for
-# explicitly nothing (Bypass, a measurement in progress), or COMMON_KEY
-# for "no value of its own" -- written, never a deleted key: the metadata
-# announces a delete only for a key it holds, and after a restart it holds
-# none of what the hook keeps. A device with no value of its own plays
-# the entry under COMMON_KEY: the listener's taste and preamp, in the
-# form that fits a node of any width. A device is a final node
+# its hook is old. 4 is the final-node rule (pw_backend.is_final_node);
+# 5 is three graphs on a node: correction, taste and preamp.
+PROTOCOL = "5"
+# The metadata contract, the same in the hook (LISTENER and STRIP there,
+# keep them equal). A node carries three graphs (eq.py, "what a node
+# plays"): 0 the device's correction, 1 the listener's taste, 2 the
+# preamp. A key names a device or the listener.
+#
+# A device's value is one of three:
+#   eq.device_value  its correction (graph 0) with its preamp (graph 2)
+#                    in one write, so the correction never plays with a
+#                    preamp made for another;
+#   STRIP            explicitly nothing, every graph off -- Bypass, or a
+#                    measurement in progress;
+#   LISTENER_KEY     no correction of its own: graph 0 off, and the
+#                    listener's taste and "*" preamp on. Written, never a
+#                    deleted key: the metadata announces a delete only
+#                    for a key it holds, and after a restart it holds
+#                    none of what the hook keeps.
+# The value under LISTENER_KEY is the listener record
+# (eq.listener_value): graph 1, and graph 2 for each device with a
+# correction of its own -- its Auto preamp -- with "*" for every other
+# device and for all of them in Manual. A device plays the preamp that
+# arrived last, in its own value or in the record: each write carries
+# the preamp that is right when it is made (audio_backend writes graph
+# values in the order they were made). A device is a final node
 # (pw_backend.is_final_node); the hook sets nothing on any other.
-COMMON_KEY = "@taste"
+LISTENER_KEY = "@listener"
 STRIP = ""
 # the static hook is shipped next to the package (repo) or system-wide (package)
 HOOK_SRC_CANDIDATES = [os.path.join(_DATA_ROOT, "wireplumber", WP_SCRIPT_NAME),

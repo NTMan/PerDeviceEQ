@@ -313,8 +313,9 @@ def fit_band(profile):
 def composed_chains(profile, taste_bands=None):
     """[(key, preamp, band_dicts)] of the chain the app actually
     plays: the profile's own slots with the active taste layer's
-    bands appended to EVERY chain and the one shared preamp --
-    mirrors eq.profile_graph.
+    bands appended to EVERY chain and the one shared preamp -- what
+    a device's node plays in three graphs (eq.py, "what a node
+    plays"), as one chain per channel.
 
     A profile with no channels still has a chain to export -- the
     preamp and the taste tail are played whatever the correction is

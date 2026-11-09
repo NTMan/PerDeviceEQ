@@ -45,8 +45,9 @@ def cmd_inspect(name):
     return 0
 
 def cmd_apply():
-    """Push every bound device's graph into the 'per-device-eq' metadata; the WP
-    hook applies it. Requires the hook to be installed (run --install-hook once)."""
+    """Push every bound device's value and the listener's record into the
+    'per-device-eq' metadata (ProfileStore.wire_state); the WP hook applies
+    them. Requires the hook to be installed (run --install once)."""
     up, ver = backend().wait_for_hook()
     if not up:
         print("the hook is not listening -- nothing was sent. Wait a "

@@ -19,7 +19,7 @@ Editor state is kept as channel "slots": self.slots maps each channel key to
 {"preamp": float, "bands": [eq.Band]}. self.cur_ch selects which slot the
 single editor (graph + band table + preamp) is currently editing. On save/apply
 the slots are assembled into a profile body and handed to the tested
-profiles.save_user / eq.profile_graph.
+profiles.save_user / ProfileStore.device_value.
 
 Undo/redo is a history of serialized editor snapshots; a new snapshot is pushed
 on each settled (debounced) edit, so a drag of a spin button collapses into one
@@ -42,13 +42,13 @@ from . import (__version__, chantabs, config, debug, eq, level_run,
 
 import numpy as np
 from .picker import NodeMenu
-from .config import (APP_ID, CLEAN_ID, COMMON_KEY, FAVORITES_FILE, STRIP,
+from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE, LISTENER_KEY, STRIP,
                      load_ui_state, save_ui_state,
                      UI_FILE_CANDIDATES, read_state)
 from . import level_strip
 from .peq_view import CollapsibleCard, PeqView
 from .preferences import PreferenceLayers
-from .profiles import ProfileStore, common_graph, editor_body
+from .profiles import ProfileStore, editor_body
 
 DB_MAX = 24.0
 FMIN, FMAX = config.FMIN, config.FMAX
@@ -133,7 +133,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.floor_off = False
         self.floor_hz = None
         self._save_source = 0
-        self._republish_source = 0
+        self._shared = {}           # key -> value _publish_sharers sent
         self._loading = False
         self.sinks = []
         self._born_pending = None   # a fork waiting for its history mark
@@ -2025,7 +2025,7 @@ class EqWindow(Adw.ApplicationWindow):
         else:
             p["floor_off"] = True
         self.floor_off = bool(p.get("floor_off"))
-        self.store.save_user(p)
+        self._save_profile(p)
         self._load_slot(self.cur_ch)
         # the architect's field catch: _load_slot runs its
         # headroom pass INSIDE the loading gate, which mutes
@@ -2050,7 +2050,7 @@ class EqWindow(Adw.ApplicationWindow):
         p["floor_hz"] = float(lo)
         self.floor_hz = p.get("floor_hz")
         if final:
-            self.store.save_user(p)
+            self._save_profile(p)
         # ONLY THE FLOOR MOVED. _load_slot rebuilds the band table --
         # GTK widgets, one row per band -- and the floor changes no
         # bands at all; the clip estimate walks every chain. Doing
@@ -2542,7 +2542,7 @@ class EqWindow(Adw.ApplicationWindow):
         body = dict(p)
         body["channels"] = chans
         body["ch_keys"] = keys + [key]
-        self.store.save_user(body)
+        self._save_profile(body)
 
     def _add_pair(self, value):
         """Pair a sink channel with a profile channel by hand."""
@@ -2734,7 +2734,7 @@ class EqWindow(Adw.ApplicationWindow):
         if self._dev_dirty:
             self._dev_dirty = False
             if self._editable(self.current_pid):
-                self.store.save_user(self._working_body())
+                self._save_profile(self._working_body())
             if not self._restoring:
                 self._push_history(born=self._born_pending)
                 self._born_pending = None
@@ -2746,9 +2746,10 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _apply_now(self):
         """Publish the device's live state to the per-device-eq metadata:
-        its own graph, STRIP under Bypass, or no value of its own -- it
-        then plays the common entry, which a device with no profile
-        publishes here as well.
+        its correction with its preamp, STRIP under Bypass, or no
+        correction of its own -- it follows the listener then. One write,
+        the device's key: what the listener owns, the taste and the
+        preamp ride, goes out in its own record (_publish_listener).
 
         The publish rides the backend authority: the editor's wish
         lands in its desired store and the store pushes the server,
@@ -2760,36 +2761,43 @@ class EqWindow(Adw.ApplicationWindow):
         logged there with the caller's path. No window gates any code
         here.
 
-        A node that is no device gets nothing under its key; a taste
-        or preamp edit made while it is in view still reaches every
-        device through the common entry (_sync_device_state).
+        A node that is no device gets nothing under its key
+        (_sync_device_state).
         """
         self._update_meter()
-        if not self.live or not self.node:
+        if not self.live or not self.node or not self._is_device():
             return
         node = self._dev()
         auth = pw_backend.backend()
-        taste = self.pref_layers.active_bands()
-        manual = None if self.preamp_auto else self.preamp
-        if not self._is_device():
-            common = common_graph(taste, manual)
-            auth.publish_graph(COMMON_KEY, common)
-            return
+        self._shared.pop(node, None)    # the window's own write now
         if self.bypass_row.get_active():
             auth.publish_graph(node, STRIP)
             return
-        if self.current_pid == CLEAN_ID:
-            common = common_graph(taste, manual)
-            auth.publish_graph(COMMON_KEY, common)
-            auth.clear_graph(node)
-            return
-        body = self._working_body()
-        graph = eq.device_graph(body, self._graph_slots(body), taste,
-                                manual)
-        if graph is None:
+        value = self.store.device_value(node, self._listener_layers(),
+                                        self._held())
+        if value is None:
             auth.clear_graph(node)
         else:
-            auth.publish_graph(node, graph)
+            auth.publish_graph(node, value)
+
+    def _listener_layers(self):
+        """(taste, manual): the listener's layers as the window holds
+        them, manual None in Auto (profiles.ProfileStore._listener)."""
+        return (self.pref_layers.active_bands(),
+                None if self.preamp_auto else self.preamp)
+
+    def _held(self):
+        """The device in view as the window holds it, for the store's
+        answers: {key: (body, slots)}, or {key: None} under Clean. The
+        window may be ahead of the store by an edit not saved yet, and
+        what it holds is what the device plays. {} when no device is in
+        view."""
+        if not (self.live and self.node and self._is_device()):
+            return {}
+        if self.current_pid == CLEAN_ID:
+            return {self._dev(): None}
+        body = self._working_body()
+        return {self._dev(): (body, self._graph_slots(body))}
 
     def _graph_slots(self, body):
         """One entry per channel the CARD has: the profile channel that
@@ -2873,10 +2881,10 @@ class EqWindow(Adw.ApplicationWindow):
                                      t.get("active"))
             self._sync_taste_card()
         if self._editable(self.current_pid):
-            self.store.save_user(self._working_body())
+            self._save_profile(self._working_body())
         self._apply_now()
         if self._listener_state() != was:
-            self._save_preamp_state()       # writes the ride, republishes
+            self._save_preamp_state()       # the ride, and the listener record
         self._update_headroom()
         self._canvas_refresh()
 
@@ -3010,7 +3018,7 @@ class EqWindow(Adw.ApplicationWindow):
         else:
             self._ui_state["preamp"] = round(float(self.preamp), 1)
         save_ui_state(self._ui_state)
-        self._listener_changed()
+        self._publish_listener()
 
     def _listener_state(self):
         """What the listener owns rather than the device: the active
@@ -3020,49 +3028,66 @@ class EqWindow(Adw.ApplicationWindow):
                 bool(self.preamp_auto),
                 None if self.preamp_auto else round(float(self.preamp), 1))
 
-    def _listener_changed(self, settled=True):
-        """The taste or the preamp ride changed. Both belong to every
-        device and every device's graph carries them, so every bound
-        device is published again once the edits settle. The device in
-        view is published by the caller at once, as before.
+    def _publish_listener(self):
+        """The taste, the preamp ride or Auto changed. They belong to
+        every device, and one write reaches every one: the listener
+        record (hook protocol 5), with the preamp of every device in it,
+        made on every move of a drag -- every device that is playing
+        hears it as the hand moves. The device in view is in it as the
+        window holds it (_held)."""
+        if not self.live:
+            return
+        value = self.store.listener_value(self._listener_layers(),
+                                          self._held())
+        pw_backend.backend().publish_graph(LISTENER_KEY, value)
 
-        A drag in progress has not settled: it calls off a pass still
-        waiting instead of setting one, and its end sets it. Setting
-        one on every move ran a pass on every pause of the hand longer
-        than the debounce, and the device in view waited for each."""
-        if self._republish_source:
-            GLib.source_remove(self._republish_source)
-            self._republish_source = 0
-        if settled:
-            self._republish_source = GLib.timeout_add(
-                _SAVE_DEBOUNCE_MS, self._republish_others)
+    def _save_profile(self, body):
+        """Save the profile in view, and every other device bound to it
+        plays what was saved (_publish_sharers)."""
+        pid = self.store.save_user(body)
+        self._publish_sharers(pid)
+        return pid
 
-    def _republish_others(self):
-        """The same answer the hook feed gives (wire_state), with the
-        layers this window holds now, for every bound device except the
-        one in view -- the window owns that key and may be ahead of the
-        store by an unsaved edit."""
-        self._republish_source = 0
-        wire = self.store.wire_state(
-            (self.pref_layers.active_bands(),
-             None if self.preamp_auto else self.preamp))
-        if self.live and self.node:
-            wire.pop(self._dev(), None)
+    def _publish_sharers(self, pid):
+        """A saved profile plays on every device bound to it, not only on
+        the one in view: the others get their value from the store, which
+        now holds the edit. The listener record works out their preamp
+        from the store too, so a device left on the old correction would
+        play it with a preamp made for the new one. The device in view is
+        the window's to publish (_apply_now).
+
+        A save that changed nothing a device plays -- a rename, a take
+        landing in a measurement -- writes nothing: a write reloads the
+        device's graphs, and they would be the same."""
+        if not (self.live and pid):
+            return
+        here = self._dev() if self.node and self._is_device() else None
+        keys = [k for k, p in self.store.bindings.items()
+                if p == pid and k != here]
+        layers = self._listener_layers()
         auth = pw_backend.backend()
-        pw_backend.in_thread(lambda: auth.publish_state(wire))
-        return GLib.SOURCE_REMOVE
+        for k in keys:
+            value = self.store.device_value(k, layers)
+            if k in self._shared and self._shared[k] == value:
+                continue
+            self._shared[k] = value
+            if value is None:
+                auth.clear_graph(k)
+            else:
+                auth.publish_graph(k, value)
 
     def _publish_unbound(self, keys):
         """Devices whose profile was just deleted have no binding now
-        and play the common entry, and the hook must hear it now. It
-        keeps a device's value until that key is written again, and no
-        later pass writes a key that has no binding: they would go on
+        and follow the listener, and the hook must hear it now. It
+        keeps a device's value until that key is written again, and
+        nothing else writes a key that has no binding: they would go on
         playing the deleted profile. The device in view is the window's
-        to publish, as in _republish_others."""
+        to publish (_apply_now)."""
         if self.live and self.node:
             keys = [k for k in keys if k != self._dev()]
         auth = pw_backend.backend()
         for k in keys:
+            self._shared.pop(k, None)
             auth.clear_graph(k)
 
     def _set_preamp_auto(self, on, land=False):
@@ -3148,9 +3173,10 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _auto_preamp_db(self):
         """Preamp that zeroes the tier-1 estimate (eq.auto_preamp_db):
-        the max over every chain the published graph carries, so one
-        shared value clears them all -- the number the hook feed
-        computes for this device, from the same body and slots."""
+        the max over every chain of the device's correction with the
+        taste on top, so one shared value clears them all -- the number
+        the feed computes for this device (ProfileStore.device_value),
+        from the same body and slots."""
         body = self._working_body()
         return eq.auto_preamp_db(body, self.pref_layers.active_bands(),
                                  self._graph_slots(body))
@@ -3655,6 +3681,7 @@ class EqWindow(Adw.ApplicationWindow):
             if self.live and self.node:
                 self._load_profile(
                     self.store.binding_for(self._dev()) or CLEAN_ID)
+            self._publish_sharers(getattr(win, "edit_pid", None))
         return False
 
     def _on_create_new(self, _btn):
@@ -3813,10 +3840,12 @@ class EqWindow(Adw.ApplicationWindow):
     # ---- FR graph ----------------------------------------------------------
     # ---- settings: preference EQ layers ---------------------------------
     def _taste_refresh(self):
-        """After any layer change: re-apply, recompute the headroom
-        hints and keep the card in step with the store."""
-        self._apply_now()
-        self._listener_changed()
+        """After any layer change: publish the listener record,
+        recompute the headroom hints and keep the card in step with the
+        store. The device's own value carries no taste: the meter is
+        all of _apply_now a taste needs."""
+        self._update_meter()
+        self._publish_listener()
         self._update_headroom()
         self._sync_taste_card()
 
@@ -3989,8 +4018,8 @@ class EqWindow(Adw.ApplicationWindow):
         if act is None:
             return
         self.pref_layers.upsert(dict(act, bands=bands))
-        self._apply_now()
-        self._listener_changed(final)
+        self._update_meter()
+        self._publish_listener()
         self._schedule_save()        # one global-history entry per
         if final:                    # settled gesture
             self._update_headroom()

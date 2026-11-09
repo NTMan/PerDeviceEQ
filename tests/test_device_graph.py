@@ -1,11 +1,17 @@
-"""What a device plays is one answer, eq.device_graph, and the window and
-the hook feed both ask it.
+"""What a device plays is one answer, and the window and the hook feed
+both ask it: ProfileStore.device_value for a device's key and
+ProfileStore.listener_value for the listener's record (hook protocol 5;
+config.py has the contract).
 
 They used to build the graph separately and disagreed: the feed left the
 taste out and computed Auto without it, Auto in the window skipped the
 sink channels no profile channel feeds although the graph gave them the
 taste, and an empty profile with a preamp was a graph to one and nothing
 to the other.
+
+A node now carries three graphs -- the correction, the taste and the
+preamp -- and a device's key carries its correction with its own
+preamp, so the two never play apart.
 """
 import ast
 import math
@@ -35,42 +41,64 @@ def _peak(bands):
     return eq.curve_max_db(0.0, [eq.Band.from_dict(b) for b in bands])
 
 
-# ---- the common entry -------------------------------------------------------
-
-def test_the_common_entry_is_the_listener_s_layers_in_any_width():
-    g = P.common_graph([BASS], None)
-    assert 'inputs = [ "eq:In 1" ]' in g and 'outputs = [ "eq:Out 1" ]' in g
-    assert "freq = 50, gain = 12" in g
-    assert "gain = -12" in g                     # Auto over the taste alone
-    assert P.common_graph([], None) == P.STRIP
-    assert P.common_graph([], -3.0) != P.STRIP   # a ride with no taste
+def _gui():
+    src = (pathlib.Path(__file__).resolve().parents[1]
+           / "perdeviceeq" / "gui.py").read_text(encoding="utf-8")
+    return {n.name: n for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.FunctionDef)}
 
 
-def test_the_window_publishes_the_contract():
-    """Bypass is explicitly nothing; a device with no profile follows the
-    common entry, which the window publishes with it."""
-    fn = next(n for n in ast.walk(ast.parse(pathlib.Path(
-        eq.__file__).with_name("gui.py").read_text(encoding="utf-8")))
-        if isinstance(n, ast.FunctionDef) and n.name == "_apply_now")
-    pubs = [[ast.unparse(a) for a in c.args] for c in ast.walk(fn)
-            if isinstance(c, ast.Call)
-            and ast.unparse(c.func) == "auth.publish_graph"]
-    assert ["node", "STRIP"] in pubs
-    assert ["COMMON_KEY", "common"] in pubs
+def _calls(fn):
+    return {ast.unparse(n.func) for n in ast.walk(fn)
+            if isinstance(n, ast.Call)}
 
 
-def test_the_window_wishes_in_the_order_it_makes_them():
-    """A wish returns at once, so the window makes it on its own thread.
-    Handed to a thread each, two wishes could be recorded in either
-    order, and the newest would not be the one that lands last."""
-    tree = ast.parse(pathlib.Path(eq.__file__).with_name("gui.py")
-                     .read_text(encoding="utf-8"))
-    for name in ("_apply_now", "_publish_unbound"):
-        fn = next(n for n in ast.walk(tree)
-                  if isinstance(n, ast.FunctionDef) and n.name == name)
-        calls = {ast.unparse(c.func) for c in ast.walk(fn)
-                 if isinstance(c, ast.Call)}
-        assert "pw_backend.in_thread" not in calls
+# ---- three graphs -----------------------------------------------------------
+
+def test_the_correction_is_the_sink_s_width_with_no_preamp():
+    g = eq.correction_graph(_pair(preamp=-6.0), ["FL", "FR", None])
+    assert '"eq:In 3"' in g and '"eq:In 4"' not in g
+    assert g.count("gain = -10") == 2
+    assert "bq_highshelf" not in g
+
+
+def test_the_taste_and_the_preamp_fit_a_node_of_any_width():
+    for g in (eq.taste_graph([BASS]), eq.gain_graph(-3.0)):
+        assert 'inputs = [ "eq:In 1" ]' in g
+        assert 'outputs = [ "eq:Out 1" ]' in g
+    assert "freq = 50, gain = 12" in eq.taste_graph([BASS])
+    assert "bq_highshelf, freq = 0, gain = -3" in eq.gain_graph(-3.0)
+
+
+def test_no_graph_is_none():
+    flat = {"floor_off": True, "ch_keys": [], "channels": {}}
+    assert eq.correction_graph(flat, ["FL", "FR"]) is None
+    assert eq.correction_graph(_pair(channels={
+        "FL": {"bands": [dict(CUT, enabled=False)]}}), ["FL"]) is None
+    assert eq.taste_graph([]) is None
+    assert eq.gain_graph(0.0) is None and eq.gain_graph(-0.0) is None
+
+
+def test_a_floor_alone_is_a_correction():
+    """The floor is protection; a profile that holds nothing else still
+    has it to play."""
+    floored = {"floor_hz": 60.0, "ch_keys": [], "channels": {}}
+    g = eq.correction_graph(floored, ["FL", "FR"])
+    assert g is not None and "bq_highpass" in g
+
+
+def test_the_values_carry_graphs_as_they_are():
+    """A graph is SPA-JSON, so it sits in a value as it is -- the hook
+    takes it back whole (tests/hook_harness.lua) -- and no graph is an
+    empty string."""
+    c, g = eq.correction_graph(_pair(), ["FL", "FR"]), eq.gain_graph(-3.0)
+    assert eq.device_value(c, g) == '{ "eq": %s, "gain": %s }' % (c, g)
+    assert eq.device_value(c, None) == '{ "eq": %s, "gain": "" }' % c
+    t = eq.taste_graph([BASS])
+    assert eq.listener_value(t, {"*": g, "a#[Out] Line1": None}) == \
+        '{ "taste": %s, "gain": { "*": %s, "a#[Out] Line1": "" } }' % (t, g)
+    assert eq.listener_value(None, {"*": None}) == \
+        '{ "taste": "", "gain": { "*": "" } }'
 
 
 # ---- Auto -------------------------------------------------------------------
@@ -118,41 +146,17 @@ def test_auto_from_the_kept_curves_is_the_number_over_the_whole_chain():
         assert eq.auto_preamp_db(p, taste, slots) == want
 
 
-# ---- when there is nothing to play ------------------------------------------
-
-def test_nothing_to_play_is_none():
-    flat = {"floor_off": True, "ch_keys": [], "channels": {}}
-    assert eq.device_graph(flat, ["FL", "FR"], []) is None
-
-
-def test_the_taste_alone_plays():
-    flat = {"floor_off": True, "ch_keys": [], "channels": {}}
-    g = eq.device_graph(flat, ["FL", "FR"], [BASS])
-    assert g is not None and "freq = 50" in g
+def test_the_preamp_is_the_ride_or_auto():
+    p, slots = _pair(channels={"FL": {"bands": [PK]},
+                               "FR": {"bands": [PK]}}), ["FL", "FR"]
+    assert eq.preamp_db(p, slots, [], -2.5) == -2.5
+    assert eq.preamp_db(p, slots, []) == -3.0
+    assert eq.preamp_db(_pair(), slots, []) == 0.0     # a cut asks nothing
+    assert eq.preamp_db({}, None, [BASS]) == \
+        -eq.auto_preamp_db({}, [BASS])                 # the taste alone
 
 
-def test_a_manual_ride_alone_plays():
-    flat = {"floor_off": True, "ch_keys": [], "channels": {}}
-    g = eq.device_graph(flat, ["FL", "FR"], [], manual=-3.0)
-    assert g is not None and "gain = -3" in g
-
-
-def test_a_floor_alone_plays():
-    """The floor is protection; a profile that holds nothing else still
-    has it to play."""
-    floored = {"floor_hz": 60.0, "ch_keys": [], "channels": {}}
-    g = eq.device_graph(floored, ["FL", "FR"], [])
-    assert g is not None and "bq_highpass" in g
-
-
-def test_auto_is_part_of_the_answer():
-    g = eq.device_graph(_pair(channels={"FL": {"bands": [PK]},
-                                        "FR": {"bands": [PK]}}),
-                        ["FL", "FR"], [])
-    assert "gain = -3" in g
-
-
-# ---- the feed asks the same question ----------------------------------------
+# ---- the feed asks the store --------------------------------------------------
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
@@ -167,52 +171,130 @@ def _taste(bands):
     layers.set_active(layers.upsert({"name": "Mine", "bands": bands}))
 
 
-def test_the_feed_carries_the_taste(store):
+def _bound(store, node="sink#port", body=None, cmap=None):
+    pid = store.save_user(body or _pair())
+    store.set_binding(node, pid)
+    store.set_map(node, cmap or {"FL": "FL", "FR": "FR"})
+    return pid
+
+
+def test_a_device_value_is_its_correction_with_its_preamp(store):
+    pid = _bound(store)
+    slots = ["FL", "FR"]
+    want = eq.auto_preamp_db(store.get(pid), [BASS], slots)
+    assert want > 0
+    assert store.device_value("sink#port", ([BASS], None)) == \
+        eq.device_value(eq.correction_graph(store.get(pid), slots),
+                        eq.gain_graph(-want))
+    assert store.device_value("sink#port", ([BASS], -1.5)) == \
+        eq.device_value(eq.correction_graph(store.get(pid), slots),
+                        eq.gain_graph(-1.5))
+
+
+def test_the_feed_reads_the_listener_from_disk(store):
     _taste([BASS])
-    pid = store.save_user(_pair())
-    store.set_binding("sink#port", pid)
-    store.set_map("sink#port", {"FL": "FL", "FR": "FR"})
-    g = store.graph_for_node("sink#port")
-    assert g.count("freq = 50, gain = 12") == 2
-    want = eq.auto_preamp_db(store.get(pid), [BASS],
-                             slots=["FL", "FR"])
-    assert "gain = %g" % -want in g
+    pid = _bound(store)
+    want = eq.auto_preamp_db(store.get(pid), [BASS], ["FL", "FR"])
+    assert "gain = %g" % -want in store.device_value("sink#port")
+    assert eq.taste_graph([BASS]) in store.listener_value()
+
+
+def test_a_device_with_no_correction_follows_the_listener(store):
+    assert store.device_value("nobody#port", ([BASS], None)) is None
+    store.set_binding("clean#port", P.CLEAN_ID)
+    assert store.device_value("clean#port", ([BASS], None)) is None
+    _bound(store, "empty#port", {"name": "Empty", "floor_off": True,
+                                 "ch_keys": ["FL"],
+                                 "channels": {"FL": {"bands": []}}})
+    assert store.device_value("empty#port", ([BASS], -3.0)) is None
+    store.set_binding("gone#port", "no-such-profile")
+    assert store.device_value("gone#port", ([BASS], None)) is None
+
+
+def test_the_listener_record_in_auto_and_in_manual(store):
+    """Auto: a preamp per device with a correction of its own, over that
+    correction and the taste, and "*" over the taste alone. Manual: the
+    ride, once."""
+    pid = _bound(store, body=_pair(channels={"FL": {"bands": [PK]},
+                                              "FR": {"bands": [PK]}}))
+    store.set_binding("clean#port", P.CLEAN_ID)
+    taste = eq.taste_graph([BASS])
+    own = -eq.auto_preamp_db(store.get(pid), [BASS], ["FL", "FR"])
+    star = -eq.auto_preamp_db({}, [BASS])
+    assert store.listener_value(([BASS], None)) == eq.listener_value(
+        taste, {"*": eq.gain_graph(star), "sink#port": eq.gain_graph(own)})
+    assert store.listener_value(([BASS], -4.0)) == eq.listener_value(
+        taste, {"*": eq.gain_graph(-4.0)})
+
+
+def test_the_window_holds_the_device_in_view_ahead_of_the_store(store):
+    """An edit is heard before it is saved: what the window holds
+    answers for its device, in its value and in the record."""
+    _bound(store)
+    ahead = _pair(channels={"FL": {"bands": [PK]}, "FR": {"bands": [PK]}})
+    held = {"sink#port": (ahead, ["FL", "FR"])}
+    assert store.device_value("sink#port", ([], None), held) == \
+        eq.device_value(eq.correction_graph(ahead, ["FL", "FR"]),
+                        eq.gain_graph(-3.0))
+    assert eq.gain_graph(-3.0) in store.listener_value(([], None), held)
+    held = {"sink#port": None}                   # Clean in the window
+    assert store.device_value("sink#port", ([], None), held) is None
+    assert '"sink#port"' not in store.listener_value(([BASS], None), held)
+    # bound in the window only: still a device of the record
+    held = {"new#port": (ahead, ["FL", "FR"])}
+    assert '"new#port"' in store.listener_value(([], None), held)
 
 
 def test_the_feed_and_the_window_call_give_one_string(store):
-    """The window calls device_graph with what is on screen; given the
-    stored profile, the stored map and the same layers it must be the
-    feed's string byte for byte."""
-    _taste([BASS])
-    pid = store.save_user(_pair())
-    store.set_binding("sink#port", pid)
-    store.set_map("sink#port", {"FL": "FL", "FR": "FR", "RL": None})
-    window = eq.device_graph(store.get(pid), ["FL", "FR", None], [BASS])
-    assert store.graph_for_node("sink#port") == window
+    """The window asks with what is on screen; given the stored profile,
+    the stored map and the same layers it must be the feed's string byte
+    for byte."""
+    pid = _bound(store, cmap={"FL": "FL", "FR": "FR", "RL": None})
+    layers = ([BASS], None)
+    window = store.device_value(
+        "sink#port", layers,
+        {"sink#port": (store.get(pid), ["FL", "FR", None])})
+    assert store.device_value("sink#port", layers) == window
+    assert store.wire_state(layers)["sink#port"] == window
 
 
-def test_a_bound_empty_profile_plays_the_taste_after_install(store):
-    _taste([BASS])
-    pid = store.save_user({"name": "Empty", "floor_off": True,
-                           "ch_keys": ["FL"],
-                           "channels": {"FL": {"bands": []}}})
-    store.set_binding("sink#port", pid)
-    assert store.wire_state()["sink#port"] is not None
+def test_the_wire_holds_the_listener_and_every_binding(store):
+    from perdeviceeq.config import LISTENER_KEY
+    _bound(store)
+    _bound(store, "empty#port", {"name": "Empty", "floor_off": True,
+                                 "ch_keys": ["FL"],
+                                 "channels": {"FL": {"bands": []}}})
+    wire = store.wire_state(([BASS], None))
+    assert set(wire) == {LISTENER_KEY, "sink#port", "empty#port"}
+    assert wire[LISTENER_KEY] == store.listener_value(([BASS], None))
+    assert wire["empty#port"] is None      # plays the taste: it follows
 
 
 # ---- the window has no second door ------------------------------------------
 
-def test_the_window_publishes_through_the_shared_answer():
-    """The divergence came from two places building a graph. The window's
-    publish asks device_graph and builds nothing of its own."""
-    src = (pathlib.Path(__file__).resolve().parents[1]
-           / "perdeviceeq" / "gui.py").read_text(encoding="utf-8")
-    fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "_apply_now")
-    calls = {ast.unparse(n.func) for n in ast.walk(fn)
-             if isinstance(n, ast.Call)}
-    assert "eq.device_graph" in calls
-    assert not any(c.endswith("profile_graph") for c in calls)
+def test_the_window_publishes_the_contract():
+    """Bypass is explicitly nothing; any other state is the store's
+    answer, with the device in view as the window holds it."""
+    fn = _gui()["_apply_now"]
+    pubs = [[ast.unparse(a) for a in c.args] for c in ast.walk(fn)
+            if isinstance(c, ast.Call)
+            and ast.unparse(c.func) == "auth.publish_graph"]
+    assert ["node", "STRIP"] in pubs
+    assert ["node", "value"] in pubs
+    calls = _calls(fn)
+    assert "self.store.device_value" in calls
+    assert "self._held" in calls
+    assert not any(c.startswith("eq.") for c in calls)
+
+
+def test_the_window_wishes_in_the_order_it_makes_them():
+    """A wish returns at once, so the window makes it on its own thread.
+    Handed to a thread each, two wishes could be recorded in either
+    order, and the newest would not be the one that lands last."""
+    fns = _gui()
+    for name in ("_apply_now", "_publish_listener", "_publish_sharers",
+                 "_publish_unbound"):
+        assert "pw_backend.in_thread" not in _calls(fns[name])
 
 
 def test_an_edit_is_heard_when_it_is_made():
@@ -220,10 +302,7 @@ def test_an_edit_is_heard_when_it_is_made():
     was heard only after 200 ms of stillness: a slow drag of a band stayed
     silent until the hand stopped. The edit publishes, once the siblings
     hold the slot; the save keeps the disk and the timeline."""
-    src = (pathlib.Path(__file__).resolve().parents[1]
-           / "perdeviceeq" / "gui.py").read_text(encoding="utf-8")
-    fns = {n.name: n for n in ast.walk(ast.parse(src))
-           if isinstance(n, ast.FunctionDef)}
+    fns = _gui()
 
     def lines(fn, name):
         return [c.lineno for c in ast.walk(fns[fn])

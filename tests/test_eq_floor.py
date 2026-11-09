@@ -3,6 +3,7 @@ down and the trust zone lost its protection authority -- the
 floor answers only to the hand. Pure, GTK-free: the LR8
 arithmetic and the seal."""
 
+import math
 import sys
 import os
 
@@ -121,10 +122,16 @@ def test_the_graph_wears_the_floor_sealed():
 
 
 def test_taste_rides_behind_the_floor():
+    """The floor is in the correction, graph 0, and the taste is graph 1:
+    on the node one runs after the other, so the floor still takes what
+    the taste raises below it, and Auto counts the two together."""
     taste = [{"type": "PK", "freq": 60.0, "gain": 4.0, "q": 1.0}]
-    g = eq.profile_graph(_floored(), extra=taste)
-    assert g.count("bq_highpass") == 4
-    assert "freq = 60" in g
+    assert eq.correction_graph(_floored()).count("bq_highpass") == 4
+    assert "freq = 60" in eq.taste_graph(taste)
+    both = [eq.Band.from_dict(b)
+            for b in eq.floor_bands(_floored()) + taste]
+    peak = math.ceil(eq.curve_max_db(0.0, both) * 10.0 - 1e-9) / 10.0
+    assert eq.auto_preamp_db(_floored(), taste) == peak
 
 
 def test_cutting_the_floor_higher_allows_more_volume_not_less():

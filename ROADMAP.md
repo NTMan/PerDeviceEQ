@@ -79,15 +79,18 @@ listener, headroom that never lies.
 
 ## WIP
 
+- The next release, in main since 5.2.0:
+  - The correction, the taste and the preamp are separate filter graphs
+    on a node (hook protocol 5): a change of the taste or the preamp is
+    one write, and every device that is playing hears it as the hand
+    moves. A device's preamp travels with its correction.
+  - A saved profile plays on every device bound to it.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a
   place for the sub: a room notch of about 20 dB at 40-41 Hz.
 
 ## Planned
 
-- Hook protocol 5: correction, taste and preamp as separate filter
-  graphs on a node, so a taste change is one write and every playing
-  device hears it at once; a device's preamp travels with its biquads.
 - One undo step per drag.
 - Find why one graph write of a pass went missing (Nov 7).
 - Level passport, to decide: the first sweep of a search; the mirror

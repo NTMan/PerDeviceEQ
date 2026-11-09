@@ -2,9 +2,11 @@
 
 A profile keeps channels the sink does not have -- save_user never strips a
 stored channel -- and param_eq silently refuses a config naming more
-channels than the node carries, taking the whole chain with it, taste
-included. Two pieces: resolve_slots answers which profile channel feeds
-each sink channel, profile_graph builds exactly that.
+channels than the node carries, taking the whole chain with it. Two
+pieces: resolve_slots answers which profile channel feeds each sink
+channel, profile_graph builds exactly that. The taste and the preamp are
+graphs of their own, one channel wide, which audioconvert runs on every
+channel of the node.
 """
 from perdeviceeq import eq
 
@@ -72,23 +74,24 @@ def test_graph_follows_the_sink_not_the_profile():
 
 
 def test_a_slot_with_no_profile_channel_still_gets_a_chain():
-    """Silence is not an option: an unfed sink channel carries the tail --
-    floor and taste -- like every other, or the composition would be
-    lopsided between channels."""
-    g = eq.profile_graph(_wide(), extra=[LSC],
-                         slots=["FL", "FR", None, None])
+    """Silence is not an option: an unfed sink channel carries the floor
+    like every other, or the composition would be lopsided between
+    channels. The taste is its own graph and reaches all of them."""
+    p = dict(_wide(), floor_off=False, floor_hz=40.0)
+    g = eq.correction_graph(p, slots=["FL", "FR", None, None])
     assert _sets(g) == 4
-    assert g.count("freq = 50") == 4                 # taste on all four
+    assert g.count("bq_highpass") == 16              # the floor on all four
     assert g.count("gain = -3") == 2                 # correction on two
 
 
-def test_taste_survives_a_narrow_sink():
+def test_the_correction_survives_a_narrow_sink():
     """The regression that cost an evening: a twenty-key profile on a
     two-channel node published a graph param_eq would not build, so the
     node played dry and the taste layer vanished with the correction."""
-    g = eq.profile_graph(_wide(), extra=[LSC], slots=["FL", "FR"])
+    g = eq.correction_graph(_wide(), slots=["FL", "FR"])
     assert _sets(g) == 2
-    assert g.count("freq = 50") == 2
+    assert g.count("gain = -3") == 2
+    assert "bq_highshelf" not in g                   # the preamp is graph 2
 
 
 def test_the_same_side_may_feed_several_routes():
@@ -167,11 +170,14 @@ def test_the_names_belong_to_the_graph_not_to_its_node():
 
 
 def test_a_published_graph_on_a_mono_sink_is_one_channel_wide():
-    """The case this exists for, through the call the publishers use."""
-    g = eq.profile_graph(_wide(), extra=[LSC], slots=[None])
-    assert 'inputs = [ "eq:In 1" ]' in g
-    assert 'outputs = [ "eq:Out 1" ]' in g
-    assert _sets(g) == 1
+    """The case this exists for, through the calls the publishers use:
+    the correction at the sink's width, the taste and the preamp at
+    one channel everywhere."""
+    for g in (eq.correction_graph(_wide(), slots=["FL"]),
+              eq.taste_graph([LSC]), eq.gain_graph(-6.0)):
+        assert 'inputs = [ "eq:In 1" ]' in g
+        assert 'outputs = [ "eq:Out 1" ]' in g
+        assert '"eq:In 2"' not in g
 
 
 def test_eight_chains_are_all_named():

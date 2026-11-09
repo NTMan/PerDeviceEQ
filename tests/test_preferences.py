@@ -1,7 +1,8 @@
 """User preference layers (perdeviceeq/preferences.py): the taste EQ
-store and its composition into profile graphs. A layer is playback-
-side taste, device-independent, appended after EVERY chain of the
-active profile -- and it never touches the profile itself.
+store and the graph it plays. A layer is playback-side taste,
+device-independent, played on EVERY channel of every device as a graph
+of its own (hook protocol 5) -- and it never touches the profile
+itself.
 """
 from perdeviceeq import eq, preferences
 
@@ -43,34 +44,34 @@ def test_deleting_the_active_layer_turns_it_off(tmp_path):
     assert st3.active() is None and st3.layers == []
 
 
-def test_layer_composes_after_every_chain():
-    prof = {"preamp": -3.0,
+def test_the_layer_is_one_graph_for_every_channel():
+    """One port pair, which audioconvert runs on each channel of the
+    node: the taste reaches every chain of any device, and the device's
+    own graph does not carry it."""
+    g = eq.taste_graph([LSC50])
+    assert g.count("freq = 50") == 1
+    assert 'inputs = [ "eq:In 1" ]' in g
+    assert 'outputs = [ "eq:Out 1" ]' in g
+    prof = {"preamp": -3.0, "floor_off": True,
             "ch_keys": ["FL", "FR"],
             "channels": {
                 "FL": {"bands": [{"type": "PK", "freq": 200,
                                   "gain": -2.0, "q": 1.0,
                                   "enabled": True}]},
                 "FR": {"bands": []}}}
-    g = eq.profile_graph(prof, extra=[LSC50])
-    assert g.count("freq = 50") == 2            # one per channel
-    assert g.count("freq = 200") == 1           # the profile's own
-    flat = {"preamp": 0.0, "ch_keys": [], "channels": {}}
-    g = eq.profile_graph(flat, extra=[LSC50])
-    assert g.count("freq = 50") == 1            # taste over Clean
-    # no layer: byte-identical to the plain call
-    assert eq.profile_graph(prof, extra=[]) == eq.profile_graph(prof)
+    c = eq.correction_graph(prof, ["FL", "FR"])
+    assert "freq = 50" not in c
+    assert c.count("freq = 200") == 1           # the profile's own
 
 
 def test_disabled_layer_bands_stay_out_of_the_graph():
     off = dict(LSC50, enabled=False)
-    flat = {"preamp": 0.0, "ch_keys": [], "channels": {}}
-    assert "freq = 50" not in eq.profile_graph(flat, extra=[off])
+    pk = {"type": "PK", "freq": 300, "gain": 2.0, "q": 1.0}
+    assert "freq = 50" not in eq.taste_graph([off, pk])
 
 
-def test_a_layer_with_every_band_off_gives_a_flat_device_nothing():
-    """What the old content check decided, asked of the one answer now:
-    a disabled band is not a reason to publish a graph."""
-    flat = {"floor_off": True, "ch_keys": [], "channels": {}}
+def test_a_layer_with_every_band_off_is_no_graph():
+    """A disabled band is not a reason to publish a graph."""
     off = dict(LSC50, enabled=False)
-    assert eq.device_graph(flat, ["FL", "FR"], [off]) is None
-    assert eq.device_graph(flat, ["FL", "FR"], [LSC50]) is not None
+    assert eq.taste_graph([off]) is None
+    assert eq.taste_graph([]) is None

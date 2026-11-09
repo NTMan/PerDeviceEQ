@@ -126,13 +126,14 @@ systemctl --user restart wireplumber
 
 The app hands the hook its EQs through PipeWire metadata, and an update
 can change that exchange or the hook itself -- 5.1.0 changed the
-exchange (hook protocol 3), and 5.2.0 changed which outputs the hook
-serves (protocol 4). Every change to the hook comes with a new
-protocol number. The installed hook is a copy and does not update with
-the package. Until it is replaced, the window's banner reads *The hook
-speaks protocol 3, this app speaks 4*; its **Retry** button installs the
-hook that came with the update and hands it every device's EQ, the same
-as `per-device-eq --install`. Installing restarts WirePlumber once, and a
+exchange (hook protocol 3), 5.2.0 changed which outputs the hook serves
+(protocol 4), and the next release sets the correction, the taste and
+the preamp as separate graphs (protocol 5). Every change to the hook
+comes with a new protocol number. The installed hook is a copy and does
+not update with the package. Until it is replaced, the window's banner
+reads *The hook speaks protocol 4, this app speaks 5*; its **Retry**
+button installs the hook that came with the update and hands it every
+device's EQ, the same as `per-device-eq --install`. Installing restarts WirePlumber once, and a
 Bluetooth headset playing at that moment drops; reconnect it if it does
 not come back by itself.
 
@@ -457,7 +458,7 @@ reaches all of them at once.
 ./per-device-eq.py --list-sources    # list capture sources
 ./per-device-eq.py --list-profiles   # list profiles and their device bindings
 ./per-device-eq.py --inspect NAME    # dump a sink's params (node.name)
-./per-device-eq.py --apply           # send every bound device's EQ, and the taste for the rest, to the hook now
+./per-device-eq.py --apply           # send every bound device's correction, the taste and the preamps to the hook now
 ./per-device-eq.py --install         # install the hook + desktop integration
 ./per-device-eq.py --uninstall       # remove the hook + desktop integration
 ./per-device-eq.py --bridge A B      # the measured delta between two profiles of one device on two rigs
@@ -479,7 +480,7 @@ text, to check B against.
 | `~/.config/per-device-eq/mic-profiles.json`                      | measurement microphones: the source and jack they match, each capture channel's calibration and working point |
 | `~/.config/per-device-eq/measure-state.json`                     | per output: the last microphone used and the last level that measured it well |
 | `~/.local/share/wireplumber/scripts/90-per-device-eq.lua`        | the persistence hook (a static script, installed verbatim from the repo) |
-| `~/.local/state/wireplumber/per-device-eq`                       | the hook's table, written by the hook: each device's own graph or an explicit nothing, and the taste entry `@taste` that plays on the rest; read at startup only if it carries the hook's protocol |
+| `~/.local/state/wireplumber/per-device-eq`                       | the hook's table, written by the hook: each device's correction with the preamp it plays, or an explicit nothing, and the listener's record `@listener`, the taste and the preamps; read at startup only if it carries the hook's protocol |
 | `~/.config/wireplumber/wireplumber.conf.d/90-per-device-eq.conf` | loads the hook and creates the `per-device-eq` metadata object           |
 | `~/.config/per-device-eq/export-targets/*.json`                  | your own export targets (see below); never created by the app, read if a hand makes it |
 | `profiles/clean.json`, `/usr/share/per-device-eq/profiles/`      | built-in / system profiles                                               |

@@ -6,7 +6,7 @@ REW/AutoEQ text import/export.
 Pure computation -- no GTK, no subprocess, no filesystem.
 """
 
-import functools, math, cmath, re
+import functools, json, math, cmath, re
 
 try:
     import numpy as _np
@@ -245,11 +245,10 @@ def auto_preamp_db(p, taste=None, slots=None):
     Rounded UP to the 0.1 dB step the spin can express, so the result lands
     at or below 0 dBFS.
 
-    The chains are the device's own, the ones the graph carries without
-    the taste (_chains). With `slots` that is one per sink channel, and a
-    channel no profile channel feeds still carries the floor and the
-    taste: leaving it out let such a channel rise above 0 dB while the
-    preamp was set for the others.
+    The chains are the ones the correction graph carries (_chains). With
+    `slots` that is one per sink channel, and a channel no profile channel
+    feeds still carries the floor and the taste: leaving it out let such a
+    channel rise above 0 dB while the preamp was set for the others.
 
     The number is curve_max_db's over each chain with the taste appended:
     the same grid and the same band centres, read from the curves kept per
@@ -262,7 +261,7 @@ def auto_preamp_db(p, taste=None, slots=None):
     that had been opened -- a derived number kept in the wrong house.
     """
     t = _curve_of(taste)
-    peaks = [_peak(_curve_of(c), t) for c in _chains(p, None, slots)]
+    peaks = [_peak(_curve_of(c), t) for c in _chains(p, slots)]
     return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
 
@@ -384,13 +383,9 @@ def sibling_tabs(ch, ch_map, keys):
             if k != ch and (m.get(k) or k) == tgt]
 
 
-def profile_graph(p, extra=None, slots=None):
+def profile_graph(p, slots=None):
     """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
-    the channels carry bands only. `extra` is a list
-    of preference-layer band dicts appended after EVERY chain -- taste
-    composed over correction, whatever the profile's channel layout; the
-    shared preamp stays the profile's own, and headroom over the
-    composition is the caller's job (curve_max_db on the concatenation).
+    the channels carry bands only, the floor after each.
 
     `slots` is the resolved answer from resolve_slots: one entry per SINK
     channel, a profile channel name or None. Given it, the graph is that
@@ -399,30 +394,28 @@ def profile_graph(p, extra=None, slots=None):
     channel, so a pair measured on one card keeps its keys after a visit
     to another -- but param_eq is handed a fixed channel count and refuses
     a config naming more, and it refuses in silence, taking the whole
-    chain with it, taste included. Cutting to the sink's width happens
-    here, at the one call that knows both sides.
+    chain with it. Cutting to the sink's width happens here, at the one
+    call that knows both sides.
     """
     g = float(p.get("preamp", 0.0))
     chans = p.get("channels") or {}
     if not (slots or p.get("ch_keys") or chans):
-        return build_graph(g, [Band.from_dict(b) for b in
-                               floor_bands(p) + list(extra or [])])
+        return build_graph(g, [Band.from_dict(b) for b in floor_bands(p)])
     return build_graph_channels(
-        [(g, [Band.from_dict(b) for b in c])
-         for c in _chains(p, extra, slots)])
+        [(g, [Band.from_dict(b) for b in c]) for c in _chains(p, slots)])
 
 
-def _chains(p, extra=None, slots=None):
-    """The band lists a graph built from `p` carries, one per chain, in
-    the order profile_graph emits them.
+def _chains(p, slots=None):
+    """The band lists a correction graph built from `p` carries, one per
+    chain, in the order profile_graph emits them.
 
     For each slot -- or each profile channel, when there are no slots --
     the bands of the profile channel it names, none for a slot no profile
-    channel feeds, then the floor and `extra`. With no channel at all
-    there is one chain of floor and `extra`: the shared form. Never more
-    than PARAM_EQ_PORTS, which is all one param_eq carries.
+    channel feeds, then the floor. With no channel at all there is one
+    chain of the floor: the shared form. Never more than PARAM_EQ_PORTS,
+    which is all one param_eq carries.
     """
-    tail = floor_bands(p) + list(extra or [])
+    tail = floor_bands(p)
     chans = p.get("channels") or {}
     keys = list(slots) if slots else (p.get("ch_keys") or list(chans.keys()))
     if not keys:
@@ -431,29 +424,93 @@ def _chains(p, extra=None, slots=None):
             for k in keys][:PARAM_EQ_PORTS]
 
 
-def device_graph(p, slots, taste, manual=None):
-    """What a device plays: the one answer the window and the hook feed
-    share, so a device's graph does not depend on which of them wrote it.
+# ---- what a node plays: three graphs (hook protocol 5) ----------------------
+# A device's node carries up to three filter graphs, one per number of
+# audioconvert.filter-graph.N, run one after another. Each is linear and
+# runs in floating point, so their order changes nothing that is heard
+# and nothing clips between them.
+#
+#   0  the device's correction: the profile's bands and the floor, one
+#      chain per sink channel (correction_graph);
+#   1  the listener's taste (taste_graph);
+#   2  the preamp, a flat gain (gain_graph).
+#
+# The taste and the preamp name ONE port pair, and audioconvert runs a
+# copy of such a graph for each channel of the node -- it hands every
+# graph its channel count from PipeWire 1.6.0 (filter-graph.n_inputs) --
+# so one string fits a node of any width. The correction names one pair
+# per sink channel (_port_names). An absent graph is None here and an
+# empty string on the wire, which removes it (config.STRIP).
 
-    `p` is the profile body, `slots` one entry per sink channel (a profile
-    channel or None), `taste` the active taste layer's bands, `manual` the
-    preamp the user rides -- None for Auto, which is then computed over
-    the chains this graph carries, the taste included.
-
-    None when there is nothing to play: no enabled band in any chain, the
-    floor and the taste counted, and a preamp of zero. The caller clears
-    the device's key then.
-    """
-    if manual is None:
-        t = auto_preamp_db(p, taste, slots)
-        pre = -t if t else 0.0
-    else:
-        pre = float(manual)
-    plays = any(b.get("enabled", True)
-                for c in _chains(p, taste, slots) for b in c)
-    if not plays and abs(pre) < 1e-9:
+def correction_graph(p, slots=None):
+    """Graph 0: what the device's own correction plays, at the sink's width
+    and with no preamp -- that is graph 2, and it follows the listener's
+    mode. None when no chain has an enabled band, the floor counted: the
+    device has no correction of its own then, and follows the listener."""
+    if not has_correction(p, slots):
         return None
-    return profile_graph(dict(p, preamp=pre), extra=taste, slots=slots)
+    return profile_graph(dict(p, preamp=0.0), slots=slots)
+
+
+def has_correction(p, slots=None):
+    """Whether `p` plays anything of its own on these slots: an enabled
+    band in some chain, the floor counted."""
+    return any(b.get("enabled", True) for c in _chains(p, slots) for b in c)
+
+
+def taste_graph(taste):
+    """Graph 1: the listener's taste, one channel wide. None when it has no
+    enabled band."""
+    bands = [Band.from_dict(b) for b in (taste or [])]
+    if not any(b.enabled for b in bands):
+        return None
+    return build_graph(0.0, bands)
+
+
+def gain_graph(db):
+    """Graph 2: the preamp, as build_graph emits it (a high shelf at 0 Hz,
+    which is a flat gain), one channel wide. None at 0 dB."""
+    if abs(db) < 1e-9:
+        return None
+    return build_graph(float(db), [])
+
+
+def preamp_db(p, slots, taste, manual=None):
+    """The preamp a device plays: the hand's ride, or in Auto (`manual`
+    None) the one that clears its correction under the taste. A device
+    with no correction of its own plays the taste alone: p {}."""
+    if manual is not None:
+        return float(manual)
+    t = auto_preamp_db(p, taste, slots)
+    return -t if t else 0.0
+
+
+def _wire_graph(g):
+    """A graph inside a value: the graph text is SPA-JSON already, so it
+    goes in as it is -- an object the hook takes back verbatim -- and no
+    graph is an empty string."""
+    return g if g else '""'
+
+
+def device_value(eq_graph, gain_graph):
+    """A device key's value when it has a correction of its own: graph 0
+    and graph 2 in one value, so the correction never plays with another
+    preamp than its own -- one metadata key is one write, and the hook
+    sets what one write says in one call. config.py has the contract."""
+    return '{ "eq": %s, "gain": %s }' % (_wire_graph(eq_graph),
+                                        _wire_graph(gain_graph))
+
+
+def listener_value(taste_graph, gains):
+    """The listener record (config.LISTENER_KEY): graph 1 and every
+    device's graph 2, "*" for each device with no entry of its own --
+    every one in Manual, where the ride is one for all. A taste change
+    is this one write, whatever the number of devices."""
+    entries = ", ".join("%s: %s" % (json.dumps(k, ensure_ascii=False),
+                                    _wire_graph(g))
+                        for k, g in gains.items())
+    return '{ "taste": %s, "gain": { %s } }' % (_wire_graph(taste_graph),
+                                               entries)
 
 
 # ---- biquad frequency response: FR plot + tier-1 headroom estimate ---------

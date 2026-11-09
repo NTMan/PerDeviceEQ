@@ -171,8 +171,8 @@ def test_seed_restores_what_the_server_had():
 
 
 def test_a_device_with_no_value_of_its_own_is_stripped_too():
-    """It plays the common entry, so there is a graph on it to strip;
-    the restore puts it back to following that entry."""
+    """It plays the listener's taste and preamp, so there are graphs on
+    it to strip; the restore puts it back to following the listener."""
     f = FakeBackend()
     state = f.moratorium_begin("dev", None, mute_others=False)
     assert state["bypass"] is True and state["profile"] is None
@@ -441,6 +441,67 @@ def test_a_turn_counts_from_a_write_the_whole_pass_made():
     assert f.flush(5)
     assert [w[1] for w in f.writes] == ["P", "W"]
     assert _gaps(f.writes, "dev")[0] >= f.WRITE_PACE_S
+
+
+# ---- graph values land in the order they were made -------------------------
+
+class GatedOne(FakeBackend):
+    """A server whose write for one key waits for the test."""
+
+    def __init__(self, held):
+        super().__init__()
+        self.held = held
+        self.gate = threading.Event()
+        self.entered = threading.Event()
+
+    def _push_graph(self, device, value):
+        if device == self.held:
+            self.entered.set()
+            self.gate.wait(5)
+        return super()._push_graph(device, value)
+
+
+def test_a_record_made_after_a_device_value_lands_after_it():
+    """A device's preamp travels in its own value and in the listener's
+    record, and the hook plays the one that arrives last. Both were made
+    while another write was in flight, the device's just after its last
+    write: taken by turn, the record went first and the device value,
+    made before it, landed last."""
+    f = GatedOne("x")
+    f.publish_graph("dev", "D0")
+    assert f.flush(5)
+    f.publish_graph("x", "X")
+    assert f.entered.wait(5)
+    f.publish_graph("dev", "D1")          # its turn: 50 ms after D0
+    f.publish_graph("@listener", "L1")    # its turn: now
+    f.gate.set()
+    assert f.flush(5)
+    assert _graphs(f) == [("dev", "D0"), ("x", "X"), ("dev", "D1"),
+                          ("@listener", "L1")]
+
+
+def test_a_value_made_again_goes_behind_the_ones_made_since():
+    """The order is the last wish's: the device value made after the
+    record carries what the record did not know yet."""
+    f = Timed()
+    f.publish_graph("dev", "D0")
+    assert f.flush(5)
+    f.publish_graph("dev", "D1")
+    f.publish_graph("@listener", "L1")
+    f.publish_graph("dev", "D2")
+    assert f.flush(5)
+    assert [w[:2] for w in f.writes] == [("dev", "D0"),
+                                         ("@listener", "L1"), ("dev", "D2")]
+
+
+def test_values_queued_behind_a_measurement_keep_their_order():
+    f = FakeBackend()
+    f.moratorium_begin("dev", None, mute_others=False)
+    f.publish_graph("other", "O1")
+    f.publish_graph("@listener", "L1")
+    f.publish_graph("other", "O2")
+    f.moratorium_end()
+    assert _graphs(f)[-2:] == [("@listener", "L1"), ("other", "O2")]
 
 
 # ---- a level is a wish like a graph -----------------------------------------

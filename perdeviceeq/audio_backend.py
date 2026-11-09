@@ -39,8 +39,10 @@ publish_graph, clear_graph and set_volume record the wish and return
 at once; one writer thread puts the newest wish of each device on the
 server, one write at a time and a device no sooner than WRITE_PACE_S
 after its last write of that kind, so the last wish always lands
-last however fast they come. A whole wire state and the moratorium
-still write before they return. flush() waits for the writer.
+last however fast they come. Graph values go out in the order they
+were last wished, whatever their keys (_next_turn). A whole wire
+state and the moratorium still write before they return. flush()
+waits for the writer.
 
 No GTK, no windows, no knowledge of who calls: the presence of a
 measure window must never gate code anywhere else.
@@ -121,6 +123,8 @@ class AudioBackend(ABC):
         return sink
 
     def _queue(self, kind, device, value):
+        # in the order last wished, as the writer takes them
+        self._pending.pop((kind, device), None)
         self._pending[(kind, device)] = value
         names = [f.name for f in
                  traceback.extract_stack(limit=7)][:-2]
@@ -137,8 +141,8 @@ class AudioBackend(ABC):
         self._wish("graph", device, value)
 
     def clear_graph(self, device):
-        """Desire no value of its own for `device`: it plays the common
-        entry then (config.COMMON_KEY)."""
+        """Desire no correction of its own for `device`: it follows the
+        listener then (config.LISTENER_KEY)."""
         self._wish("graph", device, None)
 
     def set_volume(self, device, cubic):
@@ -179,12 +183,15 @@ class AudioBackend(ABC):
         landed last need not have been the last wish. Now a wish only
         replaces the one still waiting for its device, and the writer
         takes one at a time, each in its turn (WRITE_PACE_S): the
-        newest value every time, and the last wish lands last."""
+        newest value every time, and the last wish lands last. A graph
+        wish goes behind every graph wish made before it (_next_turn)."""
         with self._wish_lock:
             self._store(kind)[device] = value
             if self._moratorium is not None:
                 self._queue(kind, device, value)
                 return
+            if kind == "graph":
+                self._dirty.pop((kind, device), None)
             self._dirty[(kind, device)] = None
             if self._writing:
                 return
@@ -225,10 +232,26 @@ class AudioBackend(ABC):
     def _next_turn(self):
         """((kind, device), 0) for the first waiting wish whose turn
         has come, else (None, seconds until the soonest turn). Called
-        with the stores held."""
+        with the stores held.
+
+        GRAPH VALUES GO OUT IN THE ORDER THEY WERE LAST WISHED, whatever
+        their keys: only the oldest graph wish may go, and a newer one
+        waits for its turn. A device's preamp travels in two keys -- its
+        own and the listener's (config.py, the contract) -- and the hook
+        plays the one that arrives last, so the value made last must
+        arrive last. Taken in any order, a device value made before a
+        taste change could land after the listener record made with it
+        and leave the device on the old taste's preamp, whose device
+        waited for its turn. A level is another knob and waits for no
+        graph."""
         now = time.monotonic()
         soonest = None
+        graph = False
         for item in self._dirty:
+            if item[0] == "graph":
+                if graph:
+                    continue
+                graph = True
             ended = self._written.get(item)
             if ended is None or now - ended >= self.WRITE_PACE_S:
                 return item, 0.0
@@ -277,8 +300,8 @@ class AudioBackend(ABC):
         """Put a whole wire_state on the wire. Returns (sent, total).
 
         `total` counts the entries with a value to send -- a device's
-        own graph, and the common entry -- not every binding: a device
-        that is only told to follow the common entry is not counted.
+        own correction, and the listener record -- not every binding: a
+        device that is only told to follow the listener is not counted.
         `sent` counts the writes the server accepted.
 
         What that proves is exactly one thing -- the write reached the
@@ -373,8 +396,9 @@ class AudioBackend(ABC):
                 self._moratorium = {"sink": sink, "key": key,
                                     "restore": restore,
                                     "muted": mute_others}
-            # ALWAYS, found or not: a device with no value of its own
-            # plays the common entry, so there is a graph on it either way
+            # ALWAYS, found or not: a device with no correction of its
+            # own plays the listener's taste and preamp, so there are
+            # graphs on it either way
             self._put_graph(key, STRIP)
             state["bypass"] = True
             if restore["mute"]:
@@ -431,8 +455,8 @@ class AudioBackend(ABC):
                 value, _src = self._read_graph(key)
             except Exception:
                 value = None
-            # STRIP itself: None is "follows the common entry", which
-            # is the state before the write, not after it
+            # STRIP itself: None is "follows the listener", which is
+            # the state before the write, not after it
             ok = value == STRIP
             if ok and measure_cubic is not None:
                 try:

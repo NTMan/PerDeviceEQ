@@ -1034,10 +1034,11 @@ def resolve_sink_id(name, dump=None):
     return nid
 
 def metadata_set(node_name, graph):
-    """Write a device's value into the 'per-device-eq' metadata: a graph,
-    STRIP or COMMON_KEY (config.py). The WP hook is subscribed and applies
-    it to the live node (and on every later reconnect). Stored as a plain
-    string (no type tag), which the hook reads verbatim."""
+    """Write a key's value into the 'per-device-eq' metadata: a device's
+    value or the listener record (config.py, the contract). The WP hook
+    is subscribed and applies it to the live nodes (and on every later
+    reconnect). Stored as a plain string (no type tag), which the hook
+    reads verbatim."""
     r = _run(["pw-metadata", "-n", METADATA_NAME, "0", node_name, graph])
     return r.returncode == 0 and "Found" in (r.stdout + r.stderr)
 
@@ -1199,7 +1200,7 @@ import subprocess
 import time
 import sys
 
-from .config import COMMON_KEY, METADATA_NAME
+from .config import LISTENER_KEY, METADATA_NAME
 from .audio_backend import AudioBackend
 
 
@@ -1234,15 +1235,19 @@ def _wp_unescape(text):
 
 
 def wpstate_get(key):
-    """Read a sink's graph from the WirePlumber hook's persisted state
+    """Read a device's value from the WirePlumber hook's persisted state
     (a GKeyFile at $XDG_STATE_HOME/wireplumber/per-device-eq). The hook
     seeds its runtime table from here on a cold start and does NOT
-    publish persisted graphs into the metadata, so a freshly-booted
+    publish persisted values into the metadata, so a freshly-booted
     session where the GUI was never opened has the profile ONLY here.
+    The hook keeps a device there as its key's value would say it: its
+    correction with the preamp it plays (eq.device_value), or STRIP;
+    no entry follows the listener.
 
     Keys are compared unescaped (_wp_unescape). Values need nothing:
     GKeyFile escapes only backslashes, control characters and a leading
-    space, and a graph string carries none of them."""
+    space, and a device's value -- graphs, braces and quotes -- carries
+    none of them."""
     base = os.environ.get("XDG_STATE_HOME") \
         or os.path.expanduser("~/.local/state")
     path = os.path.join(base, "wireplumber", "per-device-eq")
@@ -1518,7 +1523,8 @@ class PipeWireBackend(AudioBackend):
         return device_key(sink)
 
     def _push_graph(self, device, value):
-        return metadata_set(device, COMMON_KEY if value is None else value)
+        return metadata_set(device,
+                            LISTENER_KEY if value is None else value)
 
     def _push_volume(self, device, cubic):
         set_sink_volume(self._sink_id(device), cubic)
@@ -1607,7 +1613,7 @@ class PipeWireBackend(AudioBackend):
     def _read_graph(self, device):
         value = metadata_get(device)
         if value is not None:
-            return (None if value == COMMON_KEY else value), "metadata"
+            return (None if value == LISTENER_KEY else value), "metadata"
         value = wpstate_get(device)
         return value, ("wpstate" if value is not None else None)
 
@@ -1630,7 +1636,7 @@ class PipeWireBackend(AudioBackend):
     def _restore_failed(self, device, value):
         print("CRITICAL: failed to restore the EQ profile; put it "
               "back manually:\n  pw-metadata -n per-device-eq 0 "
-              "'%s' '%s'" % (device, COMMON_KEY if value is None
+              "'%s' '%s'" % (device, LISTENER_KEY if value is None
                              else value), file=sys.stderr)
 
     def missing_requirements(self):
