@@ -60,6 +60,31 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="5.2.0" date="2026-11-09">
+      <description>
+        <p>Only outputs where the sound leaves the computer are corrected, and edits are heard while you drag</p>
+        <p>Filter-chains, loopbacks and null sinks are no longer
+        corrected: what played through one got its correction on top
+        of the device's own, the taste included, twice. Network
+        outputs (AirPlay, PulseAudio tunnels, ROC) now play the taste
+        as a sound card does. When the system's default output is one
+        of the former, the window still shows it, says that nothing is
+        corrected on it, and its correction is unavailable.</p>
+        <p>A band edit in the main window, the playback fader and the
+        floor handle are heard as they move rather than when the hand
+        stops, and the writes to PipeWire are paced so that a drag no
+        longer floods it.</p>
+        <p>Undo keeps a manual preamp instead of switching it to Auto.
+        Turning the preamp no longer makes a copy of the profile, a
+        REW or AutoEQ import brings its bands without its preamp line,
+        a floor set on Default makes a copy as a band edit does, and a
+        deleted profile stops playing on every device it was bound
+        to.</p>
+        <p>The WirePlumber integration changes with this release: after
+        updating, the window reports that the hook speaks protocol 3
+        and the app 4, and its Retry button installs the new hook.</p>
+      </description>
+    </release>
     <release version="5.1.0" date="2026-10-14">
       <description>
         <p>Measurements no longer play through the app's own EQ, mono outputs no longer crackle, and the taste plays on every device</p>

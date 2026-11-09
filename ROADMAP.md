@@ -6,6 +6,25 @@ listener, headroom that never lies.
 
 ## Shipped
 
+### 5.2.0 (Nov 9, 2026)
+
+- Only a final node, a card or a network sink, is corrected: network
+  outputs play the taste, and nothing is set on a filter-chain, a
+  loopback or a null sink. A default that is not a device is shown as
+  it is, with its correction disabled.
+- The hook moves to protocol 4, and every change to the hook now comes
+  with a new number, so the window offers to install it again.
+- An edit in the main window, the playback fader and the floor handle
+  are heard as they move. Graph writes go through one writer, at most
+  20 a second per device, and a write the server refuses is logged
+  with its key. The other bound devices get a taste change when the
+  drag ends.
+- Undo keeps a manual preamp, a turn of the preamp no longer copies
+  the profile, and a text import brings the bands without the preamp.
+- A removed profile stops playing on every device it was bound to.
+- A floor set on Default or a built-in profile makes a copy, as a band
+  edit does.
+
 ### 5.1.0 (Oct 14, 2026)
 
 - The taste plays on every device, one with no profile of its own
@@ -60,22 +79,6 @@ listener, headroom that never lies.
 
 ## WIP
 
-- The next release, in main since 5.1.0:
-  - A removed profile stops playing on every device it was bound to.
-  - A floor set on Default or a built-in profile makes a copy, as a
-    band edit does.
-  - Undo keeps a manual preamp, a turn of the preamp no longer copies
-    the profile, and a text import brings the bands without the preamp.
-  - Graph writes go through one writer, at most 20 a second per device,
-    and a write the server refuses is logged with its key. The other
-    bound devices get a taste change when the drag ends.
-  - An edit in the main window, the playback fader and the floor handle
-    are heard as they move.
-  - Only a final node, a card or a network sink, is corrected. A
-    default that is not a device is shown as it is, with its correction
-    disabled.
-  - The hook moves to protocol 4, and every change to the hook now
-    comes with a new number, so the window offers to install it again.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a
   place for the sub: a room notch of about 20 dB at 40-41 Hz.
