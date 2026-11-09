@@ -687,6 +687,49 @@ His goal lines ride each task verbatim.
     the strip hands over every move and the window publishes
     each; the door paces the writes.
 
+    (l) *A node that passes the sound on could be corrected.* The
+    window offered every sink, so a filter-chain, a loopback or a
+    null sink could be opened and bound, and the hook set the
+    bound value on it: what played through such a node got that
+    correction on top of the one at the device it fed, the taste
+    included, twice. It came up Nov 9 with the design of protocol
+    4, which had to say what a bound sink without a card plays.
+    His rule, the same day: only a final node is a device, and
+    nothing else should get into bindings.json; no code sweeps
+    that file, since a device that is away may come back. **Fixed
+    in the code the same day:** a sink is final when the sound
+    leaves PipeWire there, into a card (`device.id`) or onto a
+    network (`node.network`, set by the AirPlay, pulse tunnel and
+    roc sinks). Only a final node is offered. The hook holds no
+    other node and sets nothing on it, its own value no more than
+    the common entry, and a network sink now plays the common
+    entry as a card does. Not covered: rtp-sink, vban-send and a
+    JACK tunnel set no `node.network` unless told to, and an ALSA
+    node declared by hand in pipewire.conf has no `device.id`, so
+    these are no longer offered. A graph the old hook set on a
+    node that is not final stays there until the node is made
+    anew, as a restart of PipeWire does.
+
+    The first cut also kept the window off such a node: with one
+    as the default it opened on the first final sink by priority
+    and did not follow. His field check the same day, with a null
+    sink as the default: the window opened on Speakers - USB
+    Audio, an output the desktop did not list, and asking the
+    picker instead moved it to Playback 9/10 - M62. A guess
+    either way, and with the pin pressed the header named an
+    output the sound did not go to. His ruling: do not lie in the
+    header and do not guess; show what is selected and grey out
+    the correction when it is something not to correct. And on
+    several devices at the end of a chain, as behind a
+    combine-stream: each should have its own correction with the
+    taste common, which is what setting each one up in this
+    program gives. **Fixed the same day:** the window opens on
+    the default and follows it whatever it is; when it is no
+    device, the device card and Bypass are insensitive, a banner
+    says that nothing is corrected on that output, and the window
+    publishes and binds nothing under its key. With no default it
+    opens on nothing.
+
 ## Shipped
 
 - **The cal wears its provenance.** Closed as testimony, not

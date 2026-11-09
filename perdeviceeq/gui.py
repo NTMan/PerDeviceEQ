@@ -139,6 +139,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._born_pending = None   # a fork waiting for its history mark
         self._pending_out = None    # an output awaiting its profile
         self._node_gone = False
+        self._seen_final = {}       # node name -> final when last listed
         self._pw = pw_backend.backend()
         self._pw_unsub = None
         self._measure_win = None
@@ -187,6 +188,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.header_bar = b.get_object("header_bar")
         self.header_note = b.get_object("header_note")
         self.gone_banner = b.get_object("gone_banner")
+        self.not_device_banner = b.get_object("not_device_banner")
         self.hook_banner = b.get_object("hook_banner")
         self.hook_banner.connect("button-clicked",
                                  lambda _b: self._install_async())
@@ -1735,7 +1737,8 @@ class EqWindow(Adw.ApplicationWindow):
     # ---- device ------------------------------------------------------------
     # ---- device picker (header) + follow default (live) -------------------
     def _init_devices(self):
-        """Fill the device dropdown from PipeWire and select the default sink."""
+        """Fill the device dropdown from PipeWire and select the default
+        sink, whatever it is (pw_backend.node_to_open)."""
         self.sinks = []
         miss = pw_backend.backend().missing_requirements()
         if miss:
@@ -1750,12 +1753,13 @@ class EqWindow(Adw.ApplicationWindow):
         b = pw_backend.backend()
         b.update()
         self.sinks = b.sinks
-        default = next((s["name"] for s in self.sinks if s["default"]), None)
-        self.node = default or (self.sinks[0]["name"] if self.sinks else None)
+        self.node = pw_backend.node_to_open(self.sinks)
         self.picker.refresh(
             pw_backend.list_playback_entries_from(self.sinks))
         self.picker.select(self.node)
         self.device_dd.set_sensitive(not self.follow_btn.get_active())
+        # before the first profile load publishes and binds: both ask
+        self._sync_device_state()
 
     def _select_device(self, name, load=True):
         """Programmatically select a sink; optionally load its
@@ -1881,7 +1885,11 @@ class EqWindow(Adw.ApplicationWindow):
         correctness and set a trap instead -- following resumed
         only on the NEXT default change, so after closing the
         measurement the app could sit on yesterday's sink until
-        the default was toggled again by hand."""
+        the default was toggled again by hand.
+
+        Any default is followed, one that is no device included: the
+        header names where the sound goes, and the window then has
+        nothing to correct and says so (_sync_device_state)."""
         if (self.follow_btn.get_active() and default
                 and default != self.node):
             self._select_device(default, load=True)
@@ -1896,6 +1904,7 @@ class EqWindow(Adw.ApplicationWindow):
         alive = bool(self.node) and any(
             s["name"] == self.node for s in self.sinks)
         self._set_node_gone(bool(self.node) and not alive)
+        self._sync_device_state()
 
     def _set_node_gone(self, gone):
         if gone == self._node_gone:
@@ -1903,6 +1912,43 @@ class EqWindow(Adw.ApplicationWindow):
         self._node_gone = gone
         self.gone_banner.set_revealed(gone)
         self._update_meter()
+
+    def _sync_device_state(self):
+        """Whether the output in view is a device, and the window
+        saying so.
+
+        The header shows what is selected, the default when the pin is
+        pressed, whatever it is. When that is no device
+        (pw_backend.is_final_node) -- a filter-chain, a loopback, a null
+        sink -- there is nothing to correct on it: the device card and
+        Bypass go insensitive, a banner says why, and the window
+        publishes and binds nothing under its key (_apply_now, _bind).
+        The taste and the preamp stay: they play on every device.
+
+        Read off the heartbeat's listing. A node that has left it keeps
+        what it was last seen as, as the panel survives a gone node
+        (_reconcile_node). A node never seen is not corrected until it
+        shows, and the banner waits for it too: it says only what the
+        listing said."""
+        for s in self.sinks or []:
+            self._seen_final[s["name"]] = bool(s.get("final"))
+        device = self._is_device()
+        self.device_card.set_sensitive(device)
+        self.bypass_row.set_sensitive(device)
+        self.not_device_banner.set_revealed(
+            bool(self.node) and self._seen_final.get(self.node) is False)
+
+    def _is_device(self):
+        """Whether the node in view is a device (_sync_device_state)."""
+        return bool(self.node) and self._seen_final.get(self.node, False)
+
+    def _bind(self, pid):
+        """THE WINDOW'S ONE BINDING WRITE: `pid` to the device in view.
+        A node that is no device gets none: only a device is corrected,
+        and a binding for anything else would wait in bindings.json for
+        nothing -- an undo walking back to another profile included."""
+        if self._is_device():
+            self.store.set_binding(self._dev(), pid)
 
     # ---- slots / working profile body -------------------------------------
     def _slot(self, ch):
@@ -2327,7 +2373,7 @@ class EqWindow(Adw.ApplicationWindow):
             self.bypass_row.set_active(False)
             self._build_channel_bar()
             self._load_slot(self.cur_ch)
-            self.store.set_binding(self._dev(), pid)
+            self._bind(pid)
         finally:
             self._loading = False
         # land the composed Safe under Auto: a profile saved before
@@ -2396,7 +2442,7 @@ class EqWindow(Adw.ApplicationWindow):
         # built-in left a profile that no undo could take back.
         self._born_pending = pid
         self.current_pid = pid
-        self.store.set_binding(self._dev(), pid)
+        self._bind(pid)
         self.profile_button.set_label(self._display_name(self.store.get(pid)))
         return True
 
@@ -2713,17 +2759,25 @@ class EqWindow(Adw.ApplicationWindow):
         and applies it once the moratorium lifts; the queueing is
         logged there with the caller's path. No window gates any code
         here.
+
+        A node that is no device gets nothing under its key; a taste
+        or preamp edit made while it is in view still reaches every
+        device through the common entry (_sync_device_state).
         """
         self._update_meter()
         if not self.live or not self.node:
             return
         node = self._dev()
         auth = pw_backend.backend()
+        taste = self.pref_layers.active_bands()
+        manual = None if self.preamp_auto else self.preamp
+        if not self._is_device():
+            common = common_graph(taste, manual)
+            auth.publish_graph(COMMON_KEY, common)
+            return
         if self.bypass_row.get_active():
             auth.publish_graph(node, STRIP)
             return
-        taste = self.pref_layers.active_bands()
-        manual = None if self.preamp_auto else self.preamp
         if self.current_pid == CLEAN_ID:
             common = common_graph(taste, manual)
             auth.publish_graph(COMMON_KEY, common)
@@ -2783,7 +2837,7 @@ class EqWindow(Adw.ApplicationWindow):
             if self.live and self.node:
                 # rewind the sink binding too, or a restart would
                 # resurrect the selection undo just unwound
-                self.store.set_binding(self._dev(), pid)
+                self._bind(pid)
             self._load_floor()
             self._sync_map(widen=False)
             self._populate_picker()

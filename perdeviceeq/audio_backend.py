@@ -137,8 +137,8 @@ class AudioBackend(ABC):
         self._wish("graph", device, value)
 
     def clear_graph(self, device):
-        """Desire no value of its own for `device`: with a card behind
-        it, it plays the common entry (config.COMMON_KEY)."""
+        """Desire no value of its own for `device`: it plays the common
+        entry then (config.COMMON_KEY)."""
         self._wish("graph", device, None)
 
     def set_volume(self, device, cubic):

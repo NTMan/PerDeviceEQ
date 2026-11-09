@@ -52,10 +52,13 @@ local function world(saved)
     return d
   end
 
-  function w.node(name, devid, cdev, st)
+  -- props: any further node properties, as WirePlumber hands them
+  -- (strings)
+  function w.node(name, devid, cdev, st, props)
     local n = { properties = { ["node.name"] = name, ["device.id"] = devid,
                                ["card.profile.device"] = cdev },
                 st = st or "running", cbs = {} }
+    for k, v in pairs(props or {}) do n.properties[k] = v end
     function n:connect(sig, cb) self.cbs[sig] = cb end
     function n:get_state() return self.st end
     function n:set_param(_, pod) w.applied[name] = pod.params[2] end
@@ -67,8 +70,11 @@ local function world(saved)
     env.sink_om.cbs["object-removed"](env.sink_om, n)
   end
 
+  -- as in WirePlumber, a signal nobody connected to does nothing
   function w.running(n)
-    n.cbs["state-changed"](n, "idle", "running")
+    n.st = "running"
+    local cb = n.cbs["state-changed"]
+    if cb then cb(n, "idle", "running") end
   end
 
   function w.metadata()
@@ -157,16 +163,44 @@ scenarios["no common entry strips a device that followed it"] = function()
   eq(w.applied[BT], "", "common deleted")
 end
 
-scenarios["a virtual sink does not take the common entry"] = function()
+scenarios["a node that passes the sound on is not a device"] = function()
+  -- a filter-chain's sink, and a null sink: no card, no network
+  local w = world({ ["@protocol"] = "3", ["@taste"] = "TASTE",
+                    ["effect_input.eq"] = "OLD" })
+  w.metadata()
+  local fc = w.node("effect_input.eq", nil, nil, "running",
+                    { ["node.link-group"] = "filter-chain-1-2",
+                      ["node.virtual"] = "true" })
+  local null = w.node("null-sink", nil, nil, "running",
+                      { ["factory.name"] = "support.null-audio-sink" })
+  eq(w.applied["effect_input.eq"], nil, "a value persisted for it")
+  w.write("@taste", "TASTE2")
+  w.write("effect_input.eq", "OWN")
+  w.write("null-sink", "OWN")
+  w.write("effect_input.eq", "@taste")
+  w.write("null-sink", "")
+  w.running(fc)
+  w.running(null)
+  eq(w.applied["effect_input.eq"], nil, "the chain: nothing, ever")
+  eq(w.applied["null-sink"], nil, "the null sink: nothing, ever")
+end
+
+scenarios["a network sink is a device"] = function()
+  -- AirPlay, a pulse tunnel, roc: no card, and the sound leaves there
   local w = world(nil)
   w.metadata()
-  w.node("effect_input.eq", nil, nil)
+  local n = w.node("raop_sink.room", nil, nil, "running",
+                   { ["node.network"] = "true", ["node.virtual"] = "true" })
   w.write("@taste", "TASTE")
-  eq(w.applied["effect_input.eq"], nil, "left alone")
-  w.write("effect_input.eq", "OWN")
-  eq(w.applied["effect_input.eq"], "OWN", "its own value still applies")
-  w.write("effect_input.eq", "@taste")
-  eq(w.applied["effect_input.eq"], "", "following: nothing, it has no card")
+  eq(w.applied["raop_sink.room"], "TASTE", "the common entry reaches it")
+  w.write("raop_sink.room", "OWN")
+  eq(w.applied["raop_sink.room"], "OWN", "keyed by its bare name")
+  w.applied["raop_sink.room"] = nil
+  w.running(n)
+  eq(w.applied["raop_sink.room"], "OWN", "re-applied on running")
+  -- the flag as PipeWire reads it: "1" is true as well
+  w.node("roc_sink.desk", nil, nil, "running", { ["node.network"] = "1" })
+  eq(w.applied["roc_sink.desk"], "TASTE", "1 is a network too")
 end
 
 scenarios["the key is the node and the hole"] = function()

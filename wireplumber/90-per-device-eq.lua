@@ -23,8 +23,9 @@
 --   * the GUI/CLI push live edits into the "per-device-eq" metadata object; we
 --     subscribe to its "changed" signal, update the table, apply to the live
 --     node, and persist the table back to WpState;
---   * each sink gets its graph (re)applied when it reaches the "running" state,
---     which also covers hotplug / Bluetooth reconnect.
+--   * each device -- a sink the sound leaves PipeWire at, see is_final --
+--     gets its graph (re)applied when it reaches the "running" state, which
+--     also covers hotplug / Bluetooth reconnect.
 -- No background process of the user's is involved: the EQ lives in WirePlumber.
 
 local log   = Log.open_topic("pde")
@@ -58,7 +59,7 @@ local STRIP = ""
 local PROTO_KEY = "@protocol"   -- in the persisted table: what wrote it
 
 local graphs = {}            -- key -> graph or STRIP; no key: plays COMMON
-local nodes  = {}            -- node.name -> live Audio/Sink node proxy
+local nodes  = {}            -- node.name -> live device node (is_final)
 local md     = nil           -- activated metadata proxy
 local devices = {}           -- bound id -> device proxy (for the holes)
 local state  = State(STATE)  -- WpState handle (GKeyFile under ~/.local/state)
@@ -130,27 +131,39 @@ local function device_key(node)
   return port and (name .. "#" .. tostring(port)) or name
 end
 
--- A node with a card behind it is where the sound comes out. A virtual
--- sink -- a null sink, a loopback, an effect chain -- passes audio on to
--- one, and the listener's layers belong on the way out, once.
-local function has_card(node)
-  local id
-  pcall(function() id = node.properties["device.id"] end)
-  return id ~= nil
+-- ONLY A FINAL NODE IS A DEVICE, the rule the app lists by
+-- (perdeviceeq/pw_backend.py, is_final_node): the sound leaves
+-- PipeWire there, into a card (device.id) or onto a network
+-- (node.network: AirPlay, a pulse tunnel, roc). Every other sink passes
+-- it on or keeps it: a loopback, a filter-chain and a combine-stream
+-- feed a node of their own group onward, a null sink is a dead end
+-- heard through its monitor if at all. A graph on one of those is
+-- played on top of the one at the device it feeds, the listener's
+-- layers twice, so the hook holds no such node and sets nothing on it,
+-- its own value no more than COMMON. node.virtual decides nothing: the
+-- network sinks set it too. The flag reads as PipeWire reads it
+-- (spa_atob): "true" or "1".
+local function is_final(node)
+  local id, net
+  pcall(function()
+    id = node.properties["device.id"]
+    net = node.properties["node.network"]
+  end)
+  return id ~= nil or net == "true" or net == "1"
 end
 
--- what a node plays: its own value, else COMMON if it has a card, else
--- nothing is known about it (nil)
-local function wanted(node, key)
+-- what a device plays: its own value, else COMMON, else nothing is
+-- known about it (nil)
+local function wanted(key)
   local g = graphs[key]
-  if g == nil and has_card(node) then g = graphs[COMMON] end
+  if g == nil then g = graphs[COMMON] end
   return g
 end
 
 local function apply(node)
   local k = device_key(node)
   if k == nil then return end
-  local g = wanted(node, k)
+  local g = wanted(k)
   if g ~= nil then set_graph(node, g) end   -- nothing known => leave alone
 end
 
@@ -208,12 +221,11 @@ md_om:connect("object-added", function(_, m)
       graphs[key] = value
       persist()
       -- a device key reaches whichever live node answers to it now;
-      -- COMMON reaches every node with a card and no value of its own
+      -- COMMON reaches every device with no value of its own
       for _, n in pairs(nodes) do
         local k = device_key(n)
-        if k ~= nil and (k == key or (key == COMMON and graphs[k] == nil
-                                      and has_card(n))) then
-          set_graph(n, wanted(n, k) or STRIP)
+        if k ~= nil and (k == key or (key == COMMON and graphs[k] == nil)) then
+          set_graph(n, wanted(k) or STRIP)
         end
       end
     end)
@@ -221,7 +233,7 @@ md_om:connect("object-added", function(_, m)
 end)
 md_om:activate()
 
--- ---- sinks: (re)apply when a sink reaches running (ports negotiated) ----
+-- ---- sinks: (re)apply when a device reaches running (ports negotiated) ----
 sink_om = ObjectManager {
   Interest { type = "node",
     Constraint { "media.class", "equals", "Audio/Sink", type = "pw-global" } }
@@ -231,6 +243,7 @@ sink_om:connect("object-added", function(_, node)
   if not pcall(function() name = tostring(node.properties["node.name"]) end) or not name then
     return
   end
+  if not is_final(node) then return end   -- passes the sound on: not a device
   nodes[name] = node
   pcall(function()
     node:connect("state-changed", function(n, _old, new)

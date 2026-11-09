@@ -403,15 +403,22 @@ taste off. Unfold the card to edit the active layer: the same graph and
 band table as the device's. Layers never modify the measured profiles, and
 the headroom hints account for the composition, so a bass shelf on top
 cannot clip behind the meter's back. The active layer plays on every
-output with a sound card, one with no profile of its own included, and a
-change reaches all of them at once.
+output where the sound leaves PipeWire — a sound card, or a network sink
+such as AirPlay — one with no profile of its own included, and a change
+reaches all of them at once.
 
 ### Everyday use
 
 - **Output picker:** with the pin pressed, as at every launch, the window
   follows the system's default output; release it to stay on the output
   you pick. Ports of a card's other profiles are listed too, and picking
-  one switches the card to that profile.
+  one switches the card to that profile. Only outputs where the sound
+  leaves PipeWire are listed: a filter-chain or a loopback passes it on
+  to one of them, and a correction there would play on top of the
+  device's own. A null sink is not listed either. When the default is
+  one of these, the window still follows it and shows it as it is, with
+  the Device card and Bypass unavailable: there is nothing to correct
+  on it.
 - **Profile picker** (the button in the Device card's header): switch the
   profile bound to the current output and port; **+** measures a new one,
   the folder icon imports a profile shared by someone else, and each row

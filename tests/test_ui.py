@@ -1,6 +1,7 @@
 """One state, one voice, per state: both windows announce a
-gone OUTPUT with the same AdwBanner, and the Measure window
-announces a gone RIG with its own -- the HIG banner pattern is
+gone OUTPUT with the same AdwBanner, the Measure window
+announces a gone RIG with its own, and the main window says
+when the output in view is no device -- the HIG banner pattern is
 for persistent view states (offline, read-only -- and gone),
 one short factual title each; two independent states may hold
 at once and their banners come and go independently. The
@@ -33,9 +34,13 @@ def _banners(path):
 def test_gone_banners_speak_one_language_per_state():
     main = _banners(DATA / MAIN)
     measure = _banners(DATA / MEASURE)
-    assert set(main) == {"gone_banner", "hook_banner"}, main
+    assert set(main) == {"gone_banner", "hook_banner",
+                         "not_device_banner"}, main
     assert main["hook_banner"]
     assert main["hook_banner"] != main["gone_banner"]
+    assert main["not_device_banner"]
+    assert main["not_device_banner"] not in (main["gone_banner"],
+                                             main["hook_banner"])
     assert set(measure) == {"gone_banner", "mic_banner"}, measure
     assert main["gone_banner"] == measure["gone_banner"]
     assert main["gone_banner"]

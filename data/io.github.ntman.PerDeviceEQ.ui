@@ -139,6 +139,13 @@
         <property name="title" translatable="yes">The output device is gone</property>
       </object>
     </child>
+    <!-- the header shows the default as it is, a filter-chain or a
+         null sink included; this says why its correction is grey -->
+    <child type="top">
+      <object class="AdwBanner" id="not_device_banner">
+        <property name="title" translatable="yes">Not a device: nothing is corrected on this output</property>
+      </object>
+    </child>
     <!-- the hook is watched every beat, not checked once at launch:
          this says so while it is silent, and offers the one action
          that can fix it -->

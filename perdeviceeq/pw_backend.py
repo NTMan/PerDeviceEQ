@@ -91,12 +91,18 @@ def list_sinks(dump=None, default=None):
             if not name:
                 continue
             _routes = card_output_ports(name, dump)
+            final = is_final_node(p)
             sinks.append({"id": o["id"], "name": name,
                           "desc": p.get("node.description") or name,
                           "card": p.get("device.id"),
                           "card_desc": _cards.get(p.get("device.id")),
                           "port": own_port(_routes),
-                          "offerable": node_offerable(_routes),
+                          # the sound leaves PipeWire here: only such
+                          # a node is offered, corrected and bound; the
+                          # default is shown whatever it is
+                          # (is_final_node, gui _sync_device_state)
+                          "final": final,
+                          "offerable": final and node_offerable(_routes),
                           "prio": p.get("priority.session") or 0,
                           "routes": _routes,
                           # the channel list rides along: the dump is
@@ -159,6 +165,46 @@ def own_port(routes):
             or active_port(routes))
 
 
+def is_final_node(props):
+    """Whether the sound leaves PipeWire at this node: a card behind it
+    (device.id), or a network (node.network -- AirPlay, a pulse tunnel,
+    roc). Only such a node is a device this program corrects.
+
+    Every other sink passes the sound on or keeps it. A loopback, a
+    filter-chain and a combine-stream mark their nodes node.link-group,
+    internally linked onward; a null sink is a dead end heard through
+    its monitor if at all. A correction bound to one of those plays on
+    top of the one at the device it feeds, the taste with it: twice.
+    node.virtual decides nothing, the network sinks set it too.
+
+    Not every node the sound leaves at says so: rtp-sink, vban-send and
+    a JACK tunnel set no node.network unless told to, and an ALSA node
+    declared by hand in pipewire.conf has no device.id. Such a node is
+    not offered.
+
+    The hook asks the same question of the same properties
+    (wireplumber/90-per-device-eq.lua, is_final), and both read the
+    flag as PipeWire does (spa_atob: "true" or "1"); pw-dump prints it
+    as a JSON true or 1, and 1 == True."""
+    return (props.get("device.id") is not None
+            or props.get("node.network") in (True, "true", "1"))
+
+
+def node_to_open(sinks):
+    """The node a window opens on: the default sink, whatever it is,
+    or None when there is none.
+
+    The header with the pin pressed says where the sound goes, so it
+    names the default even when that is no device -- the window then
+    has nothing to correct and says so (gui, _sync_device_state). Any
+    other node would be a guess, and with the pin pressed a wrong
+    one: a null sink as the default once opened the window on the
+    first final sink by priority, an output the desktop did not even
+    list."""
+    return next((s["name"] for s in sinks or [] if s.get("default")),
+                None)
+
+
 def node_offerable(routes):
     """Whether a live node is worth offering at all.
 
@@ -169,9 +215,11 @@ def node_offerable(routes):
     the one in use -- and the desktop does not list it. Neither
     should we.
 
-    Only the node's OWN ports are asked, and a card that claims none
-    of them (Bluetooth, a virtual sink) is offered: no evidence is
-    not evidence against.
+    Only the node's OWN ports are asked, and a node with none of its
+    own passes (a Bluetooth card claims none, a network sink has no
+    card at all): no evidence is not evidence against. For a sink,
+    whether the node is a device at all is the other half of the
+    listing's answer (is_final_node).
     """
     mine = [r for r in (routes or []) if r.get("mine")]
     return not mine or any(r.get("available", True) for r in mine)
@@ -279,8 +327,8 @@ def device_key(node, direction="Output", dump=None):
     description. Descriptions are translated and rewritten; names are
     what the card calls its own wiring.
 
-    A node with no card behind it -- a null sink, a loopback, anything
-    virtual -- keys as its bare name. It has no holes to choose
+    A node with no card behind it -- a network sink, a virtual
+    source -- keys as its bare name. It has no holes to choose
     between, so a suffix would say nothing and would have to be
     migrated the day one appeared.
 

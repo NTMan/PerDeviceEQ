@@ -53,9 +53,10 @@ PROTOCOL = "3"
 # explicitly nothing (Bypass, a measurement in progress), or COMMON_KEY
 # for "no value of its own" -- written, never a deleted key: the metadata
 # announces a delete only for a key it holds, and after a restart it holds
-# none of what the hook keeps. A device with no value of its own and a
-# card behind it plays the entry under COMMON_KEY: the listener's taste
-# and preamp, in the form that fits a node of any width.
+# none of what the hook keeps. A device with no value of its own plays
+# the entry under COMMON_KEY: the listener's taste and preamp, in the
+# form that fits a node of any width. A device is a final node
+# (pw_backend.is_final_node); the hook sets nothing on any other.
 COMMON_KEY = "@taste"
 STRIP = ""
 # the static hook is shipped next to the package (repo) or system-wide (package)

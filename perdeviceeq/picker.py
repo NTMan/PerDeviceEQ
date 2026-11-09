@@ -86,7 +86,9 @@ class PickerCore:
 
         A node the listing marked NOT offerable is left out: a
         card can publish one for a socket with nothing in it, and
-        the desktop does not list those either. It is a display
+        the desktop does not list those either; and a node the
+        sound does not leave PipeWire at is no device to correct
+        (pw_backend.is_final_node). It is a display
         rule and lives here rather than in the listing, because
         everything else in the app still has to be able to look
         that node up by name -- and because the rule below keeps
@@ -121,7 +123,7 @@ class PickerCore:
         piece cut out of another one. A node's own description names
         the card and its PROFILE ("Analog Stereo"), which is a
         different fact and the wrong one for that row. Where there is
-        no port (Bluetooth, a virtual sink) the description stands as
+        no port (Bluetooth, a node with no card) the description stands as
         it is; nothing is trimmed to fit, because a port really
         called "Line - Rear panel" would not survive a rule that cut
         on separators, and a name is evidence rather than decoration.
