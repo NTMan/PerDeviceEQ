@@ -54,6 +54,11 @@ DB_MAX = 24.0
 FMIN, FMAX = config.FMIN, config.FMAX
 _SAVE_DEBOUNCE_MS = 200
 _HISTORY_CAP = 100
+# How long the application, its windows gone, waits for what they
+# wished to reach the server (EqApplication.do_shutdown). Nobody sees
+# the wait; the bound keeps a server that does not answer from keeping
+# the process.
+LAND_TIMEOUT_S = 1.0
 
 
 def _ui_path():
@@ -166,7 +171,7 @@ class EqWindow(Adw.ApplicationWindow):
         self._sess_samples = 0      # metered samples per channel (session)
         self.connect("map", lambda *_: self._update_meter())
         self.connect("unmap", lambda *_: self._update_meter())
-        self.connect("close-request", self._stop_meter_on_close)
+        self.connect("close-request", self._on_close)
 
         # undo/redo history (serialized snapshots); the timeline
         # is GLOBAL -- device and taste edits interleave in it
@@ -3329,12 +3334,19 @@ class EqWindow(Adw.ApplicationWindow):
             self._meter_dev = None
             self._live_db = None
 
-    def _stop_meter_on_close(self, *_):
-        if self._meter is not None:
-            self._meter.stop()
-        if self._pw_unsub is not None:
-            self._pw_unsub()
-            self._pw_unsub = None
+    def _on_close(self, *_):
+        """An edit whose save still waits for its debounce lands before
+        the window goes: the timer belongs to the main loop, which ends
+        with the window. What the window wished from the server lands
+        when the application shuts down (EqApplication.do_shutdown)."""
+        try:
+            self._flush_pending_save()
+        finally:
+            if self._meter is not None:
+                self._meter.stop()
+            if self._pw_unsub is not None:
+                self._pw_unsub()
+                self._pw_unsub = None
         return False
 
     def _publish_meter(self, frame):        # called from the worker thread
@@ -4058,6 +4070,14 @@ class EqApplication(Adw.Application):
         if self.win is None:
             self.win = EqWindow(self)
         self.win.present()
+
+    def do_shutdown(self):
+        """The windows are gone, and what they wished lands before the
+        process ends (AudioBackend.land): a wish still waiting for its
+        turn, and the end of a sweep the close cancelled, which would
+        otherwise leave its device bare until WirePlumber restarts."""
+        pw_backend.backend().land(LAND_TIMEOUT_S)
+        Adw.Application.do_shutdown(self)
 
 
 def launch_gui():

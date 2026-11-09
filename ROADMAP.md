@@ -87,6 +87,9 @@ listener, headroom that never lies.
   - A measurement no longer writes the device's EQ: it names the device
     to the hook, which keeps it bare for the sweep and then plays what
     it holds for it.
+  - An edit made just before the window closes is saved, and what the
+    window sent reaches the hook; a sweep the close cancels gives its
+    device back.
   - A saved profile plays on every device bound to it.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a

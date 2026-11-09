@@ -562,3 +562,89 @@ def test_a_level_waiting_when_a_measurement_starts_lands_after_it():
     assert f.flush(5)
     levels = [e[2] for e in f.log if e[:2] == ("volume", "dev")]
     assert levels[-1] == 0.3
+
+
+# ---- an ending program lands what it owes -----------------------------------
+
+class EndedBy(FakeBackend):
+    """Knows which thread cleared the measurement's name."""
+
+    ended_by = None
+
+    def _push_graph(self, device, value):
+        if device == MEASURE_KEY and value == STRIP:
+            self.ended_by = threading.current_thread()
+        return super()._push_graph(device, value)
+
+
+def test_land_waits_for_a_wish_still_waiting_for_its_turn():
+    f = FakeBackend()
+    f.WRITE_PACE_S = 0.3
+    f.publish_graph("dev", "OLD")
+    assert f.flush(5)
+    f.publish_graph("dev", "NEW")          # its turn is 0.3 s away
+    assert f.land(5)
+    assert _graphs(f, "dev") == [("dev", "OLD"), ("dev", "NEW")]
+
+
+def test_land_lets_a_measurement_end_on_its_own_thread():
+    """A sweep cancelled by the close ends where it runs, and puts its
+    level back there; the landing waits for it."""
+    f = EndedBy()
+    f.server_volume = 0.61
+    f.moratorium_begin("dev", 0.074, mute_others=False)
+    t = threading.Timer(0.1, f.moratorium_end)
+    t.start()
+    began = time.monotonic()
+    assert f.land(4)
+    assert time.monotonic() - began < 2       # told, not timed out
+    t.join(5)
+    assert f.ended_by is t
+    assert _graphs(f, MEASURE_KEY) == [(MEASURE_KEY, "dev"),
+                                       (MEASURE_KEY, STRIP)]
+
+
+def test_land_ends_a_measurement_that_does_not_end_in_time():
+    f = EndedBy()
+    f.server_volume = 0.61
+    state = f.moratorium_begin("dev", 0.074, mute_others=False)
+    assert f.land(0.1)
+    assert not f.moratorium_active
+    assert f.ended_by is threading.current_thread()
+    assert state["restored"] is True
+    assert [e[2] for e in f.log if e[:2] == ("volume", "dev")] == \
+        [0.074, 0.61]
+
+
+def test_land_waits_for_an_end_in_progress():
+    """The end holds the server for its whole pass. A landing that came
+    back in the middle of it would let the process die before the name
+    is cleared."""
+    class Slow(FakeBackend):
+        def __init__(self):
+            super().__init__()
+            self.gate = threading.Event()
+            self.entered = threading.Event()
+
+        def _push_graph(self, device, value):
+            if device == MEASURE_KEY and value == STRIP:
+                self.entered.set()
+                self.gate.wait(5)
+            return super()._push_graph(device, value)
+
+    f = Slow()
+    f.moratorium_begin("dev", None, mute_others=False)
+    ender = threading.Thread(target=f.moratorium_end)
+    ender.start()
+    assert f.entered.wait(5)
+    done = []
+    lander = threading.Thread(target=lambda: done.append(f.land(5)))
+    lander.start()
+    lander.join(0.2)
+    assert done == []
+    f.gate.set()
+    lander.join(5)
+    ender.join(5)
+    assert done == [True]
+    assert _graphs(f, MEASURE_KEY) == [(MEASURE_KEY, "dev"),
+                                       (MEASURE_KEY, STRIP)]

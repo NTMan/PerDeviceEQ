@@ -78,6 +78,7 @@ class AudioBackend(ABC):
       publish_graph(device, value)   desire a filter graph
       clear_graph(device)            desire a clean device
       flush(timeout)                 wait until the wishes are out
+      land(timeout)                  what an ending program owes
       set_volume(device, cubic)      desire a device volume
       moratorium_begin(sink, cubic)  measurement starts
       moratorium_end()               measurement over, replay pending
@@ -298,6 +299,25 @@ class AudioBackend(ABC):
             return self._idle.wait_for(lambda: not self._writing,
                                        timeout)
 
+    def land(self, timeout):
+        """What a program that is ending owes the server, within
+        `timeout` seconds: its measurement over, and every wish out.
+        The writer is a daemon thread and so is a sweep's worker, and
+        both die with the process wherever they are.
+
+        A measurement is given the time to end on its own thread -- a
+        sweep cancelled by the close ends there, after its child
+        processes -- and is ended here when it has not, so that its
+        device is not left named to the hook. An end in progress holds
+        the server, and moratorium_end waits for it. True if every wish
+        was out in time."""
+        deadline = time.monotonic() + timeout
+        with self._idle:
+            self._idle.wait_for(lambda: self._moratorium is None,
+                                timeout)
+        self.moratorium_end()
+        return self.flush(max(0.0, deadline - time.monotonic()))
+
     def publish_state(self, wire):
         """Put a whole wire_state on the wire. Returns (sent, total).
 
@@ -478,6 +498,7 @@ class AudioBackend(ABC):
                 if m is None:
                     return
                 self._moratorium = None
+                self._idle.notify_all()          # land() waits for it
                 # a wish made from here on goes to the writer, which
                 # waits for the server until this pass is done
                 pending, self._pending = self._pending, {}
