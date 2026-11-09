@@ -6,7 +6,7 @@ REW/AutoEQ text import/export.
 Pure computation -- no GTK, no subprocess, no filesystem.
 """
 
-import math, cmath, re
+import functools, math, cmath, re
 
 try:
     import numpy as _np
@@ -237,25 +237,32 @@ def resolve_slots(prof_keys, sink_keys):
     return [prof[i] if i < len(prof) else None for i in range(len(sink))]
 
 
-def auto_preamp_db(p, extra=None, slots=None):
-    """The attenuation that zeroes the tier-1 estimate for this body: the
-    max of the WORST chain's summed band curve with no preamp, so one
+def auto_preamp_db(p, taste=None, slots=None):
+    """The attenuation that zeroes the tier-1 estimate for this body under
+    this taste: the max of the WORST chain's summed curve -- the device's
+    correction and floor with the taste on top -- with no preamp, so one
     shared value clears every chain.
     Rounded UP to the 0.1 dB step the spin can express, so the result lands
     at or below 0 dBFS.
 
-    The chains are the ones the graph carries (_chains). With `slots` that
-    is one per sink channel, and a channel no profile channel feeds still
-    carries the floor and the taste: leaving it out let such a channel
-    rise above 0 dB while the preamp was set for the others.
+    The chains are the device's own, the ones the graph carries without
+    the taste (_chains). With `slots` that is one per sink channel, and a
+    channel no profile channel feeds still carries the floor and the
+    taste: leaving it out let such a channel rise above 0 dB while the
+    preamp was set for the others.
+
+    The number is curve_max_db's over each chain with the taste appended:
+    the same grid and the same band centres, read from the curves kept per
+    band list (_curve_of, _peak), so it is cheap to ask for every bound
+    device.
 
     Pure, and computed rather than stored: its inputs include the floor and
     the taste layer, and taste is not part of a profile. Storing the answer
     inside the profile meant that changing the taste rewrote every profile
     that had been opened -- a derived number kept in the wrong house.
     """
-    peaks = [curve_max_db(0.0, [Band.from_dict(b) for b in c])
-             for c in _chains(p, extra, slots)]
+    t = _curve_of(taste)
+    peaks = [_peak(_curve_of(c), t) for c in _chains(p, None, slots)]
     return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
 
@@ -438,7 +445,7 @@ def device_graph(p, slots, taste, manual=None):
     the device's key then.
     """
     if manual is None:
-        t = auto_preamp_db(p, extra=taste, slots=slots)
+        t = auto_preamp_db(p, taste, slots)
         pre = -t if t else 0.0
     else:
         pre = float(manual)
@@ -549,10 +556,87 @@ def curve_max_db(preamp, bands, n=240, fmin=FMIN, fmax=FMAX):
     log grid PLUS every enabled band's center frequency, so narrow (high-Q)
     peaks cannot fall between grid points. Pinned to the scipy reference
     (perdeviceeq.pde_audit.chain_curve) by tests/test_headroom_bound.py."""
-    la, lb = math.log10(fmin), math.log10(fmax)
-    freqs = [10 ** (la + (lb - la) * i / (n - 1)) for i in range(n)]
+    freqs = _log_grid(n, fmin, fmax)
     freqs += [min(max(b.freq, fmin), fmax) for b in bands if b.enabled]
     return max(response_db(preamp, bands, freqs))
+
+
+def _log_grid(n=240, fmin=FMIN, fmax=FMAX):
+    """The n-point log grid curve_max_db reads, as a new list."""
+    la, lb = math.log10(fmin), math.log10(fmax)
+    return [10 ** (la + (lb - la) * i / (n - 1)) for i in range(n)]
+
+
+# AUTO FROM KEPT CURVES. Auto is asked for often, on the window's
+# thread: for the device in view on every move of a drag, and for every
+# bound device when the taste changes. The sum is taken from two curves:
+# each band list's own response on the grid and at its own centres,
+# kept (_curve_of) until the list changes -- a device's until its
+# correction changes, the taste's until the taste does -- and only the
+# points where the two lists meet are worked out per call: the taste at
+# the device's centres and the device at the taste's, every band of a
+# list in one pass (_db_at). Same points, same sums, the same number to
+# the 0.1 dB step. For fourteen synthetic stereo devices of ten bands
+# and a floor under a three-band taste, a change of the taste took
+# 7.9 ms with curve_max_db over each chain and the taste, and takes
+# 1.4 ms so (best of five, Claude's container, Nov 9).
+_GRID = tuple(_log_grid())
+
+
+def _db_at(coeffs, freqs):
+    """The summed response, in dB, of biquads (biquad's tuples) at
+    `freqs`: response_db's arithmetic, every band at once."""
+    if _np is None:
+        return [sum(mag_db(c, f) for c in coeffs) for f in freqs]
+    if not coeffs:
+        return _np.zeros(len(freqs))
+    c = _np.asarray(coeffs, float)
+    z1 = _np.exp(-1j * 2.0 * math.pi * _np.asarray(freqs, float) / FS)
+    z2 = z1 * z1
+    h = ((c[:, 0:1] + c[:, 1:2] * z1 + c[:, 2:3] * z2)
+         / (c[:, 3:4] + c[:, 4:5] * z1 + c[:, 5:6] * z2))
+    m = _np.abs(h)
+    return _np.where(m > 1e-12, 20.0 * _np.log10(_np.maximum(m, 1e-12)),
+                     -120.0).sum(axis=0)
+
+
+def _curve_of(bands):
+    """The kept curve of a list of band dicts (_curve), keyed by what
+    the dicts say."""
+    return _curve(tuple((d.get("type", "PK"), d.get("freq", 1000.0),
+                         d.get("gain", 0.0), d.get("q", 1.0),
+                         d.get("enabled", True)) for d in bands or ()))
+
+
+@functools.lru_cache(maxsize=512)
+def _curve(key):
+    """(biquads, centres, on the grid, at the centres) of one band
+    list."""
+    bands = [Band(*k) for k in key]
+    coeffs = [biquad(b.type, b.freq, b.gain, b.q) for b in bands
+              if b.enabled]
+    centres = [min(max(b.freq, FMIN), FMAX) for b in bands if b.enabled]
+    return (coeffs, centres, _db_at(coeffs, _GRID),
+            _db_at(coeffs, centres))
+
+
+def _max_sum(x, y):
+    if _np is None:
+        return max(a + b for a, b in zip(x, y))
+    return float((x + y).max())
+
+
+def _peak(a, b):
+    """curve_max_db(0.0, a's bands + b's), from the two kept curves: the
+    summed curve's maximum on the grid and at both lists' centres."""
+    a_c, a_cs, a_grid, a_at = a
+    b_c, b_cs, b_grid, b_at = b
+    peak = _max_sum(a_grid, b_grid)
+    if a_cs:
+        peak = max(peak, _max_sum(a_at, _db_at(b_c, a_cs)))
+    if b_cs:
+        peak = max(peak, _max_sum(_db_at(a_c, b_cs), b_at))
+    return peak
 
 
 def headroom_bound_db(preamp, bands, monitor_peak_db=0.0):

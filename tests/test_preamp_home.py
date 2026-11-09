@@ -57,7 +57,7 @@ def test_auto_clears_the_loudest_channel():
 def test_the_taste_layer_counts_when_it_is_applied():
     """The window composes taste over correction, so its Auto includes it;
     this is the input that does not live in the profile."""
-    assert eq.auto_preamp_db(_profile(), extra=[LSC12]) > 6.0
+    assert eq.auto_preamp_db(_profile(), [LSC12]) > 6.0
 
 
 def test_the_worst_channel_sets_the_shared_value():

@@ -8,8 +8,10 @@ taste, and an empty profile with a preamp was a graph to one and nothing
 to the other.
 """
 import ast
+import math
 import os
 import pathlib
+import random
 
 import pytest
 
@@ -76,16 +78,44 @@ def test_the_window_wishes_in_the_order_it_makes_them():
 def test_auto_counts_a_channel_no_profile_channel_feeds():
     """The unfed channel carries the taste alone, and the taste alone
     rises higher than the taste over a bass cut."""
-    paired = eq.auto_preamp_db(_pair(), extra=[BASS], slots=["FL", "FR"])
-    wider = eq.auto_preamp_db(_pair(), extra=[BASS],
-                              slots=["FL", "FR", None])
+    paired = eq.auto_preamp_db(_pair(), [BASS], ["FL", "FR"])
+    wider = eq.auto_preamp_db(_pair(), [BASS], ["FL", "FR", None])
     assert wider > paired
     assert wider == pytest.approx(_peak([BASS]), abs=0.1)
 
 
 def test_auto_without_slots_keeps_the_profile_layout():
-    assert eq.auto_preamp_db(_pair(), extra=[BASS]) == \
-        eq.auto_preamp_db(_pair(), extra=[BASS], slots=["FL", "FR"])
+    assert eq.auto_preamp_db(_pair(), [BASS]) == \
+        eq.auto_preamp_db(_pair(), [BASS], ["FL", "FR"])
+
+
+def _band(rnd):
+    return {"type": rnd.choice(["PK", "PK", "LSC", "HSC"]),
+            "freq": 10 ** rnd.uniform(math.log10(15), math.log10(23000)),
+            "gain": rnd.uniform(-15.0, 15.0), "q": rnd.uniform(0.3, 10.0),
+            "enabled": rnd.random() > 0.1}
+
+
+def test_auto_from_the_kept_curves_is_the_number_over_the_whole_chain():
+    """Auto sums two kept curves, a device's and the taste's, instead of
+    working out each chain with the taste appended. The points and the
+    sums are the same, so the number is too."""
+    rnd = random.Random(5)
+    for _ in range(300):
+        keys = ["FL", "FR", "FC"][:rnd.randint(0, 3)]
+        p = {"ch_keys": keys,
+             "channels": {k: {"bands": [_band(rnd) for _ in
+                                        range(rnd.randint(0, 10))]}
+                          for k in keys}}
+        if rnd.random() < 0.5:
+            p["floor_hz"] = rnd.uniform(25.0, 90.0)
+        else:
+            p["floor_off"] = True
+        taste = [_band(rnd) for _ in range(rnd.randint(0, 4))]
+        slots = rnd.choice([None, keys, keys + [None]])
+        whole = [_peak(c + taste) for c in eq._chains(p, slots=slots)]
+        want = max(0.0, math.ceil(max(whole) * 10.0 - 1e-9) / 10.0)
+        assert eq.auto_preamp_db(p, taste, slots) == want
 
 
 # ---- when there is nothing to play ------------------------------------------
@@ -144,7 +174,7 @@ def test_the_feed_carries_the_taste(store):
     store.set_map("sink#port", {"FL": "FL", "FR": "FR"})
     g = store.graph_for_node("sink#port")
     assert g.count("freq = 50, gain = 12") == 2
-    want = eq.auto_preamp_db(store.get(pid), extra=[BASS],
+    want = eq.auto_preamp_db(store.get(pid), [BASS],
                              slots=["FL", "FR"])
     assert "gain = %g" % -want in g
 
