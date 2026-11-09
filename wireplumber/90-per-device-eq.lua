@@ -18,8 +18,9 @@
 --     string), which is the runtime source of truth;
 --   * on startup the table is seeded from WpState (~/.local/state/wireplumber/),
 --     because the metadata object is empty after a PipeWire restart; only a
---     table written under this PROTOCOL is read -- an older one means
---     something else by its values, and the app's reinstall feeds a new one;
+--     table written under this PROTOCOL is read -- an older hook may have
+--     meant something else by its values, and the app's reinstall feeds a
+--     new one;
 --   * the GUI/CLI push live edits into the "per-device-eq" metadata object; we
 --     subscribe to its "changed" signal, update the table, apply to the live
 --     node, and persist the table back to WpState;
@@ -30,11 +31,13 @@
 
 local log   = Log.open_topic("pde")
 local META  = "per-device-eq"   -- metadata object name (live edits from the app)
-local PROTOCOL = "3"            -- channel protocol; stamped into the metadata on
-                                -- activation, compared by the app (bump together
-                                -- with PROTOCOL in perdeviceeq/config.py on any
-                                -- breaking change to the graph string or the
-                                -- metadata contract)
+local PROTOCOL = "4"            -- the hook's version; stamped into the metadata
+                                -- on activation, compared by the app. Bump it,
+                                -- together with PROTOCOL in perdeviceeq/config.py,
+                                -- on ANY change to this file: the installed copy
+                                -- does not update with the package, and a new
+                                -- number is the only thing that makes the window
+                                -- offer the new hook
 local STATE = "per-device-eq"   -- WpState name -> ~/.local/state/wireplumber/per-device-eq
 
 -- THE CONTRACT (COMMON_KEY and STRIP in perdeviceeq/config.py, keep

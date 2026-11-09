@@ -125,12 +125,14 @@ systemctl --user restart wireplumber
 ### Updating
 
 The app hands the hook its EQs through PipeWire metadata, and an update
-can change the format of that exchange -- 5.1.0 did (hook protocol 3).
-The installed hook is a copy and does not update with the package. Until
-it is replaced, the window's banner reads *The hook speaks protocol 2,
-this app speaks 3*; its **Retry** button installs the hook that came with
-the update and hands it every device's EQ, the same as
-`per-device-eq --install`. Installing restarts WirePlumber once, and a
+can change that exchange or the hook itself -- 5.1.0 changed the
+exchange (hook protocol 3), and the next release changes which outputs
+the hook serves (protocol 4). Every change to the hook comes with a new
+protocol number. The installed hook is a copy and does not update with
+the package. Until it is replaced, the window's banner reads *The hook
+speaks protocol 3, this app speaks 4*; its **Retry** button installs the
+hook that came with the update and hands it every device's EQ, the same
+as `per-device-eq --install`. Installing restarts WirePlumber once, and a
 Bluetooth headset playing at that moment drops; reconnect it if it does
 not come back by itself.
 

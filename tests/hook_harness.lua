@@ -114,7 +114,7 @@ local scenarios = {}
 scenarios["the protocol is stamped"] = function()
   local w = world(nil)
   w.metadata()
-  eq(w.md.sets["protocol"], "3", "stamp")
+  eq(w.md.sets["protocol"], "4", "stamp")
 end
 
 scenarios["a device with no value of its own plays the common entry"] =
@@ -165,7 +165,7 @@ end
 
 scenarios["a node that passes the sound on is not a device"] = function()
   -- a filter-chain's sink, and a null sink: no card, no network
-  local w = world({ ["@protocol"] = "3", ["@taste"] = "TASTE",
+  local w = world({ ["@protocol"] = "4", ["@taste"] = "TASTE",
                     ["effect_input.eq"] = "OLD" })
   w.metadata()
   local fc = w.node("effect_input.eq", nil, nil, "running",
@@ -226,13 +226,13 @@ scenarios["the persisted table carries its protocol"] = function()
   w.write("@taste", "TASTE")
   w.write(KEY, "OWN")
   w.write(KEY, "@taste")
-  eq(w.saved["@protocol"], "3", "stamped")
+  eq(w.saved["@protocol"], "4", "stamped")
   eq(w.saved["@taste"], "TASTE", "common kept")
   eq(w.saved[KEY], nil, "following leaves no entry")
 end
 
 scenarios["a table of this protocol seeds the hook"] = function()
-  local w = world({ ["@protocol"] = "3", ["@taste"] = "TASTE",
+  local w = world({ ["@protocol"] = "4", ["@taste"] = "TASTE",
                     [KEY] = "OWN" })
   w.device(70, { HP })
   w.node(BT, 70, 1)
@@ -250,6 +250,15 @@ scenarios["a table of another protocol is not read"] = function()
   w.node("alsa_output.card", 71, 0)
   eq(w.applied[BT], nil, "old own value ignored")
   eq(w.applied["alsa_output.card"], nil, "old bare key ignored")
+end
+
+scenarios["a table of the previous protocol is not read"] = function()
+  -- the upgrade: the hook is new, its state file is the old hook's
+  local w = world({ ["@protocol"] = "3", ["@taste"] = "TASTE",
+                    [KEY] = "OLD" })
+  w.device(70, { HP })
+  w.node(BT, 70, 1)
+  eq(w.applied[BT], nil, "nothing from a protocol 3 table")
 end
 
 scenarios["a node seen before its card waits for it"] = function()

@@ -74,15 +74,17 @@ listener, headroom that never lies.
   - Only a final node, a card or a network sink, is corrected. A
     default that is not a device is shown as it is, with its correction
     disabled.
+  - The hook moves to protocol 4, and every change to the hook now
+    comes with a new number, so the window offers to install it again.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a
   place for the sub: a room notch of about 20 dB at 40-41 Hz.
 
 ## Planned
 
-- Hook protocol 4: correction, taste and preamp as separate filter
+- Hook protocol 5: correction, taste and preamp as separate filter
   graphs on a node, so a taste change is one write and every playing
-  device hears it at once.
+  device hears it at once; a device's preamp travels with its biquads.
 - One undo step per drag.
 - Find why one graph write of a pass went missing (Nov 7).
 - Level passport, to decide: the first sweep of a search; the mirror

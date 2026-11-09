@@ -41,13 +41,15 @@ WP_CONF_DIR    = os.path.expanduser("~/.config/wireplumber/wireplumber.conf.d")
 WP_CONF        = os.path.join(WP_CONF_DIR, "90-per-device-eq.conf")
 METADATA_NAME  = "per-device-eq"
 
-# Channel protocol between the app and the LOADED hook. The hook
-# stamps this into the metadata on activation (local PROTOCOL in
-# wireplumber/90-per-device-eq.lua -- keep them equal); the GUI
-# compares at startup and offers a one-click reinstall on
-# mismatch. Bump on any breaking change to the graph string or
-# the metadata contract; additive changes ride free.
-PROTOCOL = "3"
+# The version of the LOADED hook. The hook stamps this into the
+# metadata on activation (local PROTOCOL in
+# wireplumber/90-per-device-eq.lua -- keep them equal); the window
+# compares it on every beat and offers a one-click reinstall on a
+# mismatch. Bump it on ANY change to the hook, its contract or its
+# behaviour: the installed copy does not update with the package,
+# and a new number is the only thing that tells an installation
+# its hook is old. 4 is the final-node rule (pw_backend.is_final_node).
+PROTOCOL = "4"
 # The metadata contract, the same in the hook (COMMON and STRIP there,
 # keep them equal). A device's value is its own graph, STRIP for
 # explicitly nothing (Bypass, a measurement in progress), or COMMON_KEY
