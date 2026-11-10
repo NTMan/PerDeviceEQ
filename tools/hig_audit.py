@@ -339,7 +339,8 @@ def audit_widget(root):
 def _peq_view():
     from perdeviceeq.peq_view import PeqView
     return PeqView(lambda *a, **k: None,
-                   on_import_file=lambda: None)
+                   on_import_file=lambda: None,
+                   on_balance=lambda db: None)
 
 
 def _window_audit():

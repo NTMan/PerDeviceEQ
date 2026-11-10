@@ -1157,8 +1157,9 @@ class PeqView(Gtk.Box):
         with two decimals -- the fit writes the balance to the
         hundredth -- and either sign, as the hand may move any number
         of the correction."""
+        # where its column starts, as the headers sit over the fields
+        # under them: flush with Type and the dropdowns' edge
         lbl = Gtk.Label(label="Balance", xalign=0.0)
-        lbl.set_margin_start(10)
         self.grid.attach(lbl, 1, row, 1, 1)
         sp = Gtk.SpinButton.new_with_range(-24.0, 24.0, 0.1)
         sp.set_digits(2)
