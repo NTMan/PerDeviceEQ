@@ -92,6 +92,12 @@ listener, headroom that never lies.
     device back.
   - Bypass takes every output raw and stays, through a change of
     output, an edit and a restart, until it is released.
+  - A channel's balance is a number of the channel, not a band: a
+    Balance row above its band table, either sign by hand. Profile
+    schema 8; tools/convert_v8.py converts schema 7 profiles and
+    packages once.
+  - An export carries Safe over the channels it carries, each at its
+    balance; the window's preamp, Auto or set by hand, stays home.
   - A saved profile plays on every device bound to it.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a

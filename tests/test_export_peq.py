@@ -26,9 +26,7 @@ def _profile_channels():
     return {"preamp": -1.0,
             "ch_keys": ["FL", "FR"],
             "channels": {
-                "FL": {"bands": [
-                    {"type": "HSC", "freq": 0.0, "gain": -1.5,
-                     "q": 1.0, "enabled": True},
+                "FL": {"balance": -1.5, "bands": [
                     {"type": "PK", "freq": 2000.0, "gain": 2.0,
                      "q": 1.0, "enabled": True}]},
                 "FR": {"bands": [
@@ -79,42 +77,47 @@ def test_targets_dropin_override_and_append(tmp_path):
 # ---- composition -------------------------------------------------------
 
 def test_composed_chains_one_channel_with_taste():
+    """The window's preamp does not travel: _profile_all's -2.5 stays
+    home, and a file gets Safe over what it carries."""
     ch = ex.composed_chains(_profile_all(), _TASTE)
     assert [k for k, _g, _b in ch] == ["FL"]
     _k, g, bands = ch[0]
-    assert g == -2.5
+    assert g == 0.0
     assert [b["freq"] for b in bands][-1] == 3000.0
     assert len(bands) == 4
 
 
-def test_composed_chains_per_channel_shared_preamp():
+def test_composed_chains_per_channel_at_their_balance():
+    """Every chain stands at its channel's balance -- a number of the
+    chain, not a band among its bands -- whatever the window's preamp
+    is."""
     ch = ex.composed_chains(_profile_channels(), _TASTE)
     assert [k for k, _g, _b in ch] == ["FL", "FR"]
-    for _k, g, bands in ch:
-        assert g == -1.0
+    assert [g for _k, g, _b in ch] == [-1.5, 0.0]
+    assert ex.composed_chains(dict(_profile_channels(), preamp=-20.0),
+                              _TASTE) == ch
+    for _k, _g, bands in ch:
+        assert all(b["freq"] >= 1.0 for b in bands)
         assert bands[-1]["freq"] == 3000.0
 
 
 def test_composed_chains_without_channels_have_no_name():
     """No channel produced this chain, so it carries no channel name --
-    only the preamp and whatever taste rides along. Everything below
-    decides by the number of chains, so nothing reads the key."""
+    only whatever taste rides along. Everything below decides by the
+    number of chains, so nothing reads the key."""
     p = {"preamp": 0.5, "ch_keys": [], "channels": {}}
     ch = ex.composed_chains(p, _TASTE)
     assert [k for k, _g, _b in ch] == [None]
-    assert ch[0][1] == 0.5
+    assert ch[0][1] == 0.0
     assert len(ch[0][2]) == 1
 
 
-def test_fold_flat_trim_and_disabled():
-    _k, g, bands = ex.composed_chains(_profile_channels(), None)[0]
-    g2, b2, folded = ex.fold_flat(g, bands)
-    assert folded == -1.5
-    assert g2 == pytest.approx(-2.5)
-    assert all(b["freq"] >= 1.0 for b in b2)
-    g3, b3, _ = ex.fold_flat(
-        -2.5, _profile_all()["channels"]["FL"]["bands"])
-    assert len(b3) == 2               # the disabled band is dropped
+def test_writers_get_the_enabled_bands_as_copies():
+    bands = _profile_all()["channels"]["FL"]["bands"]
+    on = ex.enabled_bands(bands)
+    assert len(on) == 2               # the disabled band is dropped
+    on[0]["gain"] = 99.0
+    assert bands[0]["gain"] == 3.0    # and the profile stays as it was
 
 
 def test_fit_band_from_params_and_default():
@@ -177,7 +180,7 @@ def test_collapse_pick_and_mean():
         assert c == pytest.approx((a + b) / 2.0)
     assert "FL" in note_l and "mean" in note_m
     g, bands, note = ex.pick_chain(chains, "FR")
-    assert g == -1.0 and "FR" in note
+    assert g == 0.0 and "FR" in note
     with pytest.raises(KeyError):
         ex.collapse(chains, "XX", freqs)
 
@@ -186,29 +189,35 @@ def test_collapse_pick_and_mean():
 
 def test_parametric_roundtrip_nulls():
     chains = ex.composed_chains(_profile_all(), _TASTE)
-    _k, g0, b0 = chains[0]
-    g, b, _ = ex.fold_flat(g0, b0)
-    text = ex.parametric_text(g, b, header=(
+    _k, _g, b0 = chains[0]
+    b = ex.enabled_bands(b0)
+    text = ex.parametric_text(-2.5, b, header=(
         "per-device-eq export", "Collapse: single chain"))
     assert text.startswith("# per-device-eq export\n")
     pre, bands = eq.parse_autoeq(text)
     assert pre == pytest.approx(-2.5)
     assert len(bands) == 3            # disabled one never exported
     freqs = ex.log_grid(20.0, 12000.0, 480)
-    ref = ex.chain_response(g0, b0, freqs)
+    ref = ex.chain_response(-2.5, b0, freqs)
     assert ex.null_test_parametric(text, freqs, ref) <= 0.03
 
 
-def test_parametric_folds_trim_into_preamp():
+def test_a_channel_file_gets_safe_over_its_own_chain():
+    """One channel in the file, as the wizard writes it: Safe over
+    that chain at its own gain. FL's balance takes 1.5 dB off its
+    +2 dB peak, so the chain peaks at +0.5 and Safe brings it 0.5
+    down; FR peaks at +4. The other channel does not enter."""
     chains = ex.composed_chains(_profile_channels(), None)
-    g0, b0, _note = ex.pick_chain(chains, "FL")
-    g, b, folded = ex.fold_flat(g0, b0)
-    assert folded == -1.5
-    text = ex.parametric_text(g, b)
-    assert "Fc 0" not in text
     freqs = ex.log_grid(20.0, 12000.0, 480)
-    ref = ex.chain_response(g0, b0, freqs)
-    assert ex.null_test_parametric(text, freqs, ref) <= 0.03
+    for key, want in (("FL", -2.0), ("FR", -4.0)):
+        g, b0, _note = ex.pick_chain(chains, key)
+        fg = g + ex.safe_shift([(None, g, ex.enabled_bands(b0))])
+        assert fg == pytest.approx(want)
+        text = ex.parametric_text(fg, ex.enabled_bands(b0))
+        assert "Fc 0" not in text
+        assert eq.parse_autoeq(text)[0] == pytest.approx(want)
+        ref = ex.chain_response(fg, b0, freqs)
+        assert ex.null_test_parametric(text, freqs, ref) <= 0.03
 
 
 # extracted from a published AutoEq GraphicEQ.txt, independently
@@ -315,7 +324,7 @@ def test_graphiceq_no_shift_for_cut_only_chains():
 def test_null_test_catches_a_lie():
     chains = ex.composed_chains(_profile_all(), None)
     _k, g0, b0 = chains[0]
-    g, b, _ = ex.fold_flat(g0, b0)
+    g, b = g0, ex.enabled_bands(b0)
     text = ex.parametric_text(g + 1.0, b)      # wrong on purpose
     freqs = ex.log_grid(20.0, 12000.0, 64)
     ref = ex.chain_response(g0, b0, freqs)
@@ -403,7 +412,7 @@ def test_poweramp_enum_table_is_the_calibration():
     assert t["freq_range"] == [20.0, 24000.0]
 
 
-def test_poweramp_stereo_roundtrip_with_trim_and_taste():
+def test_poweramp_stereo_roundtrip_with_balance_and_taste():
     chains = ex.composed_chains(_profile_channels(), _TASTE)
     t = {x["id"]: x for x in ex.load_targets()}["poweramp"]
     text = ex.poweramp_json(t, chains, "soundcore Liberty 5")
@@ -411,7 +420,7 @@ def test_poweramp_stereo_roundtrip_with_trim_and_taste():
     preset = _json.loads(text)[0]
     assert preset["name"] == "soundcore Liberty 5"
     assert preset["parametric"] is True
-    assert preset["preamp"] == -1.0
+    assert preset["preamp"] == 0.0         # FR's gain, the louder
     chans = {b["channels"] for b in preset["bands"]}
     assert chans == {ex.PA_BOTH, ex.PA_LEFT, ex.PA_RIGHT}
     # the app's inert pair leads, exactly as native exports have
@@ -419,12 +428,15 @@ def test_poweramp_stereo_roundtrip_with_trim_and_taste():
     assert preset["bands"][0] == dict(ex.PA_INERT_PAIR[0])
     assert preset["bands"][1] == dict(ex.PA_INERT_PAIR[1])
     assert all(b["gain"] == 0.0 for b in preset["bands"][:2])
-    # the FL balance trim became a Low Shelf at the Nyquist ceiling
-    trims = [b for b in preset["bands"]
+    # the preset has one preamp, the louder chain's; FL's balance
+    # below it became a Low Shelf at the Nyquist ceiling, leading
+    # FL's bands
+    flats = [b for b in preset["bands"]
              if b["type"] == ex.PA_TYPE["LSC"]
              and b["frequency"] == 24000.0]
-    assert len(trims) == 1 and trims[0]["channels"] == ex.PA_LEFT
-    assert trims[0]["gain"] == -1.5
+    assert len(flats) == 1 and flats[0]["channels"] == ex.PA_LEFT
+    assert flats[0]["gain"] == -1.5
+    assert preset["bands"][2] == flats[0]
     # byte shape of the app's own exports: tab indent, integer
     # frequencies, no trailing newline
     assert "\t" in text and text.endswith("]")
@@ -464,41 +476,69 @@ def test_poweramp_clamps_and_refusals():
     assert ex.poweramp_stereo_keys([("FC", 0.0, [])])
 
 
-def test_headroom_preamp_manual_and_auto():
+def test_safe_is_auto_over_what_a_file_carries():
+    """The desktop Auto formula over the exported chains: minus their
+    composed peak, rounded up to the 0.1 dB step, and never a boost.
+    It moves both ways as the composition does -- a hot taste layer
+    costs level, and dropping it gives the level back."""
     boost = [{"type": "LSC", "freq": 50.0, "gain": 12.0, "q": 1.0,
               "enabled": True}]
     calm = [{"type": "PK", "freq": 1000.0, "gain": 3.0, "q": 1.0,
              "enabled": True}]
-    # manual: the stored value is intent -- respected, and only
-    # ever lowered when the composition peaks past it
-    adj, moved = ex.headroom_preamp(-6.4, [boost])
-    assert adj < -11.0 and moved < -4.0
-    assert abs((-6.4 + moved) - adj) < 1e-9
-    keep, zero = ex.headroom_preamp(-6.4, [calm])
-    assert keep == -6.4 and zero == 0.0
-    # auto: the composed Safe of the EXPORTED chains, moving both
-    # directions -- dropping a hot taste layer gives loudness back
-    # -- with the desktop's own 0.1 dB ceil so numbers match home
-    up, dm = ex.headroom_preamp(-16.3, [calm], auto=True)
-    assert up == -3.0 and abs(dm - 13.3) < 1e-9
-    down, _m = ex.headroom_preamp(-1.0, [boost], auto=True)
-    assert down < -11.0
+    cut = [dict(calm[0], gain=-3.0)]
+    assert ex.safe_shift([("FL", 0.0, calm)]) == -3.0
+    assert ex.safe_shift([("FL", 0.0, calm + boost)]) < -11.0
+    assert ex.safe_shift([("FL", 0.0, cut)]) == 0.0
+    # a chain's own gain rides on its peak: 2.29 rounds up to 2.3
+    assert ex.safe_shift([("FL", -0.71, calm)]) == -2.3
+
+
+def test_safe_counts_each_chain_at_its_own_gain():
+    """FL three decibels down by its balance peaks at +3, FR at +4: FR
+    sets Safe and both move by it, so the balance between them stays.
+    Over FL alone, FL's own peak is what counts."""
+    six = [{"type": "PK", "freq": 1000.0, "gain": 6.0, "q": 1.0,
+            "enabled": True}]
+    four = [dict(six[0], gain=4.0)]
+    assert ex.safe_shift([("FL", -3.0, six), ("FR", 0.0, four)]) == -4.0
+    assert ex.safe_shift([("FL", -3.0, six)]) == -3.0
+
+
+def test_the_wizard_never_reads_the_window_preamp():
+    """A file gets Safe over what it carries. The window's preamp,
+    Auto or set by hand against the meter, stays home: the wizard
+    reads neither the number nor the mode."""
+    import ast
+    import pathlib
+    src = pathlib.Path(ex.__file__).with_name(
+        "export_wizard.py").read_text(encoding="utf-8")
+    keys = {n.value for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Constant)}
+    assert not {"preamp", "preamp_auto"} & keys
 
 
 def test_poweramp_preamp_covers_taste_headroom():
+    """The wizard's way: Safe over both chains moves them alike, the
+    louder chain's level is the preset preamp, and FL still stands its
+    balance below FR in the file."""
     taste = [{"type": "LSC", "freq": 50.0, "gain": 12.0, "q": 1.0,
               "enabled": True}]
     chains = ex.composed_chains(_profile_channels(), taste)
     t = {x["id"]: x for x in ex.load_targets()}["poweramp"]
-    adj, moved = ex.headroom_preamp(chains[0][1],
-                                    [b for _k, _g, b in chains])
-    assert moved < 0.0
-    chains2 = [(k, adj, b) for k, _g, b in chains]
+    s = ex.safe_shift(chains)
+    assert s < 0.0
+    chains2 = [(k, g + s, b) for k, g, b in chains]
     text = ex.poweramp_json(t, chains2, "hp")
     import json as _json
-    clamped, spill = ex.preamp_spill(adj, t)
-    assert clamped + spill == adj and clamped >= -12.0
-    assert _json.loads(text)[0]["preamp"] == clamped
+    preset = _json.loads(text)[0]
+    top = max(g for _k, g, _b in chains2)
+    clamped, spill = ex.preamp_spill(top, t)
+    assert clamped + spill == top and clamped >= -12.0
+    assert preset["preamp"] == clamped
+    flats = {b["channels"]: b["gain"] for b in preset["bands"]
+             if b["frequency"] == 24000}
+    assert (flats.get(ex.PA_LEFT, 0.0) - flats.get(ex.PA_RIGHT, 0.0)
+            == pytest.approx(-1.5))
     freqs = ex.log_grid(20.0, 12000.0, 480)
     errs = ex.null_test_poweramp(text, chains2, freqs)
     assert max(errs.values()) <= ex.NULL_PASS_DB
@@ -510,7 +550,7 @@ def test_poweramp_preamp_covers_taste_headroom():
 def _canvas_profile(fl_tilt=6.0, fr_tilt=6.0, fl_lift=3.0):
     """A synthetic v3 profile: two channels, one take each, on the
     canvas grid; FL sits fl_lift dB above FR at equal recorded
-    drives, so the balance trim gate opens and pulls FL down."""
+    drives, so the balance gate opens and pulls FL down."""
     from perdeviceeq import measure_core as mc
     from perdeviceeq.measure_build import fit_fingerprint
     import math as m
@@ -560,17 +600,17 @@ def test_export_source_gate():
     assert mode == "chain" and "provenance" in why
 
 
-def test_desired_from_canvas_trims_and_taste():
+def test_desired_from_canvas_balance_and_taste():
     p = _canvas_profile(fl_lift=3.0)
     fg, curves, note = ex.desired_from_canvas(p)
     assert set(curves) == {"FL", "FR"}
     assert 19.9 < fg[0] < 25.0 and 11000.0 < fg[-1] < 12000.1
-    # each desired is mean-flat before the trim; FL carries the
-    # -3 dB trim as a flat offset, FR stays at zero mean
+    # each desired is mean-flat before the balance; FL carries its
+    # -3 dB balance as a flat offset, FR stays at zero mean
     n = len(fg)
     m_fl = sum(curves["FL"]) / n
     m_fr = sum(curves["FR"]) / n
-    assert "trims included" in note
+    assert "balance included" in note
     assert abs(m_fr) < 0.05 and abs(m_fl + 3.0) < 0.1
     taste = [{"type": "PK", "freq": 1000.0, "gain": 4.0, "q": 1.0,
               "enabled": True}]
@@ -694,27 +734,25 @@ def test_fit_to_desired_honors_limits():
 def test_parallel_mean_average_and_gates():
     freqs = ex.log_grid(20.0, 12000.0, 240)
 
-    def ch(g1, g2, f2=2000.0, q2=1.6, trim=0.0, junk=False):
+    def ch(g1, g2, f2=2000.0, q2=1.6, junk=False):
         bands = [{"type": "LSC", "freq": 80.0, "gain": g1,
                   "q": 0.9, "enabled": True},
                  {"type": "PK", "freq": f2, "gain": g2,
                   "q": q2, "enabled": True}]
-        if trim:
-            bands.insert(0, {"type": "HSC", "freq": 0.0,
-                             "gain": trim, "q": 1.0,
-                             "enabled": True})
         if junk:
             bands.append({"type": "PK", "freq": 5000.0,
                           "gain": 3.0, "q": 2.0,
                           "enabled": False})
         return bands
 
-    chains = [("FL", -3.0, ch(2.0, -4.0, trim=-0.5, junk=True)),
+    # FL stands half a decibel below FR: its balance
+    chains = [("FL", -3.5, ch(2.0, -4.0, junk=True)),
               ("FR", -3.0, ch(3.0, -5.0, f2=2100.0))]
     pm, why = ex.parallel_mean(chains, freqs)
     assert pm and why == ""
     g_m, bands_m, err = pm
-    # trims fold and average exactly; disabled bands never count
+    # the chains' gains average exactly, the balance with them;
+    # disabled bands never count
     assert abs(g_m - (-3.25)) < 1e-9
     assert len(bands_m) == 2 and bands_m[0]["type"] == "LSC"
     assert abs(bands_m[1]["gain"] + 4.5) < 1e-9
@@ -934,11 +972,10 @@ def test_poweramp_preamp_spills_past_the_range():
     assert "preamp -12..12 dB" in ex.limits_text(t)
     fl = [{"type": "PK", "freq": 3000.0, "gain": -14.35,
            "q": 0.7, "enabled": True}]
-    fr = [{"type": "HSC", "freq": 0.0, "gain": -0.18, "q": 1.0,
-           "enabled": True},
-          {"type": "PK", "freq": 3064.0, "gain": -11.68,
+    fr = [{"type": "PK", "freq": 3064.0, "gain": -11.68,
            "q": 1.0, "enabled": True}]
-    chains = [("FL", -16.2, fl), ("FR", -16.2, fr)]
+    # FR stands 0.18 dB below FL: its balance
+    chains = [("FL", -16.2, fl), ("FR", -16.38, fr)]
     text = ex.poweramp_json(t, chains, "spill")
     import json as _json
     preset = _json.loads(text)[0]
@@ -947,8 +984,9 @@ def test_poweramp_preamp_spills_past_the_range():
              for b in preset["bands"]
              if b["type"] == ex.PA_TYPE["LSC"]
              and b["frequency"] == 24000}
-    # FL grows a fresh flat band; FR's trim absorbs the spill --
-    # clean two-decimal gains, no float64 dust in the artifact
+    # FL grows a flat band of the spill; FR's carries its balance
+    # and the spill in one -- clean two-decimal gains, no float64
+    # dust in the artifact
     assert flats[ex.PA_LEFT] == -4.2
     assert flats[ex.PA_RIGHT] == -4.38
     assert '"gain": -4.2,' in text

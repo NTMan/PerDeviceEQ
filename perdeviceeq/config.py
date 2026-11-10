@@ -140,7 +140,21 @@ TYPE_TO_LABEL = {"PK": "bq_peaking", "LSC": "bq_lowshelf",
                  # hand -- they never join TYPE_NAMES below
                  "HP": "bq_highpass", "LP": "bq_lowpass"}
 TYPE_NAMES = ["PK", "LSC", "HSC"]
-SCHEMA_VERSION = 7      # profile body schema. 7 is the level map: a
+SCHEMA_VERSION = 8      # profile body schema. 8 is the balance: a
+#                         channel's level against the others is a
+#                         number of the channel ("balance", dB, absent
+#                         at 0), not a freq-0 shelf among its bands.
+#                         It is a preamp of one channel: the fit writes
+#                         it, the hand may move it either way, and the
+#                         shared preamp stays one -- Auto counts the
+#                         balance in each channel's curve. A 7 body
+#                         holds the same number as a band, so it
+#                         converts exactly, once, with
+#                         tools/convert_v8.py. The converter stays until
+#                         the first change no converter can carry over;
+#                         then it goes, and the answer is to re-measure.
+#
+#                         7 is the level map: a
 #                         profile now takes its measurement level from
 #                         its own passport, and the passport is read
 #                         against the disagreement of its own sweeps.

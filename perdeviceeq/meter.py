@@ -82,18 +82,21 @@ class MeterEngine:
         self._thread = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
-        self._pending = None            # (gain_lin, [sos]) awaiting swap
-        self._gain = 1.0
+        self._pending = None            # ([gain_lin], [sos]) awaiting swap
+        self._gain = []                 # per-channel linear gains
         self._sos = []                  # per-channel sos arrays
         self._zi = []
 
     # ---- configuration -----------------------------------------------------
-    def set_chains(self, preamp_db, per_channel_bands, fs=None):
-        """One shared preamp + per-channel enabled-band lists (an empty list
-        per channel = identity: exactly what Bypass should show)."""
+    def set_chains(self, preamp_db, per_channel_bands, fs=None,
+                   balances_db=None):
+        """One shared preamp, each channel's balance on top of it, and
+        per-channel enabled-band lists (an empty list and no balance per
+        channel = identity: exactly what Bypass should show)."""
         if fs:
             self.fs = int(fs)
-        gain = 10.0 ** (float(preamp_db) / 20.0)
+        bal = list(balances_db or [0.0] * len(per_channel_bands))
+        gain = [10.0 ** ((float(preamp_db) + float(b)) / 20.0) for b in bal]
         sos = [chain_sos(b, self.fs) for b in per_channel_bands]
         with self._lock:
             self._pending = (gain, sos)
@@ -188,7 +191,7 @@ class MeterEngine:
             # mid-stream swap -- swaps only exchange gains/coefficients.
             self._swap_if_pending()
             for c in range(n):
-                y = x[:, c].astype(np.float64) * self._gain
+                y = x[:, c].astype(np.float64) * self._gain[c]
                 if self._sos[c].size:
                     y, self._zi[c] = sg.sosfilt(self._sos[c], y,
                                                 zi=self._zi[c])

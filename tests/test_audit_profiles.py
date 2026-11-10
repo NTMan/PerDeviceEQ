@@ -103,6 +103,35 @@ def test_main_app_profile_end_to_end(tmp_path, monkeypatch, capsys):
     assert "suggested preamp: -6.0 dB  (worst channel FL" in out
 
 
+def test_a_balance_plays_on_its_channel_and_the_suggestion_is_shared(
+        tmp_path, monkeypatch, capsys):
+    """FL two decibels down by its balance: its post-EQ peak is +3.0
+    dBFS, so the one shared preamp comes down by 3.0 to -4.0 -- the
+    balance stays under it, untouched."""
+    fs = 48000
+    t = np.arange(2 * fs) / fs
+    sig = 10 ** (-6 / 20) * np.sin(2 * np.pi * 1000 * t)
+    n_f = int(0.1 * fs)
+    ramp = 0.5 - 0.5 * np.cos(np.pi * np.arange(n_f) / n_f)
+    sig[:n_f] *= ramp
+    sig[-n_f:] *= ramp[::-1]
+    wav = tmp_path / "cap.wav"
+    sf.write(wav, np.column_stack([sig, sig]), fs, subtype="FLOAT")
+    prof = {"id": "p1", "name": "Test Buds", "version": 8,
+            "preamp": -1.0, "ch_keys": ["FL", "FR"],
+            "channels": {"FL": {"balance": -2.0, "bands": [
+                             {"type": "PK", "freq": 1000, "gain": 12.0,
+                              "q": 1.0, "enabled": True}]},
+                         "FR": {"bands": []}}}
+    path = tmp_path / "p1.json"
+    path.write_text(json.dumps(prof))
+    monkeypatch.setattr(ah.sys, "argv", ["x", str(wav), str(path)])
+    ah.main()
+    out = capsys.readouterr().out
+    assert "preamps FL -3.0, FR -1.0" in out
+    assert "suggested preamp: -4.0 dB  (worst channel FL" in out
+
+
 def test_demo_output_is_stable(fixtures_dir, monkeypatch, capsys):
     """The legacy --demo CLI is what the ROADMAP table and old notes quote;
     keep its recommendation line stable."""

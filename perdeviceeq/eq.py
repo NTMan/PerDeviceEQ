@@ -253,7 +253,8 @@ def auto_preamp_db(p, taste=None, slots=None):
     The number is curve_max_db's over each chain with the taste appended:
     the same grid and the same band centres, read from the curves kept per
     band list (_curve_of, _peak), so it is cheap to ask for every bound
-    device.
+    device. A chain's balance is flat, so it adds to that chain's peak as
+    it is.
 
     Pure, and computed rather than stored: its inputs include the floor and
     the taste layer, and taste is not part of a profile. Storing the answer
@@ -261,7 +262,7 @@ def auto_preamp_db(p, taste=None, slots=None):
     that had been opened -- a derived number kept in the wrong house.
     """
     t = _curve_of(taste)
-    peaks = [_peak(_curve_of(c), t) for c in _chains(p, slots)]
+    peaks = [_peak(_curve_of(c), t) + bal for bal, c in _chains(p, slots)]
     return max(0.0, math.ceil(max(peaks) * 10.0 - 1e-9) / 10.0)
 
 
@@ -384,8 +385,9 @@ def sibling_tabs(ch, ch_map, keys):
 
 
 def profile_graph(p, slots=None):
-    """Inline graph string for a schema-v2 profile dict: ONE shared preamp,
-    the channels carry bands only, the floor after each.
+    """Inline graph string for a profile dict: ONE shared preamp, each
+    chain led by its channel's balance (a flat gain, emitted the way the
+    preamp is), then its bands, then the floor.
 
     `slots` is the resolved answer from resolve_slots: one entry per SINK
     channel, a profile channel name or None. Given it, the graph is that
@@ -402,25 +404,33 @@ def profile_graph(p, slots=None):
     if not (slots or p.get("ch_keys") or chans):
         return build_graph(g, [Band.from_dict(b) for b in floor_bands(p)])
     return build_graph_channels(
-        [(g, [Band.from_dict(b) for b in c]) for c in _chains(p, slots)])
+        [(g + bal, [Band.from_dict(b) for b in c])
+         for bal, c in _chains(p, slots)])
+
+
+def balance_db(chan):
+    """A profile channel's balance, dB: its level against the other
+    channels (config.SCHEMA_VERSION). Absent is 0."""
+    return float((chan or {}).get("balance") or 0.0)
 
 
 def _chains(p, slots=None):
-    """The band lists a correction graph built from `p` carries, one per
-    chain, in the order profile_graph emits them.
+    """(balance dB, band list) of each chain a correction graph built from
+    `p` carries, in the order profile_graph emits them.
 
     For each slot -- or each profile channel, when there are no slots --
-    the bands of the profile channel it names, none for a slot no profile
-    channel feeds, then the floor. With no channel at all there is one
-    chain of the floor: the shared form. Never more than PARAM_EQ_PORTS,
-    which is all one param_eq carries.
+    the balance and the bands of the profile channel it names, nothing for
+    a slot no profile channel feeds, then the floor. With no channel at
+    all there is one chain of the floor: the shared form. Never more than
+    PARAM_EQ_PORTS, which is all one param_eq carries.
     """
     tail = floor_bands(p)
     chans = p.get("channels") or {}
     keys = list(slots) if slots else (p.get("ch_keys") or list(chans.keys()))
     if not keys:
-        return [tail]
-    return [list((chans.get(k) or {}).get("bands", []) if k else []) + tail
+        return [(0.0, tail)]
+    return [(balance_db(chans.get(k)) if k else 0.0,
+             list((chans.get(k) or {}).get("bands", []) if k else []) + tail)
             for k in keys][:PARAM_EQ_PORTS]
 
 
@@ -445,17 +455,19 @@ def _chains(p, slots=None):
 def correction_graph(p, slots=None):
     """Graph 0: what the device's own correction plays, at the sink's width
     and with no preamp -- that is graph 2, and it follows the listener's
-    mode. None when no chain has an enabled band, the floor counted: the
-    device has no correction of its own then, and follows the listener."""
+    mode. None when no chain has a balance or an enabled band, the floor
+    counted: the device has no correction of its own then, and follows
+    the listener."""
     if not has_correction(p, slots):
         return None
     return profile_graph(dict(p, preamp=0.0), slots=slots)
 
 
 def has_correction(p, slots=None):
-    """Whether `p` plays anything of its own on these slots: an enabled
-    band in some chain, the floor counted."""
-    return any(b.get("enabled", True) for c in _chains(p, slots) for b in c)
+    """Whether `p` plays anything of its own on these slots: a balance or
+    an enabled band in some chain, the floor counted."""
+    return any(bal or any(b.get("enabled", True) for b in c)
+               for bal, c in _chains(p, slots))
 
 
 def taste_graph(taste):

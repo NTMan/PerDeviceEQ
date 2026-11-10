@@ -135,13 +135,19 @@ def test_auto_from_the_kept_curves_is_the_number_over_the_whole_chain():
              "channels": {k: {"bands": [_band(rnd) for _ in
                                         range(rnd.randint(0, 10))]}
                           for k in keys}}
+        for k in keys:
+            if rnd.random() < 0.5:
+                p["channels"][k]["balance"] = round(
+                    rnd.uniform(-6.0, 6.0), 2)
         if rnd.random() < 0.5:
             p["floor_hz"] = rnd.uniform(25.0, 90.0)
         else:
             p["floor_off"] = True
         taste = [_band(rnd) for _ in range(rnd.randint(0, 4))]
         slots = rnd.choice([None, keys, keys + [None]])
-        whole = [_peak(c + taste) for c in eq._chains(p, slots=slots)]
+        # a balance is flat: it moves its chain's whole curve
+        whole = [bal + _peak(c + taste)
+                 for bal, c in eq._chains(p, slots=slots)]
         want = max(0.0, math.ceil(max(whole) * 10.0 - 1e-9) / 10.0)
         assert eq.auto_preamp_db(p, taste, slots) == want
 

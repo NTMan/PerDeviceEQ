@@ -84,6 +84,18 @@ def test_store_skips_pre_epoch_loads_current(tmp_path, monkeypatch,
     assert "deprecated" in err and "re-measure" in err
 
 
+def test_store_points_a_schema_7_profile_at_its_converter(
+        tmp_path, monkeypatch, capsys):
+    """A 7 is not loaded either -- the store knows one schema -- but it
+    is not deprecated: one run of the converter carries it over."""
+    (tmp_path / "seven.json").write_text(
+        json.dumps(dict(_v2(), id="seven", version=7)))
+    st = _store(tmp_path, monkeypatch)
+    assert "seven" not in st.profiles
+    err = capsys.readouterr().err
+    assert "tools/convert_v8.py" in err and "deprecated" not in err
+
+
 def test_save_load_round_trip_keeps_blocks(tmp_path, monkeypatch):
     st = _store(tmp_path, monkeypatch)
     pid = st.save_user(dict(_v2(), version=profiles.SCHEMA_VERSION,

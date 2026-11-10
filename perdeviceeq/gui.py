@@ -16,7 +16,7 @@ built here. Backend logic (graph building, profiles, the metadata bridge to the
 WP hook) lives in the sibling package modules and is reused as-is.
 
 Editor state is kept as channel "slots": self.slots maps each channel key to
-{"preamp": float, "bands": [eq.Band]}. self.cur_ch selects which slot the
+{"bands": [eq.Band], "balance": float}. self.cur_ch selects which slot the
 single editor (graph + band table + preamp) is currently editing. On save/apply
 the slots are assembled into a profile body and handed to the tested
 profiles.save_user / ProfileStore.device_value.
@@ -114,8 +114,16 @@ def _save_favorites(ids):
 
 
 def _new_slot():
-    """Fresh empty per-channel slot (preamp 0, no bands)."""
-    return {"bands": []}
+    """Fresh empty per-channel slot: no bands, no balance."""
+    return {"bands": [], "balance": 0.0}
+
+
+def _slot_from(chan):
+    """An editor slot from a profile channel: its bands, as Band objects
+    a drag can move, and its balance."""
+    return {"bands": [eq.Band.from_dict(x)
+                      for x in (chan or {}).get("bands", [])],
+            "balance": eq.balance_db(chan)}
 
 
 class EqWindow(Adw.ApplicationWindow):
@@ -381,7 +389,8 @@ class EqWindow(Adw.ApplicationWindow):
         # The one EQ editor -- graph over band table, shared with
         # the taste layers. Edits return through _on_view_changed.
         self.view = PeqView(self._on_view_changed,
-                            on_import_file=self._import_rew)
+                            on_import_file=self._import_rew,
+                            on_balance=self._on_balance_changed)
         self.view.graph.set_content_height(240)
 
         self._canvas = None          # measurement overlay cache
@@ -499,6 +508,17 @@ class EqWindow(Adw.ApplicationWindow):
         if self._loading:
             return
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
+        self._ensure_editable()
+        self._on_edit()
+
+    def _on_balance_changed(self, db):
+        """The Balance row of the channel in view: an edit of the
+        device's correction like a band's -- a built-in is copied first,
+        the device hears it, Auto follows, and the save and the undo
+        step come as for any edit."""
+        if self._loading:
+            return
+        self._slot(self.cur_ch)["balance"] = db
         self._ensure_editable()
         self._on_edit()
 
@@ -760,6 +780,10 @@ class EqWindow(Adw.ApplicationWindow):
             pass
         pre = (float(getattr(self, "preamp", 0.0) or 0.0)
                if preamp is None else float(preamp))
+        # and the channel plays at its own level: its balance rides on
+        # the preamp
+        pre += float((self.slots.get(self.cur_ch) or {})
+                     .get("balance") or 0.0)
         try:
             return np.asarray(eq.response_db(pre, bands, list(freqs)),
                               float)
@@ -1960,9 +1984,14 @@ class EqWindow(Adw.ApplicationWindow):
         return self.slots.setdefault(ch, _new_slot())
 
     def _slot_to_dict(self, ch):
-        """Serialize a slot into the plain profile-body form."""
+        """Serialize a slot into the plain profile-body form: a 0 dB
+        balance is no balance, and is left out (ProfileStore._sane_slot)."""
         s = self.slots.get(ch) or _new_slot()
-        return {"bands": [bnd.to_dict() for bnd in s["bands"]]}
+        out = {"bands": [bnd.to_dict() for bnd in s["bands"]]}
+        bal = round(float(s.get("balance") or 0.0), 2)
+        if bal:
+            out["balance"] = bal
+        return out
 
     def _load_floor(self):
         """The floor is the profile's: whatever puts another profile in
@@ -2163,7 +2192,8 @@ class EqWindow(Adw.ApplicationWindow):
         declared = set(self.ch_map.get(k) or k for k in self.ch_keys) \
             if getattr(self, "ch_map", None) else set(self.ch_keys)
         full = {k: d for k, d in prof.items()
-                if (d or {}).get("bands") or k in declared}
+                if (d or {}).get("bands") or (d or {}).get("balance")
+                or k in declared}
         order = eq.keep_channel_order(
             full, (p or {}).get("ch_keys")
             or list(((p or {}).get("channels") or {})))
@@ -2194,6 +2224,7 @@ class EqWindow(Adw.ApplicationWindow):
             prof = self.store.get(self.current_pid) or {}
             self.view.export_parts = (prof.get("name") or "", ch)
             self.view.set_bands([b.to_dict() for b in self.bands])
+            self.view.set_balance(slot.get("balance", 0.0))
             self.view.set_floor(eq.floor_bands(
                 self.store.get(self.current_pid)))
             self.view.set_zone(eq.fit_zone(
@@ -2366,9 +2397,7 @@ class EqWindow(Adw.ApplicationWindow):
                 # channel it feeds from, and a tab the map does not answer
                 # for carries its own name into the profile
                 tgt = (self.ch_map.get(k) if self.ch_map else k) or k
-                src = pchan.get(tgt) or {"bands": []}
-                self.slots[k] = {"bands": [eq.Band.from_dict(x)
-                                           for x in src.get("bands", [])]}
+                self.slots[k] = _slot_from(pchan.get(tgt))
 
             self.cur_ch = (self.cur_ch if self.cur_ch in self.slots
                            else next(iter(self.slots), ""))
@@ -2521,9 +2550,7 @@ class EqWindow(Adw.ApplicationWindow):
                 self.slots[k] = self.slots[other]
                 return
         p = self.store.get(self.current_pid) or {}
-        src = (p.get("channels") or {}).get(tgt) or {"bands": []}
-        self.slots[k] = {"bands": [eq.Band.from_dict(x)
-                                   for x in src.get("bands", [])]}
+        self.slots[k] = _slot_from((p.get("channels") or {}).get(tgt))
 
     def _declare_channel(self, key):
         """The profile gains a side, empty.
@@ -2672,7 +2699,8 @@ class EqWindow(Adw.ApplicationWindow):
             # about a tab that was just unpaired put an empty slot back
             # where the delete had removed one -- which then looked like
             # a slot worth keeping when the pair came back
-            if (self.slots.get(k) or {}).get("bands") and t not in pch:
+            s = self.slots.get(k) or {}
+            if (s.get("bands") or s.get("balance")) and t not in pch:
                 pch.append(t)
         was = getattr(self, "ch_map", None)
         self.ch_map = self.store.reconcile_map(self._dev(), pch,
@@ -2864,8 +2892,7 @@ class EqWindow(Adw.ApplicationWindow):
             # so undo restores bands and leaves the pairs alone
             self.slots = {}
             for k, sd in snap["slots"].items():
-                self.slots[k] = {"bands": [eq.Band.from_dict(x)
-                                           for x in sd.get("bands", [])]}
+                self.slots[k] = _slot_from(sd)
             for k in self.ch_keys:
                 self.slots.setdefault(k, _new_slot())
             self.cur_ch = (view if view in self.ch_keys
@@ -3238,8 +3265,9 @@ class EqWindow(Adw.ApplicationWindow):
         tail = [eq.Band.from_dict(b)
                 for b in self.pref_layers.active_bands()]
         tail += self._floor_tail()
-        bounds = {k: eq.headroom_bound_db(self.preamp,
-                                          s["bands"] + tail)
+        bounds = {k: eq.headroom_bound_db(
+                      self.preamp + s.get("balance", 0.0),
+                      s["bands"] + tail)
                   for k, s in self._applied_chains()}
         bound, key = max(((v, k) for k, v in bounds.items()),
                          key=lambda t: t[0])
@@ -3284,18 +3312,23 @@ class EqWindow(Adw.ApplicationWindow):
         return math.ceil(self._sess_peak * 10.0 - 1e-9) / 10.0
 
     def _meter_chains(self):
-        """(preamp, per-input-channel band lists) the device actually runs:
-        identity everywhere in Bypass -- the meter then shows the raw
-        input, closing the hot-master-in-bypass blind spot."""
+        """(preamp, per-input-channel band lists, per-input-channel
+        balances) the device actually runs: identity everywhere in
+        Bypass -- the meter then shows the raw input, closing the
+        hot-master-in-bypass blind spot."""
         if self.bypass_row.get_active():
-            return 0.0, [[] for _ in self.sink_keys]
+            return (0.0, [[] for _ in self.sink_keys],
+                    [0.0 for _ in self.sink_keys])
         tail = [eq.Band.from_dict(b)
                 for b in self.pref_layers.active_bands()]
         # an unpaired channel plays the tail alone, exactly as the
         # published graph gives it
-        return self.preamp, [((self._slot(k)["bands"]
-                               if k in self.ch_keys else []) + tail)
-                             for k in self.sink_keys]
+        paired = [k in self.ch_keys for k in self.sink_keys]
+        return (self.preamp,
+                [((self._slot(k)["bands"] if p else []) + tail)
+                 for k, p in zip(self.sink_keys, paired)],
+                [(self._slot(k).get("balance", 0.0) if p else 0.0)
+                 for k, p in zip(self.sink_keys, paired)])
 
     def _update_meter(self):
         """Single choke point (first line of _apply_now): keep the engine's
@@ -3322,8 +3355,8 @@ class EqWindow(Adw.ApplicationWindow):
                             or not self._meter.alive())
         if restart:
             self._meter.stop()      # never swap a running worker's count
-        pre, chains = self._meter_chains()
-        self._meter.set_chains(pre, chains)
+        pre, chains, bals = self._meter_chains()
+        self._meter.set_chains(pre, chains, balances_db=bals)
         if len(self._bal) != len(chains):
             self._bal = [self._Ballistics() for _ in chains]
             self._sess_samples = 0
@@ -3774,8 +3807,10 @@ class EqWindow(Adw.ApplicationWindow):
         over the correction, the floor and the taste in Auto, one
         number for every device in Manual. The import is an edit of
         the bands like any other, and the preamp follows it the same
-        way."""
-        self.slots[self.cur_ch] = {"bands": bands}
+        way. The channel's balance stays: the file brings bands."""
+        self.slots[self.cur_ch] = {
+            "bands": bands,
+            "balance": self._slot(self.cur_ch).get("balance", 0.0)}
         self._load_slot(self.cur_ch)
         self._ensure_editable()
         self._on_edit()

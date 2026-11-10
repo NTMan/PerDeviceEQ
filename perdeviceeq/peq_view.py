@@ -14,7 +14,14 @@ are injected via :meth:`set_curves`, never fetched.
 Rendering and interaction are lifted verbatim from the main
 window's editor: the same margins, palette, dB window around the
 preamp, 11 px handle hit radius, create-on-empty-plot, the
-frequency guard for sub-plot trim bands, remove on right click.
+frequency guard for bands below the plot, remove on right click.
+
+A device channel's editor also shows the channel's balance, its own
+flat gain, in a row above the column header: a number of the
+channel, not a band -- no handle on the plot, no colour, type,
+frequency or Q, nothing to switch off or delete. The curves count
+it. Edits go to ``on_balance(db)``; an owner that does not pass it
+(a taste layer has no channels) gets no such row.
 """
 import contextlib
 import math
@@ -76,10 +83,15 @@ class PeqView(Gtk.Box):
     """
 
     def __init__(self, on_changed, preamp=0.0, compact=False,
-                 on_import_file=None, export_prefix="pdeq"):
+                 on_import_file=None, export_prefix="pdeq",
+                 on_balance=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL,
                          spacing=6)
         self._on_changed = on_changed
+        self._on_balance = on_balance
+        self._balance = 0.0
+        self._balance_spin = None
+        self._top = 0               # grid rows above the column header
         self.export_prefix = export_prefix
         self.export_parts = ()      # set by the owner, who knows
         # an editor verb, not an "import": replaces THIS view's
@@ -191,6 +203,17 @@ class PeqView(Gtk.Box):
 
     def get_bands(self):
         return [b.to_dict() for b in self._bands]
+
+    def set_balance(self, db):
+        """The channel's balance, dB, as the owner holds it."""
+        self._balance = float(db or 0.0)
+        if self._balance_spin is not None:
+            held, self._loading = self._loading, True
+            try:
+                self._balance_spin.set_value(self._balance)
+            finally:
+                self._loading = held
+        self.graph.queue_draw()
 
     def _sync_strip(self):
         """The strip stands for either organ. The warning band
@@ -673,7 +696,7 @@ class PeqView(Gtk.Box):
         best, bestd = None, r * r
         wlo, whi = self._y_window()
         for b in self._bands:
-            bx = self._x_of(max(b.freq, FMIN))  # freq-0 trim: left edge
+            bx = self._x_of(max(b.freq, FMIN))  # below the plot: its edge
             by = self._y_of(max(wlo, min(whi, b.gain)))
             d = (bx - x) ** 2 + (by - y) ** 2
             if d <= bestd:
@@ -779,7 +802,7 @@ class PeqView(Gtk.Box):
                 cr.move_to(x, y) if i == 0 else cr.line_to(x, y)
             cr.stroke()
             traces["measured"] = tr_m
-            resp = eq.response_db(self._preamp,
+            resp = eq.response_db(self._preamp + self._balance,
                                   self._bands + self._floor, fo)
             tgt = self._tgt
             if "target" in self._names():
@@ -913,7 +936,7 @@ class PeqView(Gtk.Box):
             text_rgba=(1.0, 1.0, 1.0, 0.85),
             bg_rgba=(0.08, 0.08, 0.10, 0.90))
         freqs = _log_freqs(int(max(60, pw_)))
-        curve = eq.response_db(self._preamp,
+        curve = eq.response_db(self._preamp + self._balance,
                                 self._bands + self._floor, freqs)
         if self._active:
             er, eg, eb, ea, ew = self._dress(
@@ -1014,9 +1037,10 @@ class PeqView(Gtk.Box):
             return
         f = self._f_of(sx + ox); db = self._db_of(sy + oy)
         if f is not None and self._drag_band.freq >= FMIN:
-            # a sub-plot band (the freq-0 balance trim) keeps its
-            # frequency under drag -- the plot cannot express it and
-            # a vertical gain drag must not retune it to 20 Hz
+            # a band below the plot (the frequency field goes down to
+            # 10 Hz) keeps its frequency under drag -- the plot cannot
+            # express it and a vertical gain drag must not retune it
+            # to 20 Hz
             self._drag_band.freq = f
         if db is not None:
             self._drag_band.gain = db
@@ -1046,6 +1070,13 @@ class PeqView(Gtk.Box):
             nxt = child.get_next_sibling()
             self.grid.remove(child)
             child = nxt
+        # the channel's balance stands above the header, which is
+        # what sets it off from the bands
+        self._balance_spin = None
+        self._top = 0
+        if self._on_balance is not None:
+            self._attach_balance(0)
+            self._top = 1
         heads = ("", "Type", "Freq (Hz)", "Gain (dB)", "Q",
                  "On", "", "")
         for c, t in enumerate(heads):
@@ -1053,9 +1084,9 @@ class PeqView(Gtk.Box):
             lbl.add_css_class("dim-label")
             lbl.add_css_class("caption")
             if t.startswith("Freq"):
-                self.grid.attach(self._sort_head(lbl), c, 0, 1, 1)
+                self.grid.attach(self._sort_head(lbl), c, self._top, 1, 1)
             else:
-                self.grid.attach(lbl, c, 0, 1, 1)
+                self.grid.attach(lbl, c, self._top, 1, 1)
         # the rows ARE the storage order, verbatim -- nothing
         # reshuffles under the hand that is editing it
         shown = self._bands
@@ -1091,7 +1122,7 @@ class PeqView(Gtk.Box):
             repl.connect("clicked",
                          lambda *_: self._on_import_file())
             acts.append(repl)
-        self.grid.attach(acts, 1, len(self._bands) + 1, 7, 1)
+        self.grid.attach(acts, 1, self._top + len(self._bands) + 1, 7, 1)
         # the walk's verdict: Tab reads a band row as written --
         # type, freq, gain, Q, on/off, delete -- the on/off is
         # second to last, not first, whatever geometry says
@@ -1120,8 +1151,38 @@ class PeqView(Gtk.Box):
         self._bands.sort(key=lambda b: b.freq)
         self._rebuild_table()
 
+    def _attach_balance(self, row):
+        """The Balance row: a label where a band shows its type and a
+        gain field in the Gain column, stepping as a band's gain does,
+        with two decimals -- the fit writes the balance to the
+        hundredth -- and either sign, as the hand may move any number
+        of the correction."""
+        lbl = Gtk.Label(label="Balance", xalign=0.0)
+        lbl.set_margin_start(10)
+        self.grid.attach(lbl, 1, row, 1, 1)
+        sp = Gtk.SpinButton.new_with_range(-24.0, 24.0, 0.1)
+        sp.set_digits(2)
+        sp.set_hexpand(True)
+        sp.set_width_chars(5)
+        sp.set_max_width_chars(5)
+        sp.set_tooltip_text("This channel's level against the "
+                            "others, dB")
+        sp.set_value(self._balance)
+        sp.connect("value-changed", self._on_balance_spin)
+        _tame_scroll(sp, self._on_widget_scroll)
+        self.grid.attach(sp, 3, row, 1, 1)
+        self._focus_stops.append(sp)
+        self._balance_spin = sp
+
+    def _on_balance_spin(self, sp):
+        if self._loading:
+            return
+        self._balance = round(sp.get_value(), 2)
+        self.graph.queue_draw()
+        self._on_balance(self._balance)
+
     def _attach_band(self, i, b):
-        row = i + 1
+        row = self._top + i + 1
         dot = Gtk.DrawingArea()
         dot.update_property(
             [Gtk.AccessibleProperty.LABEL],

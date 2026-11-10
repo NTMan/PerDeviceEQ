@@ -4244,9 +4244,10 @@ class MeasureWindow(Adw.Window):
     def _target_is_empty(self, ch):
         """Nothing has been measured or typed on this target.
 
-        Takes and bands both count: a target carries the takes of this
-        sitting and whatever curve the main window has on it, and
-        neither is something a stray click should be able to erase."""
+        Takes, bands and a balance all count: a target carries the
+        takes of this sitting and whatever curve the main window has on
+        it, and none of it is something a stray click should be able
+        to erase."""
         if self.session is not None and self.session.takes_of(ch):
             return False
         key = self.ch_keys[ch] if 0 <= ch < len(self.ch_keys) else None
@@ -4255,7 +4256,7 @@ class MeasureWindow(Adw.Window):
         # sitting are the whole answer.
         p = self.parent.store.get(self.edit_pid) if self.edit_pid else {}
         band = (((p or {}).get("channels") or {}).get(key) or {})
-        return not (band.get("bands") or [])
+        return not (band.get("bands") or band.get("balance"))
 
     def _del_pair(self):
         """Remove the target in view -- the way back from a wrong Add.

@@ -265,9 +265,8 @@ def fit_limits(t):
 def chain_violations(t, bands):
     """Why these exact bands cannot enter this target as-is: one
     sentence per violated declaration, aggregated over bands;
-    empty means 1:1 is legal. Judge bands AFTER fold_flat so a
-    freq-0 balance-trim shelf (which exports as shared gain, not
-    as a band) cannot false-positive the frequency range."""
+    empty means 1:1 is legal. Judge the bands a writer exports
+    (enabled_bands): a disabled one is not among them."""
     on = [b for b in bands if b.get("enabled", True)]
     out = []
     mb = t.get("max_bands")
@@ -311,26 +310,29 @@ def fit_band(profile):
 
 
 def composed_chains(profile, taste_bands=None):
-    """[(key, preamp, band_dicts)] of the chain the app actually
+    """[(key, gain, band_dicts)] of the chain the app actually
     plays: the profile's own slots with the active taste layer's
-    bands appended to EVERY chain and the one shared preamp -- what
-    a device's node plays in three graphs (eq.py, "what a node
-    plays"), as one chain per channel.
+    bands appended to EVERY chain, each at its channel's balance --
+    what a device's node plays in three graphs (eq.py, "what a
+    node plays"), as one chain per channel, short of the preamp.
+    The preamp is the window's, Auto or set by hand against the
+    meter, and it stays home: a file carries Safe over what it
+    carries (safe_shift).
 
     A profile with no channels still has a chain to export -- the
-    preamp and the taste tail are played whatever the correction is
-    -- and that chain has NO channel name, because no channel
-    produced it. Its key is None rather than a word: every consumer
-    below decides by the number of chains, so the name is never
-    read, and inventing one would put a value in the channel
-    vocabulary that no sink can ever have."""
+    taste tail is played whatever the correction is -- and that
+    chain has NO channel name, because no channel produced it. Its
+    key is None rather than a word: every consumer below decides
+    by the number of chains, so the name is never read, and
+    inventing one would put a value in the channel vocabulary that
+    no sink can ever have."""
     tail = [dict(b) for b in (taste_bands or [])]
-    g = float(profile.get("preamp", 0.0))
     chans = profile.get("channels") or {}
     keys = list(profile.get("ch_keys") or chans.keys())
-    out = [(k, g, list((chans.get(k) or {}).get("bands", [])) + tail)
+    out = [(k, eq.balance_db(chans.get(k)),
+            list((chans.get(k) or {}).get("bands", [])) + tail)
            for k in keys]
-    return out or [(None, g, list(tail))]
+    return out or [(None, 0.0, list(tail))]
 
 
 def to_bands(band_dicts):
@@ -343,22 +345,10 @@ def chain_response(preamp, band_dicts, freqs):
     return eq.response_db(preamp, to_bands(band_dicts), freqs)
 
 
-def fold_flat(preamp, bands):
-    """Fold flat-gain shelf bands (freq < 1 Hz: the balance-trim
-    trick fit_peq uses) into the preamp -- importers reject Fc 0 and
-    the in-band response is identical. Disabled bands are dropped
-    here once: no writer exports them. Returns
-    (preamp, bands, folded_db)."""
-    out, folded = [], 0.0
-    for b in bands:
-        if not b.get("enabled", True):
-            continue
-        if (float(b.get("freq", 0.0)) < 1.0
-                and b.get("type") in ("HSC", "LSC")):
-            folded += float(b.get("gain", 0.0))
-        else:
-            out.append(dict(b))
-    return preamp + folded, out, folded
+def enabled_bands(bands):
+    """The bands a writer exports: the enabled ones, copied. A disabled
+    band plays nothing, and no writer has a way to say it."""
+    return [dict(b) for b in bands if b.get("enabled", True)]
 
 
 # ---- collapse (the per-channel policy) --------------------------------
@@ -547,30 +537,21 @@ def null_test_parametric(text, freqs, ref_resp):
     return max(abs(a - b) for a, b in zip(got, ref_resp))
 
 
-def headroom_preamp(preamp, chain_bands, auto=False, n=480):
-    """The preamp an exported artifact carries. The profile value
-    is Safe for the DESKTOP composition (device + whatever taste is
-    active there); the artifact may bake a different composition,
-    so its level must be computed for what is actually in the file.
-    Under auto=True the value IS the composed Safe -- the desktop
-    Auto formula applied to the exported chains, raised or lowered
-    as the composition demands (dropping a +12 dB taste must give
-    the loudness back). Under manual the profile value is intent:
-    it is respected and only lowered, never raised, when the
-    composition peaks past it. The peak is rounded up to the 0.1 dB
-    step exactly like the desktop spin, so the number here matches
-    the number Auto would show at home for the same chains.
-    chain_bands is an iterable of band-dict lists.
-    Returns (preamp_out, moved_db) with moved_db = out - in."""
+def safe_shift(chains, n=480):
+    """What Safe moves the chains of an artifact by: minus their
+    composed peak, each chain at its own gain (its balance), over
+    20 Hz-20 kHz, rounded up to the 0.1 dB step like the desktop
+    spin, and never a boost -- the desktop Auto formula over the
+    chains the file carries, and over nothing it does not carry.
+    A file gets Safe and no other level: a preamp set by hand at
+    home stands on the meter and the session clamp, and a foreign
+    equalizer has neither.
+    chains is [(key, gain_db, band dicts)]; returns the shift, dB."""
     grid = log_grid(20.0, 20000.0, n)
-    peak = 0.0
-    for bands in chain_bands:
-        resp = chain_response(0.0, bands, grid)
-        peak = max(peak, max(resp))
+    peak = max(max(chain_response(g, bands, grid))
+               for _k, g, bands in chains)
     t = max(0.0, math.ceil(peak * 10.0 - 1e-9) / 10.0)
-    safe = -t if t else 0.0
-    adj = safe if auto else min(float(preamp), safe)
-    return adj, adj - float(preamp)
+    return -t if t else 0.0
 
 
 # ---- the measurement source --------------------------------------------
@@ -605,7 +586,7 @@ def desired_from_canvas(profile, taste_bands=None):
     fit was asked for, rebuilt from the canvas by the fit's own
     pipeline -- channel_results over fit.takes with the fit's
     smoothing, the flat target per channel over the fit band, the
-    balance trim added as the flat offset it is, and the taste
+    balance added as the flat offset it is, and the taste
     layer, when given, as a response overlay on every channel.
     Uncapped: max_boost is the fit's confession, not the desire.
     Raises refit.RefitError when the canvas cannot be rebuilt."""
@@ -629,9 +610,9 @@ def desired_from_canvas(profile, taste_bands=None):
     if trims:
         for key in curves:
             curves[key] = curves[key] + trims.get(key, 0.0)
-        note = "balance trims included"
+        note = "balance included"
     else:
-        note = "no balance trim (%s)" % why
+        note = "no balance (%s)" % why
     if taste_bands:
         tail = chain_response(0.0, taste_bands, fg)
         for key in curves:
@@ -659,10 +640,11 @@ def sample_curve(fg, curve, freqs):
 
 def parallel_mean(chains, freqs):
     """The band-table mean for a single-chain destination, when it
-    is honestly definable: fold each chain, sort by frequency,
-    pair the bands by position, average pairwise -- frequency and
-    Q geometrically (ratio-like quantities), gain and the folded
-    flat trims arithmetically (dB is linear) -- and VERIFY the
+    is honestly definable: take each chain's enabled bands, sort by
+    frequency, pair the bands by position, average pairwise --
+    frequency and Q geometrically (ratio-like quantities), gain and
+    the chains' own gains (the preamp with each channel's balance)
+    arithmetically (dB is linear) -- and VERIFY the
     result against the true per-frequency mean of the chain
     responses over `freqs`. Parallel topologies are what the fit's
     placement leash produces on purpose, so this is the common
@@ -673,25 +655,23 @@ def parallel_mean(chains, freqs):
     the verified worst deviation from the true mean (within
     NULL_PASS_DB), or (None, why) when the tables are not parallel
     or the pairwise average misses the true mean."""
-    folded = []
-    for _k, g, bands in chains:
-        fg, fb, _f = fold_flat(g, bands)
-        folded.append((fg, sorted(fb, key=lambda b:
-                                  float(b.get("freq", 0.0)))))
-    counts = sorted({len(fb) for _g, fb in folded})
+    tables = [(g, sorted(enabled_bands(bands),
+                         key=lambda b: float(b.get("freq", 0.0))))
+              for _k, g, bands in chains]
+    counts = sorted({len(fb) for _g, fb in tables})
     if len(counts) != 1:
         return None, ("the channels' band counts differ (%s)"
                       % ", ".join(str(c) for c in counts))
     types = {tuple(b.get("type") for b in fb)
-             for _g, fb in folded}
+             for _g, fb in tables}
     if len(types) != 1:
         return None, "the channels' band types are not parallel"
-    n = len(folded[0][1])
-    m = float(len(folded))
-    g_m = sum(fg for fg, _fb in folded) / m
+    n = len(tables[0][1])
+    m = float(len(tables))
+    g_m = sum(g for g, _fb in tables) / m
     bands_m = []
     for i in range(n):
-        col = [fb[i] for _g, fb in folded]
+        col = [fb[i] for _g, fb in tables]
         f = math.exp(sum(math.log(float(b["freq"]))
                          for b in col) / m)
         q = math.exp(sum(math.log(float(b.get("q", 1.0)))
@@ -786,7 +766,7 @@ def chain_fit_residual(fg, desired, bands, cap=None):
     desired correction, for the device strip: how well the CURRENT
     chain -- fitted or hand-edited -- realizes what the canvas
     asks. The constant part of the difference rides legitimately
-    in the preamp and trims, so it is removed before the max is
+    in the preamp and the balance, so it is removed before the max is
     taken; `cap` clips the desired's boost first, because the
     fit's own target never asked past it."""
     d = list(desired)
@@ -842,9 +822,8 @@ def audit_target(t, chains, freqs):
             r.append("mean of channels")
         return 4, "fit", r
     if not multi:
-        _k, g, bands = chains[0]
-        _fg, fb, _f = fold_flat(g, bands)
-        gaps = _terse_gaps(t, fb)
+        _k, _g, bands = chains[0]
+        gaps = _terse_gaps(t, enabled_bands(bands))
         return (3, "re-fit", gaps) if gaps else (0, "", [])
     pm, _why = parallel_mean(chains, freqs)
     if pm:
@@ -864,8 +843,8 @@ def audit_target(t, chains, freqs):
 
 def center_curve(vals):
     """(centered, mean): split a curve into shape and level. The
-    re-fit paths fit the shape; the level rides in the exported
-    preamp (and under Auto the composed Safe owns it outright)."""
+    re-fit paths fit the shape; the level is the chain's own gain,
+    which Safe moves like any chain's (safe_shift)."""
     off = sum(vals) / float(len(vals))
     return [v - off for v in vals], off
 
@@ -927,7 +906,8 @@ PA_CH = {"FL": PA_LEFT, "FR": PA_RIGHT}
 
 def _pa_band(b, target, channels):
     """One profile band as a Poweramp band dict, clamped into the
-    target's ranges. A flat-gain trim shelf (freq < 1 Hz) becomes a
+    target's ranges. A flat gain (a shelf at freq < 1 Hz: what
+    poweramp_json writes for a channel's own level) becomes a
     Low Shelf at the frequency CEILING: full gain everywhere below
     the corner, and the shortfall lives above the fit band instead
     of inside it (a corner at the floor would put the half-gain
@@ -956,9 +936,10 @@ def preamp_spill(preamp, target):
     range ends and its importer clamps silently -- a -16.2 dB
     preamp came back -12.0, 4.2 dB of headroom gone and a clip
     risk shipped with a green checkmark. The spill keeps the
-    composition identical: it lands as flat per-channel gain (the
-    freq-0 trim mechanic), so file preamp + bands still equals
-    intent to the last hundredth, and the null test proves it."""
+    composition identical: it lands as flat per-channel gain (a
+    shelf at 0 Hz, which plays as a gain; _pa_band writes it as
+    Poweramp can hold it), so file preamp + bands still equals
+    the chain to the last hundredth, and the null test proves it."""
     pr = target.get("preamp_range")
     if not pr:
         return float(preamp), 0.0
@@ -979,34 +960,31 @@ def poweramp_json(target, chains, name):
     """A Poweramp Equalizer preset JSON of the WHOLE chain set --
     the first writer that does not collapse. Every enabled band is
     routed with the app's own channels field (FL left, FR right,
-    a single chain to both); the shared preamp lands in the preset
-    preamp, and the app's own inert LP/HP pair leads the band list
-    -- its importer eats the first two bands of a file without it.
+    a single chain to both). The app has one preamp: the loudest
+    chain's gain lands in it, and a chain's own level below that
+    one -- its balance against the loudest -- leads the chain's
+    bands as a flat band of its own channel, together with what
+    the preamp range could not hold (preamp_spill). The app's own
+    inert LP/HP pair leads the band list -- its importer eats the
+    first two bands of a file without it.
     JSON has no comment channel, so provenance travels in the
     preset name and the wizard page, not in header lines.
     Returns the JSON text."""
     if not poweramp_stereo_keys(chains):
         raise ValueError("chain keys %r do not map onto L/R"
                          % sorted(k for k, _g, _b in chains))
-    preamp, spill = preamp_spill(chains[0][1], target)
+    top = max(g for _k, g, _b in chains)
+    preamp, spill = preamp_spill(top, target)
     out_bands = [dict(b) for b in PA_INERT_PAIR]
-    for key, _g, bands in chains:
+    for key, g, bands in chains:
         ch = PA_BOTH if len(chains) == 1 else PA_CH[key]
-        poured = False
-        for b in bands:
-            if not b.get("enabled", True):
-                continue
-            if (spill and not poured and b["type"] == "HSC"
-                    and float(b["freq"]) < 1.0):
-                b = dict(b, gain=round(float(b["gain"]) + spill,
-                                       2))
-                poured = True
-            out_bands.append(_pa_band(b, target, ch))
-        if spill and not poured:
+        flat = round(g - top + spill, 2)
+        if flat:
             out_bands.append(_pa_band(
-                {"type": "HSC", "freq": 0.0,
-                 "gain": round(spill, 2),
+                {"type": "HSC", "freq": 0.0, "gain": flat,
                  "q": 1.0, "enabled": True}, target, ch))
+        out_bands.extend(_pa_band(b, target, ch)
+                         for b in enabled_bands(bands))
     preset = {"name": name, "preamp": preamp,
               "parametric": True, "bands": out_bands}
     # byte shape of the app's own export: tab indent, no trailing

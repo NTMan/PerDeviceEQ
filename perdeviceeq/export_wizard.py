@@ -78,11 +78,12 @@ class ExportDialog(Adw.Dialog):
 
     def _chain_summary(self, taste=True):
         """One sentence describing the SOURCE: profile, taste layer
-        when included, chain count. No level figure: the profile
-        preamp is not what an artifact carries (headroom lowers it,
-        a graphic line has none at all), so each writer states its
-        own effective level in the status instead. Phrased so no
-        line ever matches the AutoEq "Preamp:" shape."""
+        when included, chain count. No level figure: the window's
+        preamp is not what an artifact carries -- a file gets Safe
+        over what it carries, and a graphic line has no preamp at
+        all -- so each writer states its own level in the status
+        instead. Phrased so no line ever matches the AutoEq
+        "Preamp:" shape."""
         s = "Profile \u201c%s\u201d" % self.body.get("name", "?")
         if self.taste_name and taste:
             s += " + taste layer \u201c%s\u201d" % self.taste_name
@@ -470,7 +471,6 @@ class ExportDialog(Adw.Dialog):
         writer = t["writer"]
         taste = st.get("taste", True)
         allc = self.chains if taste else self.chains_plain
-        auto = bool(self.body.get("preamp_auto", True))
         nf = xp.log_grid(self.flo, self.fhi, _NULL_N)
         if writer == "pdeq":
             # the native row: no chains, no taste, no bake --
@@ -504,13 +504,14 @@ class ExportDialog(Adw.Dialog):
                 # chain to both channels: the key rides along only so
                 # the tuple keeps its shape
                 chains = [(st["policy"], g, bands)]
-            adj, moved = xp.headroom_preamp(
-                chains[0][1], [b for _k, _g, b in chains],
-                auto=auto)
-            if moved:
-                chains = [(k, adj, b) for k, _g, b in chains]
+            # Safe over the chains the preset carries; the louder
+            # chain's level is the preset's one preamp, and another
+            # chain stands its balance below it
+            s = xp.safe_shift(chains)
+            chains = [(k, g + s, b) for k, g, b in chains]
+            top = max(g for _k, g, _b in chains)
             text = xp.poweramp_json(t, chains, name)
-            clamped, spill = xp.preamp_spill(adj, t)
+            clamped, spill = xp.preamp_spill(top, t)
             errs = xp.null_test_poweramp(text, chains, nf)
             worst = max(errs.values())
             per = ", ".join("%s %.2f" % (k, v)
@@ -519,10 +520,14 @@ class ExportDialog(Adw.Dialog):
                        "CHECK, above the %.1f dB ceiling"
                        % xp.NULL_PASS_DB)
             line = ("Null test per chain over %s: %s dB -- %s."
-                    " Preset preamp %+.1f dB%s."
-                    % (self._band_str(), per, verdict, clamped,
-                       (" (lowered %.1f dB for headroom)" % -moved)
-                       if moved < 0 and not auto else ""))
+                    " Preset preamp %+.1f dB, Safe over the"
+                    " preset's chains."
+                    % (self._band_str(), per, verdict, clamped))
+            below = ["%s %+.2f dB" % (k, g - top)
+                     for k, g, _b in chains if top - g >= 0.005]
+            if below:
+                line += (" Below it by its balance, as a flat band"
+                         " of its channel: %s." % ", ".join(below))
             if spill:
                 line += (" %+.1f dB beyond the target's preamp"
                          " range rides as a flat band per"
@@ -550,14 +555,13 @@ class ExportDialog(Adw.Dialog):
             else:
                 g, bands, note = xp.pick_chain(allc, st["policy"])
             if refit_why is None:
-                fg, fbands, folded = xp.fold_flat(g, bands)
+                fg, fbands = g, xp.enabled_bands(bands)
                 viol = xp.chain_violations(t, fbands)
                 if viol:
                     refit_why = "; ".join(viol)
             if refit_why:
                 self._bake_refit_async(st, t, writer, taste,
-                                       allc, auto, nf, maxb,
-                                       refit_why)
+                                       allc, nf, maxb, refit_why)
                 return
             else:
                 hdr = self._header(t, note, taste)
@@ -569,16 +573,11 @@ class ExportDialog(Adw.Dialog):
                 if tl:
                     hdr.append("Target limits: %s -- the chain"
                                " fits as-is." % tl)
-                if folded:
-                    hdr.append("Flat-gain trim folded into the"
-                               " shared gain (%+.1f dB)." % folded)
-                fg, moved = xp.headroom_preamp(fg, [fbands],
-                                               auto=auto)
-                if moved < 0 and not auto:
-                    hdr.append("Shared gain lowered %.1f dB so the"
-                               " composed chain stays under 0 dBFS."
-                               % -moved)
-                ref = xp.chain_response(g + moved, bands, nf)
+                # Safe over the one chain the file carries, at its
+                # own gain: the channel's balance, or the channels'
+                # mean
+                fg = g + xp.safe_shift([(None, g, fbands)])
+                ref = xp.chain_response(fg, bands, nf)
                 psuf = ("" if perr is None else
                         " Mean by band average, %.2f dB vs the"
                         " true mean." % perr)
@@ -587,7 +586,8 @@ class ExportDialog(Adw.Dialog):
                 err = xp.null_test_parametric(text, nf, ref)
                 self._set_status(
                     st, self._null_line(err)
-                    + " Export preamp %+.1f dB." % fg + psuf,
+                    + " Export preamp %+.1f dB, Safe of the chain."
+                    % fg + psuf,
                     err <= xp.NULL_PASS_DB)
         elif writer == "graphiceq":
             grid = xp.graphic_grid()
@@ -689,7 +689,7 @@ class ExportDialog(Adw.Dialog):
         st["view"].get_buffer().set_text(text)
 
     def _bake_refit_async(self, st, t, writer, taste, allc,
-                          auto, nf, maxb, why):
+                          nf, maxb, why):
         """The optimizer takes seconds on a real profile; freezing
         the main loop until GNOME offers Force Quit is not a
         progress report. The math runs on a worker thread -- pure
@@ -728,7 +728,7 @@ class ExportDialog(Adw.Dialog):
         def work():
             try:
                 res = self._bake_refit(st, t, writer, taste,
-                                       allc, auto, nf, maxb, why,
+                                       allc, nf, maxb, why,
                                        progress=on_prog)
             except Exception as e:
                 res = e
@@ -752,14 +752,14 @@ class ExportDialog(Adw.Dialog):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _bake_refit(self, st, t, writer, taste, allc, auto, nf,
+    def _bake_refit(self, st, t, writer, taste, allc, nf,
                     maxb, why, progress=None):
         """A band-domain export through the export-time re-fit: the
         mean policy, or a chain over the target's band budget. The
         desired comes from the canvas under the measurement source,
         from the chain response otherwise; center_curve splits it
-        into shape (the bands realize it) and level (rides in the
-        preamp, and under Auto the composed Safe owns it outright).
+        into shape (the bands realize it) and level (the chain's
+        own gain, which Safe moves like any chain's).
         The band budget is the target's max_bands, else the
         profile's own fit budget (params.bands), else the richest
         chain -- so two unbudgeted parametric targets, or one
@@ -779,8 +779,8 @@ class ExportDialog(Adw.Dialog):
         dB taste shelf is intent, not a dip to refuse). Only a
         taste band that violates the target's declared ranges is
         folded into the desired instead, and the header says so.
-        The composed headroom then sees the real peak, so Auto
-        preamp moves when the taste does."""
+        Safe then sees the real peak, so the exported preamp moves
+        when the taste does."""
         flo, fhi = self.flo, self.fhi
         fr = t.get("freq_range")
         if fr:
@@ -834,9 +834,7 @@ class ExportDialog(Adw.Dialog):
         ask = rmax - cmax
         nfit = len(bands)
         bands = bands + ok
-        base = (float(self.body.get("preamp", 0.0)) + off
-                if mv else off)
-        adj, _moved = xp.headroom_preamp(base, [bands], auto=auto)
+        adj = off + xp.safe_shift([(None, off, bands)])
         hdr = self._header(t, note, taste)
         hdr.append(self._source_line(tnote))
         tl = xp.limits_text(t)
@@ -868,7 +866,7 @@ class ExportDialog(Adw.Dialog):
         line = ("Source: %s. Re-fit to %d bands%s (%s): residual"
                 " max %.2f, rms %.2f dB vs the capped target.%s"
                 " Format roundtrip max %.2f dB -- %s. Export"
-                " preamp %+.1f dB."
+                " preamp %+.1f dB, Safe of the chain."
                 % ("canvas" if mv else "chain", nfit, ts, why,
                    cmax, crms, unf, err,
                    "pass" if err <= xp.NULL_PASS_DB else "CHECK",

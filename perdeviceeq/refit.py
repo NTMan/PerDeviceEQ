@@ -162,7 +162,8 @@ def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
     Fit parameters default to the stored fit.params (falling back to
     the build defaults for a canvas that never had a fit); any of
     them can be overridden. Returns a NEW profile dict: same id, name
-    and canvas, new bands and ch_keys; the preamp is NOT
+    and canvas, new channels (bands and balance) and ch_keys; the
+    preamp is NOT
     touched -- the mode governs it (Auto lands the composed Safe,
     manual is protected by the session clamp)
     exactly like a fresh fit (the bands changed, the app re-derives
@@ -195,7 +196,8 @@ def refit_profile(prof, bands=None, f_lo=None, f_hi=None,
     for k in ("ch_keys", "channels"):
         out[k] = fitted[k]
 
-    # The fit lands BANDS ONLY. Its old gain staging predated the
+    # The fit lands the CORRECTION ONLY: each channel's bands and
+    # balance. Its old gain staging predated the
     # preamp mode and knew nothing of the taste layer: in Auto the
     # composed Safe (device + taste) lands right after the reload,
     # and a manual compromise is the user's to keep -- the session

@@ -21,7 +21,8 @@ still resolves to the same address.
 
 unpack() validates with directional refusals: not JSON, not a
 profile (no schema version), a newer body (points at a newer
-build), an older body (points at the one-shot migration tool).
+build), an older body (a 7 at the one-shot migration tool,
+tools/convert_v8.py; anything older at re-measuring).
 
 absorb() is the import semantics: an import never destroys what
 is already in the store. A free id is kept and the payload stays
@@ -43,16 +44,17 @@ itself -- take coherence, physical structure, cross-checks
 against published measurements -- which an auditor reads from the
 payload. No container can add a bit to that.
 
-When the schema bumps (a v4 day), the no-legacy doctrine holds:
-the app carries no old loaders. pack() refuses anything but the
-current schema, so every package ever produced is current-schema
-at birth; unpack() in a v4 build refuses a v3 body with a
-sentence pointing at the one-shot migration tool, and that tool
-learns to eat .pdeq alongside store files: unpack the old,
-migrate the body, pack the new. Migration is a transformation, so
-it honestly mints a NEW package with a NEW address; the old bytes
-stay a valid v3 object forever under their old address, and the
-lineage slot is provenance (migrated_from) when that day comes.
+When the schema bumps, the no-legacy doctrine holds: the app
+carries no old loaders. pack() refuses anything but the current
+schema, so every package ever produced is current-schema at birth;
+unpack() refuses an older body with a sentence pointing at the
+one-shot migration tool where one exists -- tools/convert_v8.py,
+for a 7 body -- and at re-measuring where none can. The tool eats
+.pdeq alongside store files: it reads the old, migrates the body,
+packs the new. Migration is a transformation, so it honestly mints
+a NEW package with a NEW address; the old bytes stay a valid object
+of their schema forever under their old address, and the new body's
+provenance.migrated_from names it.
 
 If signatures ever come, they ride detached (a .minisig next to
 the file or in the index), consistent with objects that never
@@ -112,7 +114,8 @@ def pdeq_unpack(text):
     anything unfit: not a package (truncation and transport
     mangling die here, at the JSON parse), not a profile, or a
     body from a foreign schema -- a newer body points at a newer
-    build, an older one at the one-shot migration tool."""
+    build, a 7 at the one-shot migration tool, an older one at
+    re-measuring."""
     try:
         prof = json.loads(text)
     except Exception:
@@ -128,9 +131,15 @@ def pdeq_unpack(text):
             raise ValueError("body schema v%s needs a newer build "
                              "(this one loads v%s)"
                              % (v, SCHEMA_VERSION))
-        raise ValueError("body schema v%s: convert the package "
-                         "once with the migration tool (this "
-                         "build loads v%s)" % (v, SCHEMA_VERSION))
+        if v == 7:
+            raise ValueError("body schema v7: convert the package "
+                             "once with the migration tool, "
+                             "tools/convert_v8.py (this build loads "
+                             "v%s)" % SCHEMA_VERSION)
+        raise ValueError("body schema v%s is deprecated and no "
+                         "converter carries it over: re-measure "
+                         "with the current core (this build loads "
+                         "v%s)" % (v, SCHEMA_VERSION))
     return prof, sha
 
 

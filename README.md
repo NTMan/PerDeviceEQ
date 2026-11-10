@@ -137,6 +137,22 @@ device's EQ, the same as `per-device-eq --install`. Installing restarts WirePlum
 Bluetooth headset playing at that moment drops; reconnect it if it does
 not come back by itself.
 
+The next release also moves a channel's balance out of its bands
+(profile schema 8), and the app reads schema 8 only. After updating,
+quit the app and convert the profiles once, from a checkout of the
+release:
+
+```
+python3 tools/convert_v8.py
+```
+
+It converts every profile in `~/.config/per-device-eq/profiles` and
+keeps each schema 7 file beside it as `<id>.json.v7`, which the app does
+not read; what a device plays does not change. A package exported
+earlier is converted when named: `python3 tools/convert_v8.py
+buds.pdeq` writes `buds.v8.pdeq` beside it. With `-n` it shows what
+would change and writes nothing.
+
 ### Run from source
 
 ```
@@ -449,6 +465,12 @@ reaches all of them at once.
   match. **+** plays a profile channel on another output channel; the
   cross on a tab leaves that output without the correction, though it
   still gets the floor, the taste and the preamp.
+- **Balance:** the row above a channel's band table is its level
+  against the other channels. The fit sets it when every channel was
+  measured through one capsule with one calibration, bringing the
+  louder channels down to the quietest, and it can be changed by hand
+  either way. The channel's curve on the graph includes it; it has no
+  point of its own there.
 
 ---
 
@@ -520,6 +542,7 @@ development plan lives in [ROADMAP.md](ROADMAP.md).
 | `tools/audit_peaks.py`    | peak / clip counter for float32 captures                                   |
 | `tools/audit_headroom.py` | pre-EQ capture × profile → post-EQ peak, clip count, recommended preamp    |
 | `tools/make_fixtures.py`  | deterministic clean/hot-master test fixtures (seed-pinned)                 |
+| `tools/convert_v8.py`     | converts schema 7 profiles and packages to schema 8, once (see *Updating*) |
 
 ### Capturing audio for audits
 

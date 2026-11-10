@@ -126,7 +126,7 @@ def test_fit_profiles_direct_call():
     assert one["channels"]["FL"]["bands"]
 
 
-# --- balance trim: equalize the channels' TRUE acoustic levels -------------
+# --- balance: equalize the channels' TRUE acoustic levels ------------------
 
 def _result_flat(level_db, soft, chan, cal="R_RAW"):
     f = np.logspace(np.log10(20), np.log10(20000), 240)
@@ -180,23 +180,22 @@ def test_balance_trims_validity_gate():
     assert trims is None
 
 
-def test_fit_profiles_prepends_the_trim_band():
+def test_fit_profiles_writes_the_balance():
     loud = _result_flat(0.0, [0.064] * 3, [0.064] * 3)
     quiet = _result_flat(-2.0, [0.064] * 3, [0.064] * 3)
     prof = fit_peq.fit_profiles({"FL": loud, "FR": quiet})
-    fl = prof["channels"]["FL"]["bands"]
-    fr = prof["channels"]["FR"]["bands"]
-    # flat curves need no shape bands: the loud channel carries exactly
-    # one freq-0 trim band, the quiet (reference) channel none at all
-    assert len(fr) == 0
-    assert len(fl) == 1 and fl[0]["freq"] == 0.0
-    assert fl[0]["type"] == "HSC" and fl[0]["enabled"] is True
-    assert abs(fl[0]["gain"] - (-2.0)) < 0.01
-    # evaluated with the app's own biquad the trim is flat gain
-    freqs = np.logspace(np.log10(20), np.log10(20000), 50)
-    resp = np.array(eq.response_db(
-        0.0, [eq.Band.from_dict(fl[0])], list(freqs)))
-    assert float(np.max(np.abs(resp + 2.0))) < 0.05
+    fl, fr = prof["channels"]["FL"], prof["channels"]["FR"]
+    # flat curves need no bands: the loud channel comes down to the
+    # quiet one by its balance, a number of the channel and no band;
+    # the quiet one, the reference, has none
+    assert fl["bands"] == [] and fr["bands"] == []
+    assert abs(fl["balance"] - (-2.0)) < 0.01
+    assert "balance" not in fr
+    # and the graph plays it as a flat gain of FL's chain alone
+    g = eq.correction_graph(prof)
+    one, two = g.split("filters2 = ")
+    assert ("freq = 0, gain = %g," % fl["balance"]) in one
+    assert "bq_highshelf" not in two
 
 
 # --- pruning: cancelling stacks die, working bands survive ------------------

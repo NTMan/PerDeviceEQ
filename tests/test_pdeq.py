@@ -97,7 +97,9 @@ def test_unpack_roundtrip_and_validation():
         return json.dumps(dict(_profile(), version=version))
     with pytest.raises(ValueError, match="newer build"):
         pdeq.pdeq_unpack(bare(SCHEMA_VERSION + 1))
-    with pytest.raises(ValueError, match="migration tool"):
+    with pytest.raises(ValueError, match="tools/convert_v8.py"):
+        pdeq.pdeq_unpack(bare(7))
+    with pytest.raises(ValueError, match="re-measure"):
         pdeq.pdeq_unpack(bare(2))
 
 

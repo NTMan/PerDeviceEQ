@@ -22,9 +22,9 @@ editing. Pruning is anchored to the original residual and may cost at
 most PRUNE_EPS_DB at any grid point.
 
 When the measurement carries the per-take drives (levels recorded by
-measure_session) and the channels share one acoustic reference, a
-per-channel balance trim is added as a freq-0 shelf band (flat gain,
-the preamp trick), aligning the channels' true levels down to the
+measure_session) and the channels share one acoustic reference, each
+channel gets a balance -- its own flat gain, a number of the channel
+beside its bands -- aligning the channels' true levels down to the
 quietest one. See balance_trims for the exact validity gate.
 """
 import argparse
@@ -1075,21 +1075,18 @@ def _bands_to_dicts(bands):
 
 def _report(tag, bands, fg, resid, flo, fhi, trim_db=None):
     """Console report of one channel's fit. trim_db, when given, is
-    the channel's balance trim: printed as the band row it becomes in
-    the profile (counted in the header, so the console table matches
-    the editor's row for row) and folded into the safe-preamp estimate
-    -- a flat trim moves this channel's whole curve."""
+    the channel's balance: printed above the bands, as the editor
+    shows it, and folded into the safe-preamp estimate -- a flat gain
+    moves this channel's whole curve."""
     has_trim = trim_db is not None and abs(trim_db) >= TRIM_MIN_DB
-    print("\n[%s] %d bands, fit %g-%g Hz"
-          % (tag, len(bands) + (1 if has_trim else 0), flo, fhi))
+    print("\n[%s] %d bands, fit %g-%g Hz" % (tag, len(bands), flo, fhi))
     if has_trim:
-        print("  %-3s  %8.1f Hz  %+6.2f dB  Q %5.2f   balance trim"
-              % ("HSC", 0.0, trim_db, 1.0))
+        print("  balance %+.2f dB" % trim_db)
+    elif trim_db is not None:
+        print("  balance %+.2f dB -- below %g, none written"
+              % (trim_db, TRIM_MIN_DB))
     for t, f, g, q in sorted(bands, key=lambda b: b[1]):
         print("  %-3s  %8.1f Hz  %+6.2f dB  Q %5.2f" % (t, f, g, q))
-    if trim_db is not None and not has_trim:
-        print("  balance trim %+.2f dB -- below %g, no band added"
-              % (trim_db, TRIM_MIN_DB))
     grid = np.concatenate([fg, np.array([b[1] for b in bands] or [flo])])
     peak = float(np.max(_response(bands, grid)))
     if has_trim:
@@ -1124,11 +1121,10 @@ def fit_profiles(results, name=None, bands=10, f_lo=20.0, f_hi=12000.0,
     and the measurement
     wizard both call; only the target (flat) is shared, the per-channel
     curves are not. When the results carry usable per-take drives and
-    share one cal (see balance_trims), a freq-0 shelf band with the
-    channel's balance trim is prepended -- an ordinary, editable band
-    that PipeWire renders as flat gain, exactly like the preamp.
-    Returns the profile body (preamp 0.0: the app derives
-    Safe/Session).
+    share one cal (see balance_trims), each channel gets its balance:
+    a number of the channel beside its bands, which the graph renders
+    as a flat gain, exactly like the preamp. Returns the profile body
+    (preamp 0.0: the app derives Safe/Session).
 
     `progress`, when given, is the export re-fit's per-band
     heartbeat composed across channels: progress(frac, key, band,
@@ -1169,17 +1165,14 @@ def fit_profiles(results, name=None, bands=10, f_lo=20.0, f_hi=12000.0,
         if report:
             _report(key, bnds, fg, resid, f_lo, f_hi,
                     trim_db=(t if trims is not None else None))
-        bd = _bands_to_dicts(bnds)
+        prof["channels"][key] = {"bands": _bands_to_dicts(bnds)}
         if abs(t) >= TRIM_MIN_DB:
-            bd.insert(0, {"type": "HSC", "freq": 0.0,
-                          "gain": round(t, 2), "q": 1.0,
-                          "enabled": True})
-        prof["channels"][key] = {"bands": bd}
+            prof["channels"][key]["balance"] = round(t, 2)
     if report:
         if trims is None:
-            print("\nno balance trim: %s" % why)
+            print("\nno balance: %s" % why)
         elif min(trims.values()) <= -TRIM_WARN_DB:
-            print("\nNOTE: a balance trim past %g dB usually means "
+            print("\nNOTE: a balance past %g dB usually means "
                   "a seating/seal difference between the channels "
                   "-- reseat and remeasure rather than EQ it away"
                   % TRIM_WARN_DB)

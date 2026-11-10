@@ -44,8 +44,9 @@ SHAPE_KEYS = ("ch_keys", "channels")
 
 def _channel_is_earned(key, block, out, stored):
     """True when a stored channel is worth carrying past a save: it holds
-    bands, or a take in either body measured it. Provenance, not presence."""
-    if any((block or {}).get("bands") or []):
+    bands or a balance, or a take in either body measured it. Provenance,
+    not presence."""
+    if (block or {}).get("bands") or (block or {}).get("balance"):
         return True
     for body in (out, stored):
         for t in (((body or {}).get("measurement") or {}).get("takes") or []):
@@ -181,6 +182,11 @@ class ProfileStore:
                 continue
             if not isinstance(p, dict):
                 continue
+            if p.get("version") == 7:
+                print("per-device-eq: skipping %s (profile schema v7 "
+                      "-- convert it once with tools/convert_v8.py)"
+                      % path, file=sys.stderr)
+                continue
             if p.get("version") != SCHEMA_VERSION:
                 print("per-device-eq: skipping %s (profile schema "
                       "v%s -- deprecated; a take's confession, "
@@ -214,7 +220,15 @@ class ProfileStore:
 
     @staticmethod
     def _sane_slot(s):
-        return {"bands": list((s or {}).get("bands") or [])}
+        """A channel as the store keeps it: its bands, and its balance
+        when it has one -- a 0 dB balance is no balance, and is not
+        written, so a body hashes the same whichever way it got there
+        (playback_sha256)."""
+        out = {"bands": list((s or {}).get("bands") or [])}
+        bal = round(float((s or {}).get("balance") or 0.0), 2)
+        if bal:
+            out["balance"] = bal
+        return out
 
     @classmethod
     def _body(cls, p):

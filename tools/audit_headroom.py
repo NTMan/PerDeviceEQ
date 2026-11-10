@@ -15,7 +15,8 @@ Usage:
 profile.json is either this tool's own schema ({"preamp": g, "channels":
 {"FL": [band, ...]}}, band key "on") or a profile saved by the app
 (~/.config/per-device-eq/profiles/*.json, v2+: one shared preamp, band
-key "enabled", one entry per channel; v1 files are pre-epoch and
+key "enabled", one entry per channel, and from v8 each channel's
+balance on top of the preamp; v1 files are pre-epoch and
 no converter exists any more). --profile NAME resolves
 a saved app profile by its "name" field: case-insensitive, an
 unambiguous substring is enough. The suggestion is a single shared value
@@ -56,14 +57,16 @@ def _is_app_schema(p):
 
 def normalize_profile(raw):
     """-> (chains, meta). chains is an ordered [(name, preamp_db, bands)]
-    with audit-style bands; meta = {"name", "mode"} where mode is "audit"
-    (this tool's schema, one global preamp), "one" (an app profile with a
-    single channel, whose one chain plays on every capture channel) or
-    "per-channel"."""
+    with audit-style bands, a chain's preamp being the shared one with the
+    channel's balance on top; meta = {"name", "mode", "preamp"} where
+    mode is "audit" (this tool's schema, one global preamp), "one" (an
+    app profile with a single channel, whose one chain plays on every
+    capture channel) or "per-channel", and "preamp" is the shared one."""
     if not _is_app_schema(raw):
         g = float(raw.get("preamp", 0.0))
         chains = [(k, g, v) for k, v in (raw.get("channels") or {}).items()]
-        return chains, {"name": raw.get("name"), "mode": "audit"}
+        return chains, {"name": raw.get("name"), "mode": "audit",
+                        "preamp": g}
     # app schema is v2: ONE shared top-level preamp, slots carry bands only
     if "preamp" not in raw:
         sys.exit("schema v1 app profile (per-slot preamps): the "
@@ -72,11 +75,12 @@ def normalize_profile(raw):
     g = float(raw["preamp"])
     ch = raw.get("channels") or {}
     keys = raw.get("ch_keys") or list(ch.keys())
-    chains = [(k, g, _app_bands(ch.get(k))) for k in keys]
+    chains = [(k, g + float((ch.get(k) or {}).get("balance") or 0.0),
+               _app_bands(ch.get(k))) for k in keys]
     # one channel is one curve and it spreads over the whole output,
     # exactly as the app plays it: the COUNT says so, not a key
     mode = "one" if len(chains) == 1 else "per-channel"
-    return chains, {"name": raw.get("name"), "mode": mode}
+    return chains, {"name": raw.get("name"), "mode": mode, "preamp": g}
 
 
 def resolve_profile(arg, profiles_dir=None):
@@ -183,13 +187,13 @@ def main():
     elif posts:
         # schema v2 has ONE shared preamp, so the suggestion is inherently
         # balance-preserving: the worst channel sets it for everyone
-        nm, g, pk = max(posts, key=lambda t: t[2])
+        nm, _g, pk = max(posts, key=lambda t: t[2])
         if pk <= 0.0:
             print("current preamp keeps %.1f dB headroom (no change needed)"
                   % -pk)
         else:
             print("suggested preamp: %.1f dB  (worst channel %s; post-EQ "
-                  "peak -> 0 dBFS)" % (g - _ceil_db(pk), nm))
+                  "peak -> 0 dBFS)" % (meta["preamp"] - _ceil_db(pk), nm))
 
 
 if __name__ == "__main__":
