@@ -32,12 +32,20 @@ header bar, toolbar, or an expander-style card header, css
 class card-header, where flat is the container's own idiom),
 responses
 (list of {"id", "label"} for alert dialogs), margins (list of
-four ints).
+four ints: top, bottom, start, end), padding and border (the
+CSS box inside the margins, four ints in the margins' order),
+xalign (float, a label's), grid (bool -- the node is a
+Gtk.Grid), cell (list of four ints: column, row, width, height
+-- a grid child's place).
 
 Ratchet provenance: H1-H3 were earned in the .pdeq sprint's
 design rounds (see HIG.md); H4-H6 are the HIG's own letter;
 H7 was minted in the gone-state round (loose prose and a
-homebrew badge lost to the banner and plain insensitivity).
+homebrew badge lost to the banner and plain insensitivity);
+H11 by eye on the Balance row (Nov 10): its label stood 12 px
+in, on the grid and still crooked against the column under it;
+the same evening the Add band outline stood 6 px in on a
+toolbar's padding, and the rule learned to read through a box.
 
 No GTK. Pure dicts in, findings out.
 """
@@ -366,9 +374,83 @@ def _findings_h10(node, path, out):
                    "decompose the row"})
 
 
+def _lead(node):
+    """(px, parts): where a cell starts to the eye, counted from its
+    start, and the parts that make it up. A control starts at its
+    outline, a label at its text, inside its border and padding; a
+    box draws nothing of its own and starts where its first child
+    does, through its padding -- unless it draws a border, which is
+    then its edge. None when it cannot be told: the margins unread,
+    an empty box, a first child that is not at the box's start."""
+    p = node.get("props") or {}
+    margins = p.get("margins")
+    if not margins:
+        return None
+    cls = node.get("class", "?")
+    pad = (p.get("padding") or (0, 0, 0, 0))[2]
+    border = (p.get("border") or (0, 0, 0, 0))[2]
+    parts = [(cls + " margin", margins[2])]
+    if cls == "GtkLabel":
+        parts += [(cls + " border", border), (cls + " padding", pad)]
+    elif cls == "GtkBox" and not border:
+        kids = node.get("children") or []
+        if not kids or (kids[0].get("props") or {}).get(
+                "halign") not in ("start", "fill"):
+            return None
+        inner = _lead(kids[0])
+        if inner is None:
+            return None
+        parts += [(cls + " padding", pad)] + inner[1]
+    return sum(px for _w, px in parts), parts
+
+
+def _findings_h11(node, path, out):
+    """H11: a grid column has one left edge. The cells of a
+    column that start at its left -- halign start or fill, and a
+    filling label with its text at the left -- start at the same
+    place to the eye (_lead), or the column reads crooked whatever
+    grid each margin is on. The edge is where most of them start
+    (the nearer one on a tie); a centred or right-hand cell is not
+    on it and is not judged by it."""
+    if not (node.get("props") or {}).get("grid"):
+        return
+    cols = {}
+    for i, k in enumerate(node.get("children") or []):
+        p = k.get("props") or {}
+        cell = p.get("cell")
+        if not cell or p.get("halign") not in ("start", "fill"):
+            continue
+        if (k.get("class") == "GtkLabel" and p.get("halign") == "fill"
+                and (p.get("xalign") or 0.0) > 0.0):
+            continue
+        lead = _lead(k)
+        if lead is None:
+            continue
+        cols.setdefault(cell[0], []).append(
+            (lead[0], lead[1], cell[1], i, k.get("class", "?")))
+    for col, cells in sorted(cols.items()):
+        starts = [c[0] for c in cells]
+        if len(set(starts)) < 2:
+            continue
+        edge = min(set(starts), key=lambda m: (-starts.count(m), m))
+        for m, parts, row, i, cls in cells:
+            if m == edge:
+                continue
+            why = ", ".join("%s %d" % w for w in parts if w[1])
+            out.append({
+                "rule": "H11",
+                "path": "%s/%s[%d]" % (path, cls, i),
+                "msg": "row %d starts %d px into column %d%s, whose "
+                       "cells start at %d"
+                       % (row, m, col, " (%s)" % why if why else "",
+                          edge),
+                "fix": "start it at %d px, or centre it" % edge})
+
+
 _RULES = (_findings_h1, _findings_h2, _findings_h3,
           _findings_h4, _findings_h5, _findings_h6,
-          _findings_h7, _findings_h8, _findings_h10)
+          _findings_h7, _findings_h8, _findings_h10,
+          _findings_h11)
 
 
 def lint(tree):

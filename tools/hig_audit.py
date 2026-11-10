@@ -38,6 +38,7 @@ fix is a complaint.
 
 import os
 import sys
+import warnings
 
 import numpy as np
 
@@ -129,6 +130,15 @@ def _button_face(w):
     return label, (has_icon and not label)
 
 
+def _sides(b, w):
+    """A Gtk.Border in the margins' order: top, bottom, start, end.
+    Gtk.Widget's own direction: a MenuButton's get_direction is
+    where its popup opens."""
+    if Gtk.Widget.get_direction(w) == Gtk.TextDirection.RTL:
+        return [b.top, b.bottom, b.right, b.left]
+    return [b.top, b.bottom, b.left, b.right]
+
+
 def describe(w, in_bar=False):
     """The neutral tree perdeviceeq.hig lints: class, the props
     the rules read, children. Unknown stays absent -- the floor
@@ -145,10 +155,20 @@ def describe(w, in_bar=False):
                          w.get_margin_bottom(),
                          w.get_margin_start(),
                          w.get_margin_end()]}
+    # the CSS box inside the margins: H11 reads a cell's start
+    # through a toolbar's padding. StyleContext is deprecated since
+    # GTK 4.10, and GTK 4 has no other public read of it.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        sc = w.get_style_context()
+        props["padding"] = _sides(sc.get_padding(), w)
+        props["border"] = _sides(sc.get_border(), w)
     if isinstance(w, Gtk.Box):
         props["spacing"] = w.get_spacing()
         props["vertical"] = (w.get_orientation()
                              == Gtk.Orientation.VERTICAL)
+    if isinstance(w, Gtk.Label):
+        props["xalign"] = w.get_xalign()
     if isinstance(w, Adw.PreferencesRow):
         props["title"] = w.get_title()
         if hasattr(w, "get_subtitle"):
@@ -163,9 +183,16 @@ def describe(w, in_bar=False):
         label = w.get_label()
         props["label"] = label
         props["icon_only"] = bool(w.get_icon_name()) and not label
-    return {"class": t, "props": props,
-            "children": [describe(c, in_bar)
-                         for c in _own_children(w, t)]}
+    kids = []
+    for c in _own_children(w, t):
+        node = describe(c, in_bar)
+        if isinstance(w, Gtk.Grid):
+            # a cell's place: H11 lines up the cells of a column
+            node["props"]["cell"] = list(w.query_child(c))
+        kids.append(node)
+    if isinstance(w, Gtk.Grid):
+        props["grid"] = True
+    return {"class": t, "props": props, "children": kids}
 
 
 class _FixtureRec:

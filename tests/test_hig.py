@@ -424,3 +424,111 @@ def test_the_toolkits_own_menu_is_not_ours_to_align():
     src = (pathlib.Path(__file__).resolve().parent.parent
            / "tools" / "hig_audit.py").read_text(encoding="utf-8")
     assert '"GtkPopoverMenu")' in src or '"GtkPopoverMenu",' in src
+
+
+def _cell(cls, col, row, start=0, halign="fill", xalign=None):
+    p = {"cell": [col, row, 1, 1], "halign": halign,
+         "margins": [0, 0, start, 0]}
+    if xalign is not None:
+        p["xalign"] = xalign
+    return {"class": cls, "props": p, "children": []}
+
+
+def _grid(cells):
+    return {"class": "perdeviceeq+focus+OrderedGrid",
+            "props": {"grid": True}, "children": cells}
+
+
+def test_h11_a_grid_column_has_one_left_edge():
+    """The Balance row as 0037 v1 drew it: its label 12 px in, on
+    the grid, over a column whose header and dropdowns start at 0."""
+    crooked = _grid([
+        _cell("GtkLabel", 1, 0, start=12, xalign=0.0),   # Balance
+        _cell("GtkLabel", 1, 1, xalign=0.0),             # Type
+        _cell("GtkDropDown", 1, 2),
+        _cell("GtkDropDown", 1, 3),
+        _cell("GtkSpinButton", 3, 0),
+        _cell("GtkSpinButton", 3, 2)])
+    got = hig.lint(crooked)
+    assert _rules(got) == ["H11"]
+    assert got[0]["path"].endswith("/GtkLabel[0]")
+    assert got[0]["msg"] == ("row 0 starts 12 px into column 1 "
+                             "(GtkLabel margin 12), whose cells "
+                             "start at 0")
+    assert got[0]["fix"] == "start it at 0 px, or centre it"
+    level = _grid([_cell("GtkLabel", 1, 0, xalign=0.0),
+                   _cell("GtkLabel", 1, 1, xalign=0.0),
+                   _cell("GtkDropDown", 1, 2)])
+    assert hig.lint(level) == []
+
+
+def test_h11_judges_only_the_cells_on_the_left():
+    """A centred cell or a filling label with its text away from the
+    left is not on the column's edge, and the rule leaves it alone;
+    nor does it read anything that is not a grid."""
+    off = _grid([_cell("GtkLabel", 5, 0, xalign=0.0),
+                 _cell("GtkCheckButton", 5, 1, start=12,
+                       halign="center"),
+                 _cell("GtkLabel", 5, 2, start=12, xalign=1.0)])
+    assert hig.lint(off) == []
+    box = {"class": "GtkBox", "props": {},
+           "children": [_cell("GtkLabel", 1, 0, start=12),
+                        _cell("GtkLabel", 1, 1)]}
+    assert hig.lint(box) == []
+
+
+def test_h11_the_edge_is_what_most_cells_keep():
+    """Two cells at 6 and one at 0: the one at 0 is the odd one out.
+    On a tie the smaller margin is the edge, so a run names the same
+    cell every time."""
+    most = _grid([_cell("GtkSpinButton", 2, 0, start=6),
+                  _cell("GtkSpinButton", 2, 1, start=6),
+                  _cell("GtkSpinButton", 2, 2)])
+    got = hig.lint(most)
+    assert [g["path"] for g in got] == [
+        "perdeviceeq+focus+OrderedGrid/GtkSpinButton[2]"]
+    tie = _grid([_cell("GtkSpinButton", 2, 0, start=6),
+                 _cell("GtkSpinButton", 2, 1)])
+    got = hig.lint(tie)
+    assert [g["path"] for g in got] == [
+        "perdeviceeq+focus+OrderedGrid/GtkSpinButton[0]"]
+
+
+def _actions(pad, border=0):
+    """The band actions as a grid cell: a box of two flat buttons,
+    padded as libadwaita pads a toolbar."""
+    btn = {"class": "GtkButton",
+           "props": {"halign": "fill", "margins": [0, 0, 0, 0]},
+           "children": []}
+    box = _cell("GtkBox", 1, 4, halign="start")
+    box["props"].update(padding=[6, 6, pad, pad],
+                        border=[0, 0, border, border])
+    box["children"] = [btn, dict(btn)]
+    return box
+
+
+def test_h11_reads_a_cell_where_the_eye_does():
+    """The Add band row as 0037 left it: a toolbar's 6 px padding put
+    the first button's outline 6 px into the column of the type
+    dropdowns. A box draws nothing of its own and starts at its first
+    child; with a border it draws one and starts there. A label starts
+    at its text, inside its padding."""
+    def table(cell):
+        return _grid([_cell("GtkLabel", 1, 1, xalign=0.0),   # Type
+                      _cell("GtkDropDown", 1, 2),
+                      _cell("GtkDropDown", 1, 3), cell])
+    got = hig.lint(table(_actions(6)))
+    assert [(g["path"], g["msg"]) for g in got] == [
+        ("perdeviceeq+focus+OrderedGrid/GtkBox[3]",
+         "row 4 starts 6 px into column 1 (GtkBox padding 6), whose "
+         "cells start at 0")]
+    assert hig.lint(table(_actions(0))) == []
+    assert hig.lint(table(_actions(6, border=1))) == []
+    empty = _actions(6)
+    empty["children"] = []                 # nothing in it to stand off
+    assert hig.lint(table(empty)) == []
+    padded = _cell("GtkLabel", 1, 0, xalign=0.0)
+    padded["props"]["padding"] = [0, 0, 6, 0]
+    assert [g["msg"] for g in hig.lint(table(padded))] == [
+        "row 0 starts 6 px into column 1 (GtkLabel padding 6), whose "
+        "cells start at 0"]

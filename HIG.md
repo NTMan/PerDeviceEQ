@@ -218,6 +218,15 @@ OWN population, so the uniformly verbose archive is uniformly
 clean: a row is a finding when its subtitle runs to more lines
 than its sisters' most common count, or its text past the larger
 of twice their median length and the median plus 80 characters);
+H11 a grid column has one left edge: the cells of a column
+that start at its left (halign start or fill, a filling label
+with its text at the left) start at the same place to the eye,
+the one most of them keep -- a control at its outline, a label
+at its text, a box at its first child through the box's padding
+-- or the column reads crooked whatever grid each margin is on
+(minted by eye on the Balance row, its label 12 px in over a
+column whose header and dropdowns start at 0, and on the Add
+band row, its outline 6 px in on a toolbar's padding);
 H9 the Tab walk
 must round the room -- the audit
 presses Tab itself, and a walk that repeats a stop without
