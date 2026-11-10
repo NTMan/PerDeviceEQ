@@ -1092,33 +1092,29 @@ class PeqView(Gtk.Box):
         shown = self._bands
         for i, b in enumerate(shown):
             self._attach_band(i, b)
-        def _action(icon, label):
-            # flat buttons carry their affordance in hover alone;
-            # an icon restores it at rest (the GNOME list-action
-            # idiom), without the visual weight of a border
-            b = Gtk.Button()
+        def _action(icon, name, tip):
+            # outside a header bar a button carries an icon or a
+            # label, not both (GNOME HIG, Buttons): an icon, flat
+            # like the delete buttons of the rows above. The name
+            # stays in the tooltip, and for a screen reader, as the
+            # floor button keeps its own
+            b = Gtk.Button(icon_name=icon, tooltip_text=tip)
             b.add_css_class("flat")
-            box = Gtk.Box(spacing=6)
-            box.append(Gtk.Image.new_from_icon_name(icon))
-            box.append(Gtk.Label(label=label))
-            b.set_child(box)
+            b.update_property([Gtk.AccessibleProperty.LABEL], [name])
             return b
+        # 6 px above and below set the actions off from the rows,
+        # which stand 4 px apart
         acts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL,
-                       spacing=6, halign=Gtk.Align.START)
-        # the toolbar class is the lawful home for flat here:
-        # the container declares the idiom and rule H3 has a
-        # bar to point at; flat is ALSO declared on the buttons
-        # (belt: stylesheet flattening is not trusted alone)
-        acts.add_css_class("toolbar")
-        addb = _action("list-add-symbolic", "Add band")
+                       spacing=6, halign=Gtk.Align.START,
+                       margin_top=6, margin_bottom=6)
+        addb = _action("list-add-symbolic", "Add band", "Add band")
         addb.connect("clicked", self._on_add)
         acts.append(addb)
         if self._on_import_file is not None:
             repl = _action("document-open-symbolic",
-                           "Replace bands from file\u2026")
-            repl.set_tooltip_text(
-                "Replace this channel's bands from a "
-                "parametric-EQ text file (REW / AutoEq)")
+                           "Replace bands from file\u2026",
+                           "Replace this channel's bands from a "
+                           "parametric-EQ text file (REW / AutoEq)")
             repl.connect("clicked",
                          lambda *_: self._on_import_file())
             acts.append(repl)

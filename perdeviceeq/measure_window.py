@@ -558,7 +558,7 @@ class MeasureWindow(Adw.Window):
         # a profile with no targets has nowhere to type and nothing to
         # sweep, so the way in must be here too -- this window is where
         # New lands
-        self._add_btn = Gtk.MenuButton(icon_name="list-add-symbolic",
+        self._add_btn = Gtk.MenuButton(icon_name="tab-new-symbolic",
                                        valign=Gtk.Align.CENTER)
         self._add_btn.add_css_class("flat")
         # The action lives on THIS window, under a prefix of its own.
@@ -3688,7 +3688,7 @@ class MeasureWindow(Adw.Window):
         rm.connect("clicked", lambda _b: self._undeclare_col(
             self.mic_col))
         end.append(rm)
-        add = Gtk.MenuButton(icon_name="list-add-symbolic",
+        add = Gtk.MenuButton(icon_name="tab-new-symbolic",
                              valign=Gtk.Align.CENTER)
         add.add_css_class("flat")
         add.set_tooltip_text(

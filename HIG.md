@@ -81,7 +81,15 @@ entries below keep their verdicts as history.
   the box declares the toolbar class and the buttons declare
   flat themselves (round five: the stylesheet's own flattening
   was not trusted alone). The auditor's ratchet: the toolbar
-  class counts as a bar.
+  class counts as a bar. Round six (Nov 10): the toolbar was a bar
+  to the auditor and nothing on screen -- its one visible trace, a
+  6 px padding, set the first outline off the column's edge (H11)
+  -- and the GNOME HIG (Buttons) says that outside header bars a
+  button carries an icon or a label, not both. Verdict: icons
+  only, flat like the rows' delete buttons, the names in the
+  tooltips; no toolbar. The add buttons of the tab strips, here
+  and in the measurement window, took Text Editor's New Tab icon
+  (tab-new-symbolic), so a card's + is the band table's alone.
 - Eye toggle (measured curves): icon-only flat in a card corner.
   [Mikhail] against Calendar's icon buttons -- fine as is?
 - Preamp spin + Auto: linked pair -- borrowed (facets of one

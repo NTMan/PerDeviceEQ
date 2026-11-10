@@ -2516,7 +2516,9 @@ class EqWindow(Adw.ApplicationWindow):
                         valign=Gtk.Align.CENTER)
         rm.add_css_class("flat")
         rm.connect("clicked", lambda *_: self._del_pair())
-        add = Gtk.MenuButton(icon_name="list-add-symbolic",
+        # a new tab, with the icon GNOME's Text Editor gives its New
+        # Tab button: the + of the card is the band table's
+        add = Gtk.MenuButton(icon_name="tab-new-symbolic",
                              valign=Gtk.Align.CENTER)
         add.add_css_class("flat")
         box = Gtk.Box(spacing=6, hexpand=True, valign=Gtk.Align.CENTER,
