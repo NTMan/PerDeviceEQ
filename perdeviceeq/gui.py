@@ -42,7 +42,8 @@ from . import (__version__, chantabs, config, debug, eq, level_run,
 
 import numpy as np
 from .picker import NodeMenu
-from .config import (APP_ID, CLEAN_ID, FAVORITES_FILE, LISTENER_KEY, STRIP,
+from .config import (APP_ID, BYPASS_KEY, BYPASS_ON, CLEAN_ID,
+                     FAVORITES_FILE, LISTENER_KEY, STRIP,
                      load_ui_state, save_ui_state,
                      UI_FILE_CANDIDATES, read_state)
 from . import level_strip
@@ -210,7 +211,8 @@ class EqWindow(Adw.ApplicationWindow):
         self.channel_row = b.get_object("channel_row")
         self.bypass_row = Gtk.ToggleButton(label="Bypass")
         self.bypass_row.set_tooltip_text(
-            "Hear the device raw: profile and taste muted")
+            "Every output plays raw, without correction, taste and "
+            "preamp, until pressed again")
         self.channel_bar = b.get_object("channel_bar")
         self.bands_group = b.get_object("bands_group")
 
@@ -291,6 +293,11 @@ class EqWindow(Adw.ApplicationWindow):
         self._wire_picker_actions(b)
         self._install_shortcuts(app)
 
+        # Bypass stays until it is released, a restart included
+        # (_on_bypass): the window opens showing it as it was left
+        self.bypass_row.set_active(bool(self._ui_state.get("bypass")))
+        self.view.set_active(not self.bypass_row.get_active())
+
         self.search_entry.connect("search-changed", lambda *_: self._populate_picker())
         self.bypass_row.connect("notify::active", self._on_bypass)
         self.profile_button.connect("notify::active", self._on_picker_toggle)
@@ -301,12 +308,13 @@ class EqWindow(Adw.ApplicationWindow):
         self._init_devices()
         debug.timing("_init_devices", _t)
         self.current_pid = self.store.binding_for(self._dev()) or CLEAN_ID
-        # apply=True primes the session metadata key for the startup device.
-        # Before the app starts, EQ is applied by the WP hook from its own
-        # saved state and the metadata key does not exist yet; clearing a
-        # non-existent key emits no change event, so the first Bypass would
-        # silently do nothing. Publishing the (identical) graph here is
-        # inaudible and keeps the hook and the GUI in sync from turn one.
+        # Bypass goes first, as the window shows it, so that a device
+        # written while it is pressed is not heard with its correction
+        # on the way. apply=True then writes the startup device's value.
+        # Before the app starts, the hook plays what it keeps; writing
+        # the same is inaudible and keeps the hook and the window in step
+        # from the first turn.
+        self._publish_bypass()
         _t = time.monotonic()
         self._load_profile(self.current_pid, apply=True)
         debug.timing("_load_profile", _t)
@@ -490,7 +498,6 @@ class EqWindow(Adw.ApplicationWindow):
         headroom, debounced save with undo history."""
         if self._loading:
             return
-        self._ensure_audible()
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
         self._ensure_editable()
         self._on_edit()
@@ -1216,13 +1223,6 @@ class EqWindow(Adw.ApplicationWindow):
         threading.Thread(target=work, daemon=True).start()
 
     # ---- graph geometry / interaction (drag band handles) ------------------
-    def _ensure_audible(self):
-        """Drop Bypass so a graph edit is heard immediately."""
-        if self.bypass_row.get_active():
-            self._loading = True
-            self.bypass_row.set_active(False)
-            self._loading = False
-
     def _build_preamp(self):
         """The closing card, hand-rolled like the others: a header
         row (the Preamp title, the readout, the warning, the spin,
@@ -1925,10 +1925,11 @@ class EqWindow(Adw.ApplicationWindow):
         The header shows what is selected, the default when the pin is
         pressed, whatever it is. When that is no device
         (pw_backend.is_final_node) -- a filter-chain, a loopback, a null
-        sink -- there is nothing to correct on it: the device card and
-        Bypass go insensitive, a banner says why, and the window
-        publishes and binds nothing under its key (_apply_now, _bind).
-        The taste and the preamp stay: they play on every device.
+        sink -- there is nothing to correct on it: the device card goes
+        insensitive, a banner says why, and the window publishes and
+        binds nothing under its key (_apply_now, _bind). The taste, the
+        preamp and Bypass stay: they are the listener's, for every
+        device.
 
         Read off the heartbeat's listing. A node that has left it keeps
         what it was last seen as, as the panel survives a gone node
@@ -1937,9 +1938,7 @@ class EqWindow(Adw.ApplicationWindow):
         listing said."""
         for s in self.sinks or []:
             self._seen_final[s["name"]] = bool(s.get("final"))
-        device = self._is_device()
-        self.device_card.set_sensitive(device)
-        self.bypass_row.set_sensitive(device)
+        self.device_card.set_sensitive(self._is_device())
         self.not_device_banner.set_revealed(
             bool(self.node) and self._seen_final.get(self.node) is False)
 
@@ -2325,8 +2324,7 @@ class EqWindow(Adw.ApplicationWindow):
     def _load_profile(self, pid, apply=True, born=False,
                       edit=False):
         """Load profile `pid` into the editor and bind it to the device.
-        With apply=True also publish its graph to the session metadata
-        (primes the key for the first Bypass; see _apply_now).
+        With apply=True also publish the device's value (_apply_now).
         """
         self._flush_pending_save()
         self._loading = True
@@ -2375,7 +2373,6 @@ class EqWindow(Adw.ApplicationWindow):
             self.cur_ch = (self.cur_ch if self.cur_ch in self.slots
                            else next(iter(self.slots), ""))
             self.profile_button.set_label(self._display_name(p))
-            self.bypass_row.set_active(False)
             self._build_channel_bar()
             self._load_slot(self.cur_ch)
             self._bind(pid)
@@ -2751,10 +2748,11 @@ class EqWindow(Adw.ApplicationWindow):
 
     def _apply_now(self):
         """Publish the device's live state to the per-device-eq metadata:
-        its correction with its preamp, STRIP under Bypass, or no
-        correction of its own -- it follows the listener then. One write,
-        the device's key: what the listener owns, the taste and the
-        preamp ride, goes out in its own record (_publish_listener).
+        its correction with its preamp, or no correction of its own -- it
+        follows the listener then. One write, the device's key: what the
+        listener owns, the taste and the preamp ride, goes out in its own
+        record (_publish_listener), and Bypass in its own key
+        (_publish_bypass), which leaves this value as it is.
 
         The publish rides the backend authority: the editor's wish
         lands in its desired store and the store pushes the server,
@@ -2774,9 +2772,6 @@ class EqWindow(Adw.ApplicationWindow):
         node = self._dev()
         auth = pw_backend.backend()
         self._shared.pop(node, None)    # the window's own write now
-        if self.bypass_row.get_active():
-            auth.publish_graph(node, STRIP)
-            return
         value = self.store.device_value(node, self._listener_layers(),
                                         self._held())
         if value is None:
@@ -3186,11 +3181,27 @@ class EqWindow(Adw.ApplicationWindow):
                                  self._graph_slots(body))
 
     def _on_bypass(self, *_):
-        """Bypass toggled: republish the device state."""
-        self.view.set_active(not self.bypass_row.get_active())
-        if not self._loading:
-            self._apply_now()
+        """Bypass pressed or released. It is the listener's, not the
+        device's -- it takes off the taste as well, which every output
+        plays -- so every output goes raw. Only the button releases it: a
+        change of output, an edit, another profile and a restart leave it
+        as it is. Kept in ui-state.json for the window and in the hook's
+        table for the sound (config.py, BYPASS_KEY)."""
+        on = self.bypass_row.get_active()
+        self.view.set_active(not on)
+        self._ui_state["bypass"] = on
+        save_ui_state(self._ui_state)
+        self._publish_bypass()
+        self._update_meter()
         self._update_headroom()
+
+    def _publish_bypass(self):
+        """Bypass as the window shows it, to the hook, through the one
+        door like every other key."""
+        if not self.live:
+            return
+        pw_backend.backend().publish_graph(
+            BYPASS_KEY, BYPASS_ON if self.bypass_row.get_active() else STRIP)
 
     # ---- headroom / clip estimate (ROADMAP Task 2, tier 1) -----------------
     _CLIP_EPS_DB = 0.05     # "crossed 0 dBFS" once it can show as +0.1 dB

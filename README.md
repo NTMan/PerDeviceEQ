@@ -420,19 +420,20 @@ reaches all of them at once.
   to one of them, and a correction there would play on top of the
   device's own. A null sink is not listed either. When the default is
   one of these, the window still follows it and shows it as it is, with
-  the Device card and Bypass unavailable: there is nothing to correct
-  on it.
+  the Device card unavailable: there is nothing to correct on it.
 - **Profile picker** (the button in the Device card's header): switch the
   profile bound to the current output and port; **+** measures a new one,
   the folder icon imports a profile shared by someone else, and each row
   can be duplicated, edited or removed. `Default (no EQ)` means no
   correction of the device's own: the taste and the preamp still play on
   it, the floor does not.
-- **Bypass** to A/B against the raw sound: it takes the whole chain off
-  the device in view — bands, floor, taste and preamp. Loading a profile
-  or a device, or editing a band, turns it off. It is not saved in the
-  profile, but the hook keeps it: a device left in Bypass stays raw,
-  across a reboot too, until the window is opened on it again.
+- **Bypass** in the header bar takes PerDeviceEQ off every output: the
+  correction, the floor, the taste and the preamp. Like the taste, it is
+  the listener's, not a device's: a change of output, an edit, another
+  profile and a restart leave it pressed, and only the button releases
+  it. The hook keeps it as well, so the sound stays raw with the window
+  closed and after a reboot. Use it to A/B against the raw sound, or to
+  switch the correction off without removing the integration.
 - **Preamp:** **Auto** gives each device its Safe value, the largest boost
   of its composed curve turned into a cut; changing the number switches to
   one manual value for every device.

@@ -302,21 +302,71 @@ scenarios["a device with no correction follows the listener"] = function()
   eq(w.saved[KEY], nil, "following leaves no entry")
 end
 
-scenarios["explicitly nothing takes every graph off"] = function()
+scenarios["Bypass takes every graph off every device and keeps its value"] =
+function()
+  local w = world(nil)
+  w.device(70, { HP })
+  w.device(71, {})
+  w.metadata()
+  w.node(BT, 70, 1)
+  local idle = w.node(CARD, 71, 0, "idle")
+  w.write("@listener", LIS("T", { ["*"] = "S", [KEY] = "P" }))
+  w.write(KEY, DEV("OWN", "P"))
+  local before = w.calls[BT]
+  w.write("@bypass", "1")
+  eq(w.calls[BT] - before, 1, "one call")
+  eq(show(w.applied[BT]), "- - -", "bare")
+  eq(w.applied[CARD], nil, "an idle node waits")
+  w.running(idle)
+  eq(show(w.applied[CARD]), "- - -", "bare on running")
+  eq(w.saved[KEY], DEV("OWN", "P"), "its value is kept")
+  eq(w.saved["@bypass"], "1", "and Bypass with it")
+end
+
+scenarios["a value that arrives under Bypass plays when it is released"] =
+function()
   local w = world(nil)
   w.device(70, { HP })
   w.metadata()
   w.node(BT, 70, 1)
   w.write("@listener", LIS("T", { ["*"] = "S" }))
   w.write(KEY, DEV("OWN", "P"))
-  w.write(KEY, "")
-  eq(show(w.applied[BT]), "- - -", "stripped")
-  eq(w.saved[KEY], "", "persisted as explicitly nothing")
+  w.write("@bypass", "1")
   local before = w.calls[BT]
-  w.write("@listener", LIS("T2", { ["*"] = "S2", [KEY] = "P2" }))
-  eq(w.calls[BT], before, "the listener does not reach it")
-  w.write(KEY, DEV("OWN", "P3"))
-  eq(show(w.applied[BT]), "OWN T2 P3", "back, under the listener's taste")
+  w.write(KEY, DEV("OWN2", "P2"))
+  eq(w.calls[BT] - before, 1, "the key's write sets the node again")
+  eq(show(w.last[BT]), "- - -", "bare: what the meter's nudge needs")
+  w.write("@listener", LIS("T2", { ["*"] = "S2", [KEY] = "P3" }))
+  eq(w.calls[BT] - before, 1, "the record sets nothing")
+  w.write("@bypass", "")
+  eq(show(w.applied[BT]), "OWN2 T2 P3", "what the hook holds now")
+  eq(w.saved["@bypass"], nil, "released, not kept")
+  w.write("@bypass", "1")
+  w.write("@bypass", nil)                -- a deleted key is released too
+  eq(show(w.applied[BT]), "OWN2 T2 P3", "back again")
+end
+
+scenarios["Bypass is kept through a restart"] = function()
+  local w = world({ ["@protocol"] = "5", ["@bypass"] = "1",
+                    ["@listener"] = LIS("T", { ["*"] = "S" }),
+                    [KEY] = DEV("OWN", "P") })
+  w.device(70, { HP })
+  w.node(BT, 70, 1)
+  eq(show(w.applied[BT]), "- - -", "bare from the table")
+  w.metadata()
+  w.write("@bypass", "")
+  eq(show(w.applied[BT]), "OWN T P", "released: what the table held")
+end
+
+scenarios["Bypass leaves alone a device nothing is known about"] = function()
+  local w = world(nil)
+  w.device(70, { HP })
+  w.metadata()
+  w.node(BT, 70, 1)
+  w.write("@bypass", "1")
+  eq(w.applied[BT], nil, "nothing of the hook's is on it")
+  w.write("@bypass", "")
+  eq(w.applied[BT], nil, "nor after")
 end
 
 scenarios["a device plays the preamp that arrived last"] = function()
@@ -380,13 +430,16 @@ function()
   w.write(KEY, G("OLD"))                    -- a graph of protocol 4
   w.write(KEY, "OWN")
   w.write(KEY, '{ "eq": "OWN" }')           -- a string, not a graph
+  w.write(KEY, "")                          -- Bypass before @bypass
   w.write("@listener", G("OLD"))
   w.write("@listener", '{ "taste": "T" }')
   w.write("@listener", '{ "taste": "", "gain": { "*": "S" } }')
+  w.write("@bypass", "on")
   eq(w.calls[BT], before, "nothing set")
   eq(show(w.applied[BT]), "OWN T P", "as it was")
   eq(w.saved[KEY], DEV("OWN", "P"), "nor kept")
   eq(w.saved["@listener"], LIS("T", { ["*"] = "S" }), "nor the record")
+  eq(w.saved["@bypass"], nil, "nor Bypass")
 end
 
 scenarios["a node that passes the sound on is not a device"] = function()
@@ -405,7 +458,8 @@ scenarios["a node that passes the sound on is not a device"] = function()
   w.write("effect_input.eq", DEV("OWN", "P"))
   w.write("null-sink", DEV("OWN", "P"))
   w.write("effect_input.eq", "@listener")
-  w.write("null-sink", "")
+  w.write("@bypass", "1")
+  w.write("@bypass", "")
   w.running(fc)
   w.running(null)
   eq(w.applied["effect_input.eq"], nil, "the chain: nothing, ever")
@@ -507,16 +561,34 @@ scenarios["a measured device stays bare when it starts to play"] = function()
   eq(show(w.applied[BT]), "OWN T P", "back")
 end
 
-scenarios["a device in Bypass stays bare after a measurement"] = function()
+scenarios["a device stays bare after a measurement under Bypass"] = function()
   local w = world(nil)
   w.device(70, { HP })
   w.metadata()
   w.node(BT, 70, 1)
   w.write("@listener", LIS("T", { ["*"] = "S" }))
-  w.write(KEY, "")
+  w.write(KEY, DEV("OWN", "P"))
+  w.write("@bypass", "1")
   w.write("@measure", KEY)
   w.write("@measure", "")
-  eq(show(w.applied[BT]), "- - -", "still explicitly nothing")
+  eq(show(w.applied[BT]), "- - -", "still under Bypass")
+end
+
+scenarios["a measured device is not touched when Bypass is released"] =
+function()
+  local w = world(nil)
+  w.device(70, { HP })
+  w.metadata()
+  w.node(BT, 70, 1)
+  w.write("@listener", LIS("T", { ["*"] = "S" }))
+  w.write(KEY, DEV("OWN", "P"))
+  w.write("@bypass", "1")
+  w.write("@measure", KEY)
+  local before = w.calls[BT]
+  w.write("@bypass", "")
+  eq(w.calls[BT], before, "nothing set during the sweep")
+  w.write("@measure", "")
+  eq(show(w.applied[BT]), "OWN T P", "back after it")
 end
 
 scenarios["a device nothing is known about stays as the measurement left it"] =

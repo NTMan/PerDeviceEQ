@@ -467,10 +467,10 @@ def test_a_good_state_file_is_read_and_left_alone(tmp_path):
 
 def test_the_store_says_what_the_wire_should_hold(tmp_path, monkeypatch):
     """Pure data: a value for a device that has a correction, None for a
-    device that follows the listener, and the listener's record always.
-    No publishing in the store."""
+    device that follows the listener, and Bypass and the listener's
+    record always. No publishing in the store."""
     from perdeviceeq import profiles
-    from perdeviceeq.config import LISTENER_KEY
+    from perdeviceeq.config import BYPASS_KEY, LISTENER_KEY, STRIP
     monkeypatch.setattr(profiles, "BINDINGS_FILE",
                         str(tmp_path / "b.json"), raising=False)
     st = profiles.ProfileStore()
@@ -480,7 +480,8 @@ def test_the_store_says_what_the_wire_should_hold(tmp_path, monkeypatch):
                         "g" if node == "a" else None)
     monkeypatch.setattr(st, "listener_value",
                         lambda listener=None, held=None: "L")
-    assert st.wire_state(([], None)) == {LISTENER_KEY: "L", "a": "g",
+    assert st.wire_state(([], None)) == {BYPASS_KEY: STRIP,
+                                         LISTENER_KEY: "L", "a": "g",
                                          "b": None, "c": None}
 
 

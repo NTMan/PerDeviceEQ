@@ -152,18 +152,20 @@ def _window(node, sinks):
 
 
 def _state(win):
-    return (win.device_card.on, win.bypass_row.on,
-            win.not_device_banner.on)
+    return (win.device_card.on, win.not_device_banner.on)
 
 
 def test_no_device_in_view_greys_out_its_correction():
+    """Its correction only: Bypass is the listener's, for every device,
+    and stays live."""
     sync = _method("_sync_device_state")
     win = _window(CHAIN, pwb.list_sinks(_dump(), default=CHAIN))
     sync(win)
-    assert _state(win) == (False, False, True)
+    assert _state(win) == (False, True)
     win.node = CARD
     sync(win)
-    assert _state(win) == (True, True, False)
+    assert _state(win) == (True, False)
+    assert win.bypass_row.on is None
 
 
 def test_a_gone_node_keeps_its_answer_and_a_new_one_waits():
@@ -175,16 +177,16 @@ def test_a_gone_node_keeps_its_answer_and_a_new_one_waits():
     sync(win)
     win.sinks = []
     sync(win)
-    assert _state(win) == (True, True, False)
+    assert _state(win) == (True, False)
     win.sinks = pwb.list_sinks(_dump(), default=NULL)
     win.node = NULL
     sync(win)
     win.sinks = []
     sync(win)
-    assert _state(win) == (False, False, True)
+    assert _state(win) == (False, True)
     win.node = "alsa_output.not-listed-yet"
     sync(win)
-    assert _state(win) == (False, False, False)
+    assert _state(win) == (False, False)
 
 
 class _Auth:
@@ -199,17 +201,15 @@ class _Auth:
 
 
 def test_no_device_gets_nothing_under_its_key():
-    """Its own key is not written, not even by a Bypass left pressed.
-    A taste or preamp edit made while it is in view still reaches every
-    device, through the listener's record, with no device in view held
-    for it."""
+    """Its own key is not written. A taste or preamp edit made while it
+    is in view still reaches every device, through the listener's
+    record, with no device in view held for it."""
     auth = _Auth()
     backend = types.SimpleNamespace(backend=lambda: auth)
-    apply_now = _method("_apply_now", pw_backend=backend, STRIP="")
+    apply_now = _method("_apply_now", pw_backend=backend)
     win = types.SimpleNamespace(
         live=True, node=CHAIN, _update_meter=lambda: None,
-        _dev=lambda: CHAIN, _is_device=lambda: False,
-        bypass_row=types.SimpleNamespace(get_active=lambda: True))
+        _dev=lambda: CHAIN, _is_device=lambda: False)
     apply_now(win)
     assert auth.calls == []
     held = _method("_held", CLEAN_ID="clean")

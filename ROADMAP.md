@@ -90,6 +90,8 @@ listener, headroom that never lies.
   - An edit made just before the window closes is saved, and what the
     window sent reaches the hook; a sweep the close cancels gives its
     device back.
+  - Bypass takes every output raw and stays, through a change of
+    output, an edit and a restart, until it is released.
   - A saved profile plays on every device bound to it.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a

@@ -19,8 +19,9 @@ import hashlib
 import os, sys, json, uuid
 
 from .config import (SYS_PROFILE_DIRS, USER_PROFILES_DIR, BINDINGS_FILE,
-                     CONFIG_DIR, CLEAN_ID, LISTENER_KEY, SCHEMA_VERSION,
-                     V3_BLOCKS, load_ui_state, read_state)
+                     BYPASS_KEY, BYPASS_ON, CONFIG_DIR, CLEAN_ID,
+                     LISTENER_KEY, SCHEMA_VERSION, STRIP, V3_BLOCKS,
+                     load_ui_state, read_state)
 from .eq import (correction_graph, device_value, gain_graph,
                  has_correction, listener_value, preamp_db, resolve_slots,
                  taste_graph)
@@ -570,16 +571,20 @@ class ProfileStore:
     def wire_state(self, listener=None):
         """WHAT THE HOOK SHOULD BE HOLDING: {key: value}.
 
-        Pure data -- no publishing here. The listener record is always
-        there. A device bound to a profile with something to play gets its
-        correction with its preamp; one bound to Clean, or whose profile
-        plays nothing, gets None: it follows the listener. The store is
-        the only thing that knows this, and the backend is the only thing
+        Pure data -- no publishing here. Bypass and the listener record
+        are always there, Bypass first, so that a device written while it
+        is pressed is never heard with its correction on the way. A device
+        bound to a profile with something to play gets its correction
+        with its preamp; one bound to Clean, or whose profile plays
+        nothing, gets None: it follows the listener. The store is the
+        only thing that knows this, and the backend is the only thing
         that knows how to put it on the wire, so neither does the other's
         half.
         """
         listener = self._layers(listener)
-        wire = {LISTENER_KEY: self.listener_value(listener)}
+        wire = {BYPASS_KEY: (BYPASS_ON if load_ui_state().get("bypass")
+                             else STRIP),
+                LISTENER_KEY: self.listener_value(listener)}
         for node in self.bindings:
             wire[node] = self.device_value(node, listener)
         return wire

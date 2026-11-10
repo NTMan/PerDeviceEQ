@@ -15,8 +15,9 @@
 --
 -- How it works:
 --   * what each device plays is kept in memory -- its correction and the
---     preamp it plays, or explicitly nothing -- with the listener's record,
---     the taste and a preamp per device: the runtime source of truth;
+--     preamp it plays -- with the listener's record, the taste and a preamp
+--     per device, and whether Bypass is pressed: the runtime source of
+--     truth;
 --   * on startup it is seeded from WpState (~/.local/state/wireplumber/),
 --     because the metadata object is empty after a PipeWire restart; only a
 --     table written under this PROTOCOL is read -- an older hook may have
@@ -56,13 +57,12 @@ local GRAPH = "audioconvert.filter-graph."
 local ALL = { 0, 1, 2 }
 local LISTENER_GRAPHS = { 1, 2 }
 
--- THE CONTRACT (LISTENER_KEY, MEASURE_KEY and STRIP in
--- perdeviceeq/config.py, keep them equal). A key names a device
--- (device_key below), the listener, or the measurement.
--- A device's value is one of three:
+-- THE CONTRACT (LISTENER_KEY, MEASURE_KEY, BYPASS_KEY, BYPASS_ON and
+-- STRIP in perdeviceeq/config.py, keep them equal). A key names a
+-- device (device_key below), the listener, the measurement, or Bypass.
+-- A device's value is one of two:
 --   { "eq": <graph 0>, "gain": <graph 2> }
 --            its correction with its preamp;
---   STRIP    explicitly nothing, every graph off: Bypass;
 --   LISTENER no correction of its own: graph 0 off, the listener's
 --            taste and "*" preamp on. The app writes this rather than
 --            deleting the key: the metadata announces a delete only for
@@ -91,8 +91,18 @@ local LISTENER_GRAPHS = { 1, 2 }
 -- read back afterwards. The name is not kept in the table: a
 -- measurement is one sweep of a running program, and a restart of
 -- WirePlumber ends it.
+--
+-- BYPASS TAKES EVERY GRAPH OFF EVERY DEVICE: the value under BYPASS is
+-- BYPASS_ON while it is pressed, STRIP when it is not. A device's value
+-- and the listener's stay as they are, and a value that arrives
+-- meanwhile is kept, its device left bare; when Bypass is released,
+-- every device gets back what the hook holds for it. Bypass is kept in
+-- the table: pressed, it stays until it is released, through a restart
+-- of WirePlumber or a reboot, with no window open.
 local LISTENER = "@listener"
 local MEASURE = "@measure"
+local BYPASS = "@bypass"
+local BYPASS_ON = "1"
 
 -- No EQ is the ABSENCE of a graph, not a flat one. audioconvert's
 -- load_filter_graph() removes the graph when it is handed an empty
@@ -104,12 +114,13 @@ local STRIP = ""
 
 local PROTO_KEY = "@protocol"   -- in the persisted table: what wrote it
 
-local own = {}               -- device key -> { eq =, gain = } or STRIP;
+local own = {}               -- device key -> { eq =, gain = };
                              -- no key: follows the listener
 local listener = nil         -- { taste =, gain = { key/"*" -> graph } },
                              -- nil: never heard
 local listener_text = nil    -- the listener's value as written
 local measured = nil         -- the device key MEASURE names, or nil
+local bypassed = false       -- Bypass pressed
 local nodes  = {}            -- node.name -> live device node (is_final)
 local set_on = {}            -- node.name -> graphs last set there, by number
 local md     = nil           -- activated metadata proxy
@@ -134,12 +145,11 @@ local function graph(x)
   return nil
 end
 
--- What a device's value says: { eq =, gain = }, STRIP, or nil to
--- follow the listener -- false when it does not read as the contract
--- says, and then it changes nothing.
+-- What a device's value says: { eq =, gain = }, or nil to follow the
+-- listener -- false when it does not read as the contract says, and
+-- then it changes nothing.
 local function read_device(value)
   if value == nil or value == LISTENER then return nil end
-  if value == STRIP then return STRIP end
   local t = fields(value)
   local eq = t and t.eq ~= nil and graph(t.eq)
   local gain = t and graph(t.gain)
@@ -172,7 +182,6 @@ end
 -- a device as its value says it, with the preamp it plays: what the
 -- table keeps
 local function write_device(v)
-  if v == STRIP then return STRIP end
   local function text(g) return g == STRIP and '""' or g end
   return '{ "eq": ' .. text(v.eq) .. ', "gain": ' .. text(v.gain) .. ' }'
 end
@@ -186,6 +195,8 @@ do
         if k == LISTENER then
           local l = read_listener(v)
           if l then listener, listener_text = l, v end
+        elseif k == BYPASS then
+          bypassed = v == BYPASS_ON
         elseif k ~= PROTO_KEY then
           local d = read_device(v)
           if d then own[k] = d end
@@ -199,6 +210,7 @@ local function persist()
   local t = { [PROTO_KEY] = PROTOCOL }
   for k, v in pairs(own) do t[k] = write_device(v) end
   if listener_text ~= nil then t[LISTENER] = listener_text end
+  if bypassed then t[BYPASS] = BYPASS_ON end
   pcall(function() state:save(t) end)
 end
 
@@ -297,26 +309,59 @@ end
 
 -- what a device plays now, graph by graph
 local function wanted(key)
-  local v = own[key]
-  if v == STRIP or key == measured then
+  if bypassed or key == measured then
     return { [0] = STRIP, [1] = STRIP, [2] = STRIP }
   end
+  local v = own[key]
   local l = listener or { taste = STRIP, gain = {} }
   if v ~= nil then return { [0] = v.eq, [1] = l.taste, [2] = v.gain } end
   return { [0] = STRIP, [1] = l.taste, [2] = l.gain["*"] or STRIP }
 end
 
+-- whether the hook has anything to say about a device: a value of its
+-- own, the listener's, or that it is being measured. A device it knows
+-- nothing about is left alone, Bypass or not: nothing of the hook's is
+-- on it.
+local function known(k)
+  return own[k] ~= nil or listener ~= nil or k == measured
+end
+
 local function apply(node)
   local k = device_key(node)
-  if k == nil then return end
-  -- nothing known => leave alone, unless it is being measured
-  if own[k] == nil and listener == nil and k ~= measured then return end
+  if k == nil or not known(k) then return end
   put(node, wanted(k), ALL)
+end
+
+-- A NODE PLAYING NOW HEARS A CHANGE NOW: on each, the graphs among
+-- `which` that differ from what is set there, in one call; a node the
+-- hook never set gets all of them. Any other gets all of it when it
+-- reaches running, where every graph is set again anyway. A device
+-- that wants nothing and has nothing gets nothing: measured, or under
+-- Bypass.
+local function refresh(which)
+  for name, n in pairs(nodes) do
+    local k, st = device_key(n), nil
+    pcall(function() st = n:get_state() end)
+    if k ~= nil and st == "running" and known(k) then
+      local want, mem = wanted(k), set_on[name]
+      if mem == nil then
+        put(n, want, ALL)
+      else
+        local diff = {}
+        for _, i in ipairs(which) do
+          if mem[i] ~= want[i] then diff[#diff + 1] = i end
+        end
+        if #diff > 0 then put(n, want, diff) end
+      end
+    end
+  end
 end
 
 -- A DEVICE'S VALUE: what it says, on every node of the device in one
 -- call each -- all three graphs, since it also takes the listener's
--- layer off or puts it back on.
+-- layer off or puts it back on. Under Bypass that is all three off
+-- again, which is what the app's meter needs from a write of the key:
+-- a graph set on the node completes the links of its monitor.
 local function on_device(key, value)
   local v = read_device(value)
   if v == false then
@@ -333,10 +378,7 @@ local function on_device(key, value)
 end
 
 -- THE LISTENER'S VALUE: the taste for every device, and the preamp
--- that arrived last for each. A node playing now hears it now, and only
--- what changed is set there; any other gets all of it when it reaches
--- running, where every graph is set again anyway. A measured device
--- wants nothing, has nothing, and so gets nothing.
+-- that arrived last for each, on every node that plays (refresh).
 local function on_listener(value)
   local l = read_listener(value)
   if l == nil then
@@ -345,26 +387,9 @@ local function on_listener(value)
     return
   end
   listener, listener_text = l, value
-  for k, v in pairs(own) do
-    if v ~= STRIP then v.gain = l.gain[k] or l.gain["*"] or STRIP end
-  end
+  for k, v in pairs(own) do v.gain = l.gain[k] or l.gain["*"] or STRIP end
   persist()
-  for name, n in pairs(nodes) do
-    local k, st = device_key(n), nil
-    pcall(function() st = n:get_state() end)
-    if k ~= nil and st == "running" and own[k] ~= STRIP then
-      local want, mem = wanted(k), set_on[name]
-      if mem == nil then
-        put(n, want, ALL)
-      else
-        local which = {}
-        for _, i in ipairs(LISTENER_GRAPHS) do
-          if mem[i] ~= want[i] then which[#which + 1] = i end
-        end
-        if #which > 0 then put(n, want, which) end
-      end
-    end
-  end
+  refresh(LISTENER_GRAPHS)
 end
 
 -- THE MEASUREMENT'S NAME: the device it names goes bare in one call
@@ -377,11 +402,26 @@ local function on_measure(value)
   if measured == was then return end
   for _, n in pairs(nodes) do
     local k = device_key(n)
-    if k ~= nil and (k == measured or (k == was
-        and (own[k] ~= nil or listener ~= nil))) then
+    if k ~= nil and (k == measured or k == was) and known(k) then
       put(n, wanted(k), ALL)
     end
   end
+end
+
+-- BYPASS: every device that plays goes bare, or gets back what the hook
+-- holds for it, now (refresh); any other when it reaches running.
+local function on_bypass(value)
+  if value == nil or value == STRIP then
+    bypassed = false
+  elseif value == BYPASS_ON then
+    bypassed = true
+  else
+    log.warning("not a value of protocol " .. PROTOCOL .. ", left as it "
+                .. "was: " .. BYPASS)
+    return
+  end
+  persist()
+  refresh(ALL)
 end
 
 -- ---- devices: where a node's holes are listed ----
@@ -434,6 +474,7 @@ md_om:connect("object-added", function(_, m)
       if key == nil or key == "protocol" then return end
       if key == LISTENER then on_listener(value)
       elseif key == MEASURE then on_measure(value)
+      elseif key == BYPASS then on_bypass(value)
       else on_device(key, value) end
     end)
   end)

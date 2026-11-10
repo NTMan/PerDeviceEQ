@@ -31,6 +31,8 @@ def test_the_hook_and_the_app_share_one_contract():
     assert _lua_const("PROTOCOL") == config.PROTOCOL
     assert _lua_const("LISTENER") == config.LISTENER_KEY
     assert _lua_const("MEASURE") == config.MEASURE_KEY
+    assert _lua_const("BYPASS") == config.BYPASS_KEY
+    assert _lua_const("BYPASS_ON") == config.BYPASS_ON
     assert _lua_const("STRIP") == config.STRIP
 
 

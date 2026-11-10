@@ -259,29 +259,45 @@ def test_the_feed_and_the_window_call_give_one_string(store):
 
 
 def test_the_wire_holds_the_listener_and_every_binding(store):
-    from perdeviceeq.config import LISTENER_KEY
+    from perdeviceeq.config import BYPASS_KEY, LISTENER_KEY, STRIP
     _bound(store)
     _bound(store, "empty#port", {"name": "Empty", "floor_off": True,
                                  "ch_keys": ["FL"],
                                  "channels": {"FL": {"bands": []}}})
     wire = store.wire_state(([BASS], None))
-    assert set(wire) == {LISTENER_KEY, "sink#port", "empty#port"}
+    assert set(wire) == {BYPASS_KEY, LISTENER_KEY, "sink#port",
+                         "empty#port"}
+    assert wire[BYPASS_KEY] == STRIP       # not pressed
     assert wire[LISTENER_KEY] == store.listener_value(([BASS], None))
     assert wire["empty#port"] is None      # plays the taste: it follows
+
+
+def test_the_wire_carries_bypass_first_while_it_is_pressed(store):
+    """--apply writes the wire in order: Bypass first, so a device written
+    after it is not heard with its correction on the way."""
+    from perdeviceeq import config
+    _bound(store)
+    config.save_ui_state({"bypass": True})
+    wire = store.wire_state(([BASS], None))
+    assert list(wire)[0] == config.BYPASS_KEY
+    assert wire[config.BYPASS_KEY] == config.BYPASS_ON
+    assert wire["sink#port"] == store.device_value("sink#port",
+                                                   ([BASS], None))
 
 
 # ---- the window has no second door ------------------------------------------
 
 def test_the_window_publishes_the_contract():
-    """Bypass is explicitly nothing; any other state is the store's
-    answer, with the device in view as the window holds it."""
+    """A device's value is the store's answer, with the device in view as
+    the window holds it, Bypass pressed or not: Bypass goes out under its
+    own key (_publish_bypass) and leaves the value as it is."""
     fn = _gui()["_apply_now"]
     pubs = [[ast.unparse(a) for a in c.args] for c in ast.walk(fn)
             if isinstance(c, ast.Call)
             and ast.unparse(c.func) == "auth.publish_graph"]
-    assert ["node", "STRIP"] in pubs
-    assert ["node", "value"] in pubs
+    assert pubs == [["node", "value"]]
     calls = _calls(fn)
+    assert "self.bypass_row.get_active" not in calls
     assert "self.store.device_value" in calls
     assert "self._held" in calls
     assert not any(c.startswith("eq.") for c in calls)
@@ -293,7 +309,7 @@ def test_the_window_wishes_in_the_order_it_makes_them():
     order, and the newest would not be the one that lands last."""
     fns = _gui()
     for name in ("_apply_now", "_publish_listener", "_publish_sharers",
-                 "_publish_unbound"):
+                 "_publish_unbound", "_publish_bypass"):
         assert "pw_backend.in_thread" not in _calls(fns[name])
 
 
