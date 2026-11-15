@@ -60,6 +60,9 @@ class FakeBackend(AudioBackend):
     def play(self, device, wav_path, stream_volume=1.0):
         raise NotImplementedError
 
+    def _stop_streams(self):
+        self.log.append(("stop-streams",))
+
 
 def test_bare_abstract_refuses_birth():
     with pytest.raises(TypeError):
@@ -602,6 +605,7 @@ def test_land_lets_a_measurement_end_on_its_own_thread():
     assert f.ended_by is t
     assert _graphs(f, MEASURE_KEY) == [(MEASURE_KEY, "dev"),
                                        (MEASURE_KEY, STRIP)]
+    assert ("stop-streams",) not in f.log     # its own end stopped them
 
 
 def test_land_ends_a_measurement_that_does_not_end_in_time():
@@ -614,6 +618,19 @@ def test_land_ends_a_measurement_that_does_not_end_in_time():
     assert state["restored"] is True
     assert [e[2] for e in f.log if e[:2] == ("volume", "dev")] == \
         [0.074, 0.61]
+
+
+def test_land_silences_a_measurement_before_it_gives_the_device_back():
+    """A level-search rung is not cancelled by the close, and a Ctrl+C
+    cancels nothing: the sweep, a process of its own, would play on
+    through the level and the correction the end gives back."""
+    f = FakeBackend()
+    f.server_volume = 0.61
+    f.moratorium_begin("dev", 0.074, mute_others=False)
+    assert f.land(0.1)
+    stop = f.log.index(("stop-streams",))
+    assert stop < f.log.index(("volume", "dev", 0.61))
+    assert stop < f.log.index(("graph", MEASURE_KEY, STRIP))
 
 
 def test_land_waits_for_an_end_in_progress():

@@ -1197,8 +1197,10 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import sys
+import weakref
 
 from .config import LISTENER_KEY, METADATA_NAME
 from .audio_backend import AudioBackend
@@ -1466,6 +1468,29 @@ class PipeWireBackend(AudioBackend):
     a node by its name; a filter graph is published for a device, the
     node and the port in use (device_key)."""
 
+    def __init__(self):
+        super().__init__()
+        # the measurement streams, for an ending program to stop
+        # (_stop_streams); weak, so a finished sweep's handles go with
+        # the sweep
+        self._streams = weakref.WeakSet()
+        self._streams_lock = threading.Lock()
+        # the heartbeat (start/stop); stop() reads it before any start
+        self._timer = 0
+        self._busy = False
+        self._glib = None
+
+    def _keep(self, handle):
+        with self._streams_lock:
+            self._streams.add(handle)
+        return handle
+
+    def _stop_streams(self):
+        with self._streams_lock:
+            live = list(self._streams)
+        for handle in live:
+            handle.kill()
+
     # -- state verbs ---------------------------------------------------
 
     def _graph_key(self, sink):
@@ -1710,10 +1735,6 @@ class PipeWireBackend(AudioBackend):
 
     POLL_S = 3
 
-    _timer = 0
-    _busy = False
-    _glib = None
-
     def start(self, interval_s=None):
         """Begin the periodic refresh (idempotent). Uses GLib; only
         the app calls this -- tests drive update() directly."""
@@ -1766,7 +1787,7 @@ class PipeWireBackend(AudioBackend):
         # cost a CI round to learn the same lesson
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
-        return StreamHandle(proc)
+        return self._keep(StreamHandle(proc))
 
     @staticmethod
     def monitor_cmd(sink, channels, rate=48000, positions=None):
@@ -1863,7 +1884,7 @@ class PipeWireBackend(AudioBackend):
                              or "(none, plain mono)"))
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.PIPE, text=True)
-        return StreamHandle(proc)
+        return self._keep(StreamHandle(proc))
 
 
 _instance = None

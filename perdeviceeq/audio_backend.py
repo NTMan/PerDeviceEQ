@@ -310,11 +310,23 @@ class AudioBackend(ABC):
         processes -- and is ended here when it has not, so that its
         device is not left named to the hook. An end in progress holds
         the server, and moratorium_end waits for it. True if every wish
-        was out in time."""
+        was out in time.
+
+        ITS STREAMS ARE STOPPED BEFORE IT IS ENDED HERE (_stop_streams).
+        Its worker dies with the process, its own finally unrun, and
+        the sweep is a process of its own that plays its file to the
+        end: ended first, the measurement gave the device its level and
+        its correction back, and the rest of the sweep played through
+        them after the program was gone. A rung of the level search is
+        that sweep -- the close cancels a take, not a rung -- and so was
+        every sweep a Ctrl+C ended: PyGObject turns it into
+        Application.quit, and no window close cancels anything."""
         deadline = time.monotonic() + timeout
         with self._idle:
-            self._idle.wait_for(lambda: self._moratorium is None,
-                                timeout)
+            ended = self._idle.wait_for(lambda: self._moratorium is None,
+                                        timeout)
+        if not ended:
+            self._stop_streams()
         self.moratorium_end()
         return self.flush(max(0.0, deadline - time.monotonic()))
 
@@ -708,3 +720,10 @@ class AudioBackend(ABC):
         """Play a file into `device`. Returns a handle with .wait(),
         .poll(), .returncode, .stderr_read(), .terminate() and
         .alive() -- the sweep rides this verb."""
+
+    @abstractmethod
+    def _stop_streams(self):
+        """Stop every stream play() and capture() started that is
+        still running, and return when they are gone. Called by an
+        ending program (land) whose measurement did not end in time:
+        a stream left running outlives the program."""

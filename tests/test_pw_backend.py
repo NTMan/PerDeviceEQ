@@ -256,6 +256,41 @@ def test_play_speaks_the_measure_dialect(rig, monkeypatch):
     assert cmd[cmd.index("--channel-map") + 1] == "FL,FR"
     assert cmd[-1] == "/tmp/x.wav"
 
+def test_an_ending_program_stops_the_streams_still_running(
+        rig, monkeypatch):
+    """What play() and capture() started and is still running dies
+    with _stop_streams (land); what already ended is left alone."""
+    b, _ = rig
+
+    class FakeProc:
+        def __init__(self, cmd, **kw):
+            self.cmd = cmd
+            self.stdout = None
+            self.stderr = None
+            self.rc = None
+            self.killed = False
+
+        def poll(self):
+            return self.rc
+
+        def kill(self):
+            self.killed = True
+            self.rc = -9
+
+        def wait(self, timeout=None):
+            return self.rc
+
+    monkeypatch.setattr(pwb.subprocess, "Popen", FakeProc)
+    sweep = b.play(10, "/tmp/x.wav")
+    cap = b.capture(11, 2, 48000)
+    done = b.play(10, "/tmp/y.wav")
+    done._proc.rc = 0                     # played to its end
+    b._stop_streams()
+    assert sweep._proc.killed and cap._proc.killed
+    assert not done._proc.killed
+    assert not sweep.alive() and not cap.alive()
+
+
 def _card_dump():
     """One USB card: an analog input node on card device 0, with a
     microphone route and a line-in route, and an unrelated S/PDIF
