@@ -97,15 +97,19 @@
             <property name="name">wide</property>
             <property name="content">
               <object class="GtkBox">
-                <property name="spacing">24</property>
+                <property name="spacing">18</property>
                 <!-- equal halves, ALWAYS: natural widths change
                      when the takes fold (hidden rows stop counting)
                      and the columns would breathe with every click
                      of the accordion -->
                 <property name="homogeneous">true</property>
-                <property name="margin-top">8</property>
-                <property name="margin-bottom">8</property>
-                <property name="margin-start">8</property>
+                <!-- 6 here and 6 inside each column put a card 12
+                     from the window's edge, as the narrow layout
+                     does; the inner 6 is the cards' shadow air,
+                     which the column viewports would clip -->
+                <property name="margin-top">6</property>
+                <property name="margin-bottom">6</property>
+                <property name="margin-start">6</property>
                 <child>
                   <object class="GtkScrolledWindow">
                     <property name="hscrollbar-policy">never</property>
@@ -114,10 +118,10 @@
                         <property name="orientation">vertical</property>
                         <property name="spacing">18</property>
                         <property name="valign">start</property>
-                        <property name="margin-top">4</property>
-                        <property name="margin-bottom">4</property>
-                        <property name="margin-start">4</property>
-                        <property name="margin-end">4</property>
+                        <property name="margin-top">6</property>
+                        <property name="margin-bottom">6</property>
+                        <property name="margin-start">6</property>
+                        <property name="margin-end">6</property>
                     <child>
                       <object class="AdwLayoutSlot">
                         <property name="id">mic</property>
@@ -141,9 +145,9 @@
                       <object class="GtkBox">
                         <property name="orientation">vertical</property>
                         <property name="spacing">18</property>
-                        <property name="margin-top">4</property>
-                        <property name="margin-bottom">4</property>
-                        <property name="margin-start">4</property>
+                        <property name="margin-top">6</property>
+                        <property name="margin-bottom">6</property>
+                        <property name="margin-start">6</property>
                         <property name="margin-end">12</property>
                         <child>
                           <object class="AdwLayoutSlot">
