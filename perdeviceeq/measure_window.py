@@ -453,18 +453,17 @@ class MeasureWindow(Adw.Window):
         self._rebuild_map_slots()
 
         _t = time.monotonic()
-        # THE RIGHT COLUMN SCROLLS. The passport canvas grows a row
-        # per record and the takes list a row per take; the window
-        # does not grow with them, and a card that ran past its bottom
-        # edge lost its base row, its rule and every probe under it
-        # without a word. The fader and the buttons on the left stay
-        # put; this side scrolls.
-        page_sw = Gtk.ScrolledWindow()
-        page_sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        page_sw.set_propagate_natural_width(True)
-        page_sw.set_vexpand(True)
-        page_sw.set_child(self._build_page())
-        b.get_object("channel_host").append(page_sw)
+        # NO SCROLLER OF ITS OWN. The passport grows a row per record
+        # and the takes a row per take, and each layout in the .ui
+        # already scrolls them: the narrow one the whole page, the
+        # wide one the right column, its bar in the 12 px at the
+        # window's edge. A scroller here sat inside that one and took
+        # the wheel from it: its bar rode the cards' right edge, its
+        # edges cut the cards' shadows, and in the narrow layout it
+        # got only the height the cards above it left -- a page's
+        # viewport allocates by minimum height, and a scroller's
+        # minimum is tiny by design.
+        b.get_object("channel_host").append(self._build_page())
         debug.timing("_build_page", _t)
         _t = time.monotonic()
         fa = self._build_fit_area()
