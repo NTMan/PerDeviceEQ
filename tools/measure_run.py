@@ -26,6 +26,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from perdeviceeq.audio_backend import end_on_signals
 from perdeviceeq import level_run
 from perdeviceeq import measure_core as mc
 from perdeviceeq.measure_session import MeasureSession, SessionConfig
@@ -226,4 +227,5 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    end_on_signals()
     sys.exit(main())

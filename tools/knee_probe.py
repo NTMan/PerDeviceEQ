@@ -30,6 +30,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from perdeviceeq.audio_backend import end_on_signals   # noqa: E402
 from perdeviceeq import knee, knee_run, pw_backend     # noqa: E402
 
 cubic_to_db = knee_run.cubic_to_db
@@ -358,6 +359,7 @@ def _draw(rungs, width=44):
 
 
 if __name__ == "__main__":
+    end_on_signals()
     try:
         sys.exit(main())
     except KeyboardInterrupt:

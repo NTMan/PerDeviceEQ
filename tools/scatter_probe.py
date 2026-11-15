@@ -63,6 +63,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 
+from perdeviceeq.audio_backend import end_on_signals         # noqa: E402
 from perdeviceeq import level_run                            # noqa: E402
 from perdeviceeq import measure_core as mc                   # noqa: E402
 from perdeviceeq import pw_backend                           # noqa: E402
@@ -230,4 +231,5 @@ def main():
 
 
 if __name__ == "__main__":
+    end_on_signals()
     sys.exit(main())

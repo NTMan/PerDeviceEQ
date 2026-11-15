@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np                                      # noqa: E402
 
+from perdeviceeq.audio_backend import end_on_signals    # noqa: E402
 from perdeviceeq import knee, knee_run, pw_backend      # noqa: E402
 from perdeviceeq import sweep_io                        # noqa: E402
 
@@ -211,4 +212,5 @@ def main():
 
 
 if __name__ == "__main__":
+    end_on_signals()
     sys.exit(main())

@@ -4127,12 +4127,36 @@ class EqApplication(Adw.Application):
         pw_backend.backend().land(LAND_TIMEOUT_S)
         Adw.Application.do_shutdown(self)
 
+    def end_by_signal(self):
+        """SIGINT, SIGTERM and SIGHUP end the program the way closing
+        its window does. The main window's close saves an edit still
+        waiting for its timer and cancels a take in the air
+        (MeasureWindow._on_parent_close); the last window gone ends the
+        application, and its shutdown lands what is owed (land).
+
+        Left alone, SIGTERM and SIGHUP end the process without running
+        a line of Python -- no finally, no shutdown: a sweep in the air
+        left its sink at the measurement's level and unmuted, its
+        device named to the hook and foreign streams muted -- and
+        PyGObject turns SIGINT into Application.quit, which closes no
+        window: a take went on until the shutdown ended it, and an
+        edit waiting for its timer was lost."""
+        windows = list(self.get_windows())
+        if not windows:
+            self.quit()
+        for w in windows:
+            w.close()
+
 
 def launch_gui():
     """Entry point used by the launcher: run the Adw application."""
+    import signal
     try:                      # `kill -USR1 <pid>` dumps a live stack to stderr
-        import faulthandler, signal
+        import faulthandler
         faulthandler.register(signal.SIGUSR1)
     except Exception:
         pass
-    return EqApplication().run(None)
+    app = EqApplication()
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda *_: app.end_by_signal())
+    return app.run(None)

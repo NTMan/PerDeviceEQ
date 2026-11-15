@@ -15,8 +15,10 @@ math).
 """
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -38,8 +40,9 @@ GRAPH = ("{ nodes = [ { type = builtin name = eq label = param_eq "
          "gain = 9.6, q = 2.25 } ] } } ] }")
 
 
-def run_measure(tmp_path, extra=(), env_extra=None, input_text="",
-                seed_meta=True):
+def _rig(tmp_path, extra=(), env_extra=None, seed_meta=True):
+    """The shim server's state, the environment and the command line
+    of one run of the runner."""
     state = tmp_path / "state"
     state.mkdir(exist_ok=True)
     if seed_meta:
@@ -58,6 +61,12 @@ def run_measure(tmp_path, extra=(), env_extra=None, input_text="",
            "--sink", "test_sink", "--source", "test_source", "--yes",
            "--save-dir", str(tmp_path / "takes"), "--out", str(out),
            *extra]
+    return state, env, out, cmd
+
+
+def run_measure(tmp_path, extra=(), env_extra=None, input_text="",
+                seed_meta=True):
+    state, env, out, cmd = _rig(tmp_path, extra, env_extra, seed_meta)
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env,
                           input=input_text, timeout=300)
     return proc, out, state
@@ -398,3 +407,56 @@ def test_auto_level_converges_on_a_nonlinear_gain(tmp_path):
     import soundfile as sf
     x, _ = sf.read(str(outdir / "take01.wav"), always_2d=True)
     assert float(np.max(np.abs(x[:, 0]))) < ms.FULLSCALE
+
+
+# --- a signal mid-sweep: the way out an exception takes ----------------
+
+def _shim_players(state):
+    """Fake pw-play processes still alive for this run's server."""
+    mark = ("PDE_SHIM_DIR=%s" % state).encode()
+    alive = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % pid, "rb") as f:
+                cmdline = f.read()
+            with open("/proc/%s/environ" % pid, "rb") as f:
+                environ = f.read().split(b"\0")
+        except OSError:
+            continue
+        if b"pw-play" in cmdline and mark in environ:
+            alive.append(int(pid))
+    return alive
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="needs /proc")
+def test_a_sigterm_mid_sweep_stops_the_sweep_and_gives_the_device_back(
+        tmp_path):
+    """SIGTERM -- a session's end, a plain kill -- used to end the
+    runner without running a line of Python: the sweep played on and
+    the device stayed named to the hook. It ends it as an exception
+    does now (end_on_signals)."""
+    state, env, _out, cmd = _rig(
+        tmp_path, ["--takes", "2"],
+        env_extra={"PDE_SHIM_PLAY_SECONDS": "30"})
+    proc = subprocess.Popen(cmd, env=env, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+    try:
+        playing = state / "playing.json"
+        deadline = time.monotonic() + 60
+        while not playing.exists():
+            assert proc.poll() is None, proc.communicate()[1]
+            assert time.monotonic() < deadline, "the sweep never started"
+            time.sleep(0.05)
+        assert meta_now(state)[MEASURE_KEY] == "test_sink"
+        proc.send_signal(signal.SIGTERM)
+        _o, err = proc.communicate(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert proc.returncode == 128 + signal.SIGTERM, err
+    assert meta_now(state)[MEASURE_KEY] == STRIP
+    assert _shim_players(state) == []

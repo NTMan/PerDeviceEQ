@@ -51,6 +51,7 @@ No GTK, no windows, no knowledge of who calls: the presence of a
 measure window must never gate code anywhere else.
 """
 
+import signal
 import sys
 import threading
 import time
@@ -727,3 +728,19 @@ class AudioBackend(ABC):
         still running, and return when they are gone. Called by an
         ending program (land) whose measurement did not end in time:
         a stream left running outlives the program."""
+
+
+def end_on_signals():
+    """In a command-line program that measures: SIGTERM and SIGHUP end
+    it the way Ctrl+C does, as an exception in the main thread, so
+    every finally on the way out runs -- a sweep's kill of its child
+    processes (sweep_io.run_take) and the moratorium's end among them.
+    Left alone, both end the process without running a line of
+    Python: a sweep in the air left its sink at the measurement's
+    level and unmuted, its device named to the hook and foreign
+    streams muted. The window application has its own way out
+    (EqApplication.end_by_signal)."""
+    def _end(signum, _frame):
+        raise SystemExit(128 + signum)
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _end)
