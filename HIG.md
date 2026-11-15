@@ -203,9 +203,10 @@ describes itself; H5 spacing comes from the grid 0, 3, 6, 12,
 or more is a finding even on the six -- read from Gtk.Box
 spacing and widget margins, not from Gtk.Grid spacing; H6 dialog
 buttons name the action; H7 prose belongs to a card, a boxed
-list, a bar, a banner or a toast: a label of more than 40
-characters loose in a bare column is a finding, headings and
-titles excepted; H8 a label dresses from the type scale (the
+list, a dialog, a bar, a banner or a toast, at any depth inside
+them (About's own Troubleshooting page sets its paragraph loose
+in a dialog page): a label of more than 40 characters loose in a
+bare column is a finding, headings and titles excepted; H8 a label dresses from the type scale (the
 wardrobe: title-1..4, heading, caption, caption-heading,
 dim-label, numeric, monospace, accent, the stock colors,
 chantab-count --

@@ -248,6 +248,11 @@ def test_h7_prose_needs_a_house():
     assert hig.lint(housed) == []
     listed = _box([_label(prose)], css=["boxed-list"])
     assert hig.lint(listed) == []
+    # a box anywhere inside a card, a boxed list or a dialog: the
+    # describer marks it housed
+    deep = _box([_label(prose)])
+    deep["props"]["housed"] = True
+    assert hig.lint(deep) == []
     caption = _box([_label("SNR 43.1 dB")])
     assert hig.lint(caption) == []
     heading = _box([_label(prose, css=["heading"])])

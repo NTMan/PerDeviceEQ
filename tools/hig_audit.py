@@ -139,7 +139,7 @@ def _sides(b, w):
     return [b.top, b.bottom, b.left, b.right]
 
 
-def describe(w, in_bar=False):
+def describe(w, in_bar=False, housed=False):
     """The neutral tree perdeviceeq.hig lints: class, the props
     the rules read, children. Unknown stays absent -- the floor
     accuses only on evidence."""
@@ -147,8 +147,14 @@ def describe(w, in_bar=False):
     css = list(w.get_css_classes())
     in_bar = (in_bar or t in _BARS or "card-header" in css
               or "toolbar" in css)
+    # a card, a boxed list or a dialog houses prose at any depth
+    # (H7): About's own Troubleshooting page sets its paragraph
+    # loose in the page's column
+    housed = (housed or "card" in css or "boxed-list" in css
+              or isinstance(w, Adw.Dialog))
     props = {"css": css,
              "in_bar": in_bar,
+             "housed": housed,
              "tooltip": w.get_tooltip_text(),
              "halign": _ALIGN.get(w.get_halign()),
              "margins": [w.get_margin_top(),
@@ -169,6 +175,8 @@ def describe(w, in_bar=False):
                              == Gtk.Orientation.VERTICAL)
     if isinstance(w, Gtk.Label):
         props["xalign"] = w.get_xalign()
+        # the text as it reads, without markup: H7 measures prose
+        props["label"] = w.get_text()
     if isinstance(w, Adw.PreferencesRow):
         props["title"] = w.get_title()
         if hasattr(w, "get_subtitle"):
@@ -185,7 +193,7 @@ def describe(w, in_bar=False):
         props["icon_only"] = bool(w.get_icon_name()) and not label
     kids = []
     for c in _own_children(w, t):
-        node = describe(c, in_bar)
+        node = describe(c, in_bar, housed)
         if isinstance(w, Gtk.Grid):
             # a cell's place: H11 lines up the cells of a column
             node["props"]["cell"] = list(w.query_child(c))

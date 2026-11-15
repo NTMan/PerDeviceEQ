@@ -36,7 +36,8 @@ four ints: top, bottom, start, end), padding and border (the
 CSS box inside the margins, four ints in the margins' order),
 xalign (float, a label's), grid (bool -- the node is a
 Gtk.Grid), cell (list of four ints: column, row, width, height
--- a grid child's place).
+-- a grid child's place), housed (bool -- inside a card, a boxed
+list or a dialog, at any depth).
 
 Ratchet provenance: H1-H3 were earned in the .pdeq sprint's
 design rounds (see HIG.md); H4-H6 are the HIG's own letter;
@@ -304,13 +305,14 @@ def _findings_h8(node, path, out):
 
 
 def _findings_h7(node, path, out):
-    """H7: prose belongs to a card, a banner, or a toast --
-    never loose in a bare column."""
+    """H7: prose belongs to a card, a boxed list, a dialog, a
+    banner, or a toast -- never loose in a bare column. A house
+    holds at any depth (housed)."""
     if not node.get("class", "").endswith("Box"):
         return
     props = node.get("props", {})
     css = props.get("css") or []
-    if props.get("in_bar") or "card" in css \
+    if props.get("in_bar") or props.get("housed") or "card" in css \
             or "boxed-list" in css:
         return
     for k in node.get("children") or []:
