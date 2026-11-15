@@ -252,3 +252,27 @@ def test_a_resumed_search_keeps_the_steps_it_replayed(monkeypatch):
     assert seen["replay"] == win._walk_replay
     assert [p["step"] for p in win._walk_probes] == [1, 2, 3]
     assert win._walk_settled == 0.19
+
+
+# ---- the fit's line under it --------------------------------------
+
+def test_the_idle_word_yields_to_the_fit_line_and_a_report_does_not():
+    """"Ready to fit" stands in the action card under the status line.
+    "Ready" over it says one word twice about two things, so the idle
+    word steps back; a run's report stays, it is the news."""
+    from gi.repository import Gtk
+    w = _Obj()
+    w.center = Gtk.Label(label="Ready")
+    w.ready_hint = Gtk.Label(label="Ready to fit")
+    w.ready_hint.set_visible(False)
+
+    def dress():
+        mw.MeasureWindow._dress_status(w)
+    dress()
+    assert w.center.get_visible()            # nothing to fit yet
+    w.ready_hint.set_visible(True)
+    dress()
+    assert not w.center.get_visible()        # the idle word yields
+    w.center.set_text("FL: level 24%")
+    dress()
+    assert w.center.get_visible()            # the report stays

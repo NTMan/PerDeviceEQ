@@ -381,15 +381,6 @@ class MeasureWindow(Adw.Window):
         self._tab_row = b.get_object("tabs_host")
         ring_col.append(b.get_object("out_group"))
         ring_col.append(self._act_grp)
-        self.ready_hint = Gtk.Label(xalign=0.5)
-        self.ready_hint.add_css_class("success")
-        self.ready_hint.set_wrap(True)
-        self.ready_hint.set_max_width_chars(46)
-        self.ready_hint.set_text(
-            "Ready to fit -- close this window to hear your "
-            "best version.")
-        self.ready_hint.set_visible(False)
-        ring_col.append(self.ready_hint)
         ring_host.append(ring_col)
         # Each fader under the picker it belongs to: the output level
         # below the output, the input gain below the input. They used
@@ -633,6 +624,20 @@ class MeasureWindow(Adw.Window):
         # any probe could show. Nothing here changes on its own: the
         # dots stay after the search until the next search starts.
         act.append(self.center)
+        # Whether there is enough to fit, under the status line and
+        # inside the card. It hung beneath the card once, prose loose
+        # in a bare column (H7). Closing the window fits, as ever;
+        # this line says when that will happen.
+        self.ready_hint = Gtk.Label(xalign=0.5)
+        self.ready_hint.add_css_class("success")
+        self.ready_hint.set_wrap(True)
+        self.ready_hint.set_max_width_chars(46)
+        self.ready_hint.set_justify(Gtk.Justification.CENTER)
+        self.ready_hint.set_text(
+            "Ready to fit -- close this window to hear your "
+            "best version.")
+        self.ready_hint.set_visible(False)
+        act.append(self.ready_hint)
         # THE STRIP TAKES THE ROW'S WHOLE WIDTH, not the transport
         # box's. That box is centred and as wide as its widest child
         # -- the status sentence -- so a strip inside it stretched
@@ -2190,6 +2195,7 @@ class MeasureWindow(Adw.Window):
                 and self.edit_pid is not None
                 and self._should_autofit(self.edit_pid))
         self.ready_hint.set_visible(show)
+        self._dress_status()
         self._refresh_volume()
         self._auto_fit_range()
         if getattr(self, "range_area", None) is not None:
@@ -3844,6 +3850,19 @@ class MeasureWindow(Adw.Window):
         transport -- where a sentence can be read."""
         if getattr(self, "center", None) is not None:
             self.center.set_text(text or "")
+            self._dress_status()
+
+    def _dress_status(self):
+        """The idle word yields to the fit's line: "Ready" over
+        "Ready to fit" says one word twice about two things. A run's
+        report does not yield -- it is the news, and the fit's line
+        stands under it."""
+        line = getattr(self, "center", None)
+        fit = getattr(self, "ready_hint", None)
+        if line is None or fit is None:
+            return
+        line.set_visible(not (fit.get_visible()
+                              and line.get_text() == "Ready"))
 
     def _dress_act_row(self):
         """The play button names its target: a triangle alone leaves
