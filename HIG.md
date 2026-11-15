@@ -245,8 +245,8 @@ forward neighbor is the classic cause). H1-H3 are the .pdeq sprint's earned rule
 HIG's own letter. Run: `xvfb-run -a python3 tools/hig_audit.py
 --peq-view` for the band card alone, `--window` for the whole
 house: the main window in both channel costumes, the measurement
-window once, the command dialog, About, the export wizard with
-every preview, the cal history.
+window in both its layouts, narrow and wide, the command dialog,
+About, the export wizard with every preview, the cal history.
 
 ## The manual half
 

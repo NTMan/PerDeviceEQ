@@ -20,7 +20,8 @@ surface that minted rules H2 and H3 in the field. --window
 builds the REAL windows inside an application cycle and audits
 both trees: the main window header to band card, then the
 Measure window opened through the same door the Edit button
-uses (born-gone design means it needs no live sink); it needs
+uses (born-gone design means it needs no live sink), in both its
+layouts; it needs
 a PipeWire to talk to -- the live one on a workstation, or the
 shims:
 
@@ -95,6 +96,32 @@ def _own_children(w, t):
         extra = w.get_extra_child()
         return [extra] if extra is not None else []
     return list(_kids(w))
+
+
+def _walk(w):
+    yield w
+    for c in _kids(w):
+        yield from _walk(c)
+
+
+def _in_layout(win, name):
+    """Findings over win with every AdwMultiLayoutView in it that
+    has a layout called name showing it, and the layouts they
+    showed put back. A window that was never presented has never
+    met its breakpoints: it shows each view's first layout, and a
+    snapshot judges that one alone."""
+    views = [v for v in _walk(win)
+             if _gtype(v) == "AdwMultiLayoutView"
+             and v.get_layout_by_name(name) is not None]
+    if not views:
+        return []
+    shown = [v.get_property("layout-name") for v in views]
+    for v in views:
+        v.set_property("layout-name", name)
+    found, _ = audit_widget(win)
+    for v, was in zip(views, shown):
+        v.set_property("layout-name", was)
+    return found
 
 
 def _gtype(w):
@@ -406,6 +433,9 @@ def _window_audit():
                 # empty list, which is a UI state too
                 self._dlgs.append(self.mwin._open_cal_manager())
                 f2, _ = audit_widget(self.mwin)
+                # and in its wide layout, which only a window wide
+                # enough shows, and this one is not presented
+                f2 += _in_layout(self.mwin, "wide")
                 f1, _ = out["result"]
                 seen = set()
                 fs = []
