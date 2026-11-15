@@ -31,7 +31,7 @@ import threading
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, GLib, Adw
+from gi.repository import Gtk, GLib, Adw, Pango
 
 from . import export_peq as xp
 from . import pdeq
@@ -394,18 +394,51 @@ class ExportDialog(Adw.Dialog):
             area.set_draw_func(self._draw_resid, st)
             st["resid"] = area
             box.append(area)
-        view = Gtk.TextView(editable=False, monospace=True,
-                            cursor_visible=False)
-        view.set_wrap_mode(Gtk.WrapMode.NONE)
-        for setter in (view.set_left_margin, view.set_right_margin,
-                       view.set_top_margin, view.set_bottom_margin):
-            setter(8)
-        st["view"] = view
-        sw = Gtk.ScrolledWindow(min_content_height=180, vexpand=True)
-        sw.add_css_class("card")
-        sw.set_child(view)
-        box.append(sw)
-        btns = Gtk.Box(spacing=6, halign=Gtk.Align.END)
+        if target["writer"] == "pdeq":
+            # THE PACKAGE IS THE PAGE'S DOCUMENT, as the debugging text
+            # is About's: a scroller of its own, and the page around
+            # it, two short paragraphs, standing still -- one scroller
+            # (H12). Shown as the store writes a profile, a value a
+            # line (pdeq_readable): a measured profile is ~170 000
+            # lines of it, a TextView lays out the lines on screen
+            # first, and Text Editor opens the store's file the same
+            # way. The package's own one line is about a megabyte,
+            # wider than Pango can address.
+            pkg = Gtk.TextView(editable=False, monospace=True,
+                               cursor_visible=False)
+            pkg.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            for setter in (pkg.set_left_margin, pkg.set_right_margin,
+                           pkg.set_top_margin, pkg.set_bottom_margin):
+                setter(12)
+            pkg_sw = Gtk.ScrolledWindow(
+                hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
+            pkg_sw.add_css_class("card")
+            pkg_sw.set_child(pkg)
+            box.append(pkg_sw)
+            st["view"] = pkg.get_buffer()
+        else:
+            # THE FILE IN A CARD WITH NO SCROLL OF ITS OWN: the page is
+            # the one scroller (H12) and the file grows in it, its
+            # long lines wrapped as About wraps its debugging text. A
+            # selectable label, as About's Legal page holds its long
+            # texts: a TextView is made to live in a scroller, and
+            # outside one (GTK 4.14) it asked for no height at all for
+            # a one-line buffer -- GraphicEQ is one line.
+            view = Gtk.Label(xalign=0, wrap=True, selectable=True,
+                             hexpand=True)
+            view.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            view.add_css_class("monospace")
+            for side in ("top", "bottom", "start", "end"):
+                getattr(view, "set_margin_" + side)(12)
+            st["view"] = view
+            card = Gtk.Box()
+            card.add_css_class("card")
+            card.append(view)
+            box.append(card)
+        # Copy and Save under the page, in sight however long the
+        # file: About's Debugging Information page keeps its Copy
+        # Text and Save As... in the same bar
+        bar = Gtk.ActionBar()
         copy_btn = Gtk.Button(label="Copy")
         copy_btn.connect("clicked", lambda *_: self._copy(st))
         save_btn = Gtk.Button(label="Save\u2026")
@@ -413,26 +446,29 @@ class ExportDialog(Adw.Dialog):
         save_btn.connect("clicked", lambda *_: self._save(st))
         st["copy"] = copy_btn
         st["save"] = save_btn
-        btns.append(copy_btn)
-        btns.append(save_btn)
-        box.append(btns)
+        bar.pack_start(copy_btn)
+        bar.pack_end(save_btn)
         if combo is not None:
             def on_sel(row, _p):
                 st["policy"] = choices[row.get_selected()]
                 self._bake(st)
             combo.connect("notify::selected", on_sel)
         self._bake(st)
-        outer = Gtk.ScrolledWindow(
-            hscrollbar_policy=Gtk.PolicyType.NEVER)
-        outer.set_child(Adw.Clamp(child=box, maximum_size=760))
+        page = Adw.Clamp(child=box, maximum_size=760)
+        if target["writer"] != "pdeq":
+            outer = Gtk.ScrolledWindow(
+                hscrollbar_policy=Gtk.PolicyType.NEVER)
+            outer.set_child(page)
+            page = outer
         st["overlay"] = Adw.ToastOverlay()
-        st["overlay"].set_child(outer)
+        st["overlay"].set_child(page)
         tv = Adw.ToolbarView()
         hb = Adw.HeaderBar()
         hb.set_title_widget(Adw.WindowTitle(
             title=target["name"], subtitle=self._subtitle))
         tv.add_top_bar(hb)
         tv.set_content(st["overlay"])
+        tv.add_bottom_bar(bar)
         return Adw.NavigationPage(title=target["name"], child=tv)
 
     # ---- baking + verification --------------------------------------
@@ -491,6 +527,12 @@ class ExportDialog(Adw.Dialog):
                     "travel whole; the import on the other side "
                     "validates and shows them. sha256 %s."
                     % pdeq.payload_sha256(self.body)[:16], True)
+            # Copy and Save keep the package's one line; the page
+            # shows the same package a value a line
+            st["text"] = text
+            st["view"].set_text(pdeq.pdeq_readable(text) if text
+                                else "")
+            return
         elif writer == "poweramp":
             name = self.body.get("name", "profile")
             if self.taste_name and taste:
@@ -646,7 +688,7 @@ class ExportDialog(Adw.Dialog):
                 elif lo >= hi:
                     terr = "Gain min must sit below gain max."
                 if terr:
-                    st["view"].get_buffer().set_text("")
+                    st["view"].set_text("")
                     self._set_status(st, terr, False)
                     return
                 t = dict(t, centers=cs, gain_range=[lo, hi],
@@ -686,7 +728,7 @@ class ExportDialog(Adw.Dialog):
                    self._band_str(), sol["offset"]), None)
             st["resid"].queue_draw()
         st["text"] = text
-        st["view"].get_buffer().set_text(text)
+        st["view"].set_text(text)
 
     def _bake_refit_async(self, st, t, writer, taste, allc,
                           nf, maxb, why):
@@ -702,7 +744,7 @@ class ExportDialog(Adw.Dialog):
             st[k].set_sensitive(False)
         st["prog"].set_fraction(0.0)
         st["prog"].set_visible(True)
-        st["view"].get_buffer().set_text(
+        st["view"].set_text(
             "# re-fitting -- the preview lands when the optimizer"
             " does")
         self._set_status(
@@ -745,7 +787,7 @@ class ExportDialog(Adw.Dialog):
                     return False
                 text, line, ok = res
                 st["text"] = text
-                st["view"].get_buffer().set_text(text)
+                st["view"].set_text(text)
                 self._set_status(st, line, ok)
                 return False
             GLib.idle_add(land)

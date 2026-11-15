@@ -17,7 +17,8 @@ make one profile own one address -- sha256 over the file bytes IS
 the package address, and `sha256sum *.pdeq` is the whole index
 tooling. The address is content-level: unpack() computes it from
 the parsed payload, so a re-formatted copy of the same profile
-still resolves to the same address.
+still resolves to the same address -- readable() is that copy, a
+value a line as the store writes a profile, for a page to show.
 
 unpack() validates with directional refusals: not JSON, not a
 profile (no schema version), a newer body (points at a newer
@@ -106,6 +107,14 @@ def pdeq_pack(profile):
                          "carries v%s bodies only"
                          % (profile.get("version"), SCHEMA_VERSION))
     return _canon(ProfileStore._body(profile)).decode("utf-8")
+
+
+def pdeq_readable(text):
+    """The package as the store writes a profile, two-space indent,
+    a value a line: for reading it on a page. The package stays the
+    one line pdeq_pack writes, and this form resolves to the same
+    address, which is content-level."""
+    return json.dumps(json.loads(text), indent=2, ensure_ascii=False)
 
 
 def pdeq_unpack(text):

@@ -103,6 +103,16 @@ def test_unpack_roundtrip_and_validation():
         pdeq.pdeq_unpack(bare(2))
 
 
+def test_readable_is_the_same_package():
+    """The export page shows the package a value a line, as the store
+    writes a profile; Copy and Save keep its one line. Both are one
+    package: the address is computed from the content."""
+    text = pdeq.pdeq_pack(_profile())
+    shown = pdeq.pdeq_readable(text)
+    assert "\n" not in text and "\n  " in shown
+    assert pdeq.pdeq_unpack(shown)[1] == pdeq.pdeq_unpack(text)[1]
+
+
 def test_absorb_is_byte_stable_through_the_store(store):
     p = _profile()
     text = pdeq.pdeq_pack(p)
