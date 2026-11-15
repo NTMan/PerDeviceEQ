@@ -236,6 +236,16 @@ at its text, a box at its first child through the box's padding
 (minted by eye on the Balance row, its label 12 px in over a
 column whose header and dropdowns start at 0, and on the Add
 band row, its outline 6 px in on a toolbar's padding);
+H12 one scroller per axis: a scroller inside another one of the
+same surface that scrolls the same way is a double scroll -- the
+wheel moves whichever the pointer is over (minted on the
+measurement window, where the passport's own scroller took the
+wheel from the right column's, the second scroller to nest there;
+a text area with its own scroll in a scrolled page is the same
+thing, and the architect has seen it in no GNOME app -- About
+shows a long text as part of its page, Legal, or as the page
+itself, Debugging Information); a popover and a dialog are
+surfaces of their own;
 H9 the Tab walk
 must round the room -- the audit
 presses Tab itself, and a walk that repeats a stop without

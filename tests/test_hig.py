@@ -537,3 +537,32 @@ def test_h11_reads_a_cell_where_the_eye_does():
     assert [g["msg"] for g in hig.lint(table(padded))] == [
         "row 0 starts 6 px into column 1 (GtkLabel padding 6), whose "
         "cells start at 0"]
+
+
+def _scroller(children=(), scrolls=(False, True), scrolled=(False, False)):
+    return {"class": "GtkScrolledWindow",
+            "props": {"scrolls": list(scrolls),
+                      "scrolled": list(scrolled)},
+            "children": list(children)}
+
+
+def test_h12_one_scroller_per_axis():
+    """The measurement window as 99e2f85 left it: the passport's own
+    scroller inside the right column's took the wheel from it. The
+    describer says which axes a scroller scrolls and which the
+    scrollers around it already do; both on one axis is the finding."""
+    nested = _scroller([_box([_scroller(scrolled=(False, True))])])
+    got = hig.lint(nested)
+    assert [(g["rule"], g["path"], g["msg"]) for g in got] == [
+        ("H12", "GtkScrolledWindow/GtkBox[0]/GtkScrolledWindow[0]",
+         "a scroller inside a scroller, both vertical: a double "
+         "scroll")]
+    # a scroller alone in its surface, and one that only pans
+    # sideways in a page that scrolls down
+    assert hig.lint(_scroller()) == []
+    sideways = _scroller(scrolls=(True, False), scrolled=(False, True))
+    assert hig.lint(sideways) == []
+    both = _scroller(scrolls=(True, True), scrolled=(True, True))
+    assert [g["msg"] for g in hig.lint(both)] == [
+        "a scroller inside a scroller, both horizontal and vertical: "
+        "a double scroll"]

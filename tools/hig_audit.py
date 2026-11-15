@@ -166,7 +166,7 @@ def _sides(b, w):
     return [b.top, b.bottom, b.left, b.right]
 
 
-def describe(w, in_bar=False, housed=False):
+def describe(w, in_bar=False, housed=False, scrolled=(False, False)):
     """The neutral tree perdeviceeq.hig lints: class, the props
     the rules read, children. Unknown stays absent -- the floor
     accuses only on evidence."""
@@ -179,6 +179,10 @@ def describe(w, in_bar=False, housed=False):
     # loose in the page's column
     housed = (housed or "card" in css or "boxed-list" in css
               or isinstance(w, Adw.Dialog))
+    # a popover or a dialog is a surface of its own: a scroller in
+    # it does not sit in the page's scroller (H12)
+    if isinstance(w, (Gtk.Popover, Adw.Dialog)):
+        scrolled = (False, False)
     props = {"css": css,
              "in_bar": in_bar,
              "housed": housed,
@@ -218,9 +222,18 @@ def describe(w, in_bar=False, housed=False):
         label = w.get_label()
         props["label"] = label
         props["icon_only"] = bool(w.get_icon_name()) and not label
+    if isinstance(w, Gtk.ScrolledWindow):
+        # the axes it scrolls, and the axes a scroller around it in
+        # the same surface already scrolls: H12 finds the double
+        # scroll where both hold
+        never = Gtk.PolicyType.NEVER
+        own = [p != never for p in w.get_policy()]
+        props["scrolls"] = own
+        props["scrolled"] = list(scrolled)
+        scrolled = (scrolled[0] or own[0], scrolled[1] or own[1])
     kids = []
     for c in _own_children(w, t):
-        node = describe(c, in_bar, housed)
+        node = describe(c, in_bar, housed, scrolled)
         if isinstance(w, Gtk.Grid):
             # a cell's place: H11 lines up the cells of a column
             node["props"]["cell"] = list(w.query_child(c))

@@ -37,7 +37,10 @@ CSS box inside the margins, four ints in the margins' order),
 xalign (float, a label's), grid (bool -- the node is a
 Gtk.Grid), cell (list of four ints: column, row, width, height
 -- a grid child's place), housed (bool -- inside a card, a boxed
-list or a dialog, at any depth).
+list or a dialog, at any depth), scrolls (two bools, horizontal
+and vertical -- the axes a scroller scrolls), scrolled (two bools
+-- the axes a scroller around it already scrolls; a popover and a
+dialog start a surface of their own).
 
 Ratchet provenance: H1-H3 were earned in the .pdeq sprint's
 design rounds (see HIG.md); H4-H6 are the HIG's own letter;
@@ -47,6 +50,12 @@ H11 by eye on the Balance row (Nov 10): its label stood 12 px
 in, on the grid and still crooked against the column under it;
 the same evening the Add band outline stood 6 px in on a
 toolbar's padding, and the rule learned to read through a box.
+H12 on the measurement window (Nov 15): the passport's own
+scroller inside the right column's took the wheel from it, the
+second scroller to nest there -- the first, in July, squeezed the
+takes to a sliver. A text area with its own scroll in a scrolled
+page is the same double scroll, and the architect has seen it in
+no GNOME app.
 
 No GTK. Pure dicts in, findings out.
 """
@@ -449,10 +458,31 @@ def _findings_h11(node, path, out):
                 "fix": "start it at %d px, or centre it" % edge})
 
 
+def _findings_h12(node, path, out):
+    """H12: one scroller per axis. A scroller inside another one
+    that scrolls the same way is a double scroll: the wheel moves
+    whichever of the two the pointer is over. libadwaita's own
+    About shows a long text as part of its page (Legal) or as the
+    page itself (Debugging Information)."""
+    p = node.get("props") or {}
+    own, around = p.get("scrolls"), p.get("scrolled")
+    if not own or not around:
+        return
+    both = [axis for axis, o, a in zip(("horizontal", "vertical"),
+                                       own, around) if o and a]
+    if both:
+        out.append({
+            "rule": "H12", "path": path,
+            "msg": "a scroller inside a scroller, both %s: a double "
+                   "scroll" % " and ".join(both),
+            "fix": "let the content grow in the outer scroller, or "
+                   "give it a page of its own"})
+
+
 _RULES = (_findings_h1, _findings_h2, _findings_h3,
           _findings_h4, _findings_h5, _findings_h6,
           _findings_h7, _findings_h8, _findings_h10,
-          _findings_h11)
+          _findings_h11, _findings_h12)
 
 
 def lint(tree):
