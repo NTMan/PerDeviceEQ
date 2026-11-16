@@ -51,6 +51,19 @@ jobs:
     runs-on: ${{ matrix.variant.runner }}
     steps:
       - uses: actions/checkout@v5
+      # The image installs the GNOME runtime and SDK in /var/lib/flatpak,
+      # in one of its layers, and is rebuilt twice a week. When Flathub
+      # has a newer SDK, flatpak-builder updates it there, and the update
+      # renames directories of the installation; overlayfs without
+      # redirect_dir refuses to rename a directory of a lower layer
+      # ("Invalid cross-device link"). Copied, the installation sits in
+      # the container's own layer, where the rename works.
+      # https://docs.kernel.org/filesystems/overlayfs.html#renaming-directories
+      - name: Move the image's Flatpak installation into the container's layer
+        run: |
+          cp -a /var/lib/flatpak /var/lib/flatpak.copy
+          rm -rf /var/lib/flatpak
+          mv /var/lib/flatpak.copy /var/lib/flatpak
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: per-device-eq-${{ matrix.variant.arch }}.flatpak
