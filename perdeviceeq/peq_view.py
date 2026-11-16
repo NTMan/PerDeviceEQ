@@ -1084,7 +1084,7 @@ class PeqView(Gtk.Box):
             lbl.add_css_class("dim-label")
             lbl.add_css_class("caption")
             if t.startswith("Freq"):
-                self.grid.attach(self._sort_head(lbl), c, self._top, 1, 1)
+                self.grid.attach(self._freq_head(lbl), c, self._top, 1, 1)
             else:
                 self.grid.attach(lbl, c, self._top, 1, 1)
         # the rows ARE the storage order, verbatim -- nothing
@@ -1125,14 +1125,27 @@ class PeqView(Gtk.Box):
         self._focus_stops.append(acts)
         self.grid.set_focus_order(self._focus_stops)
 
-    def _sort_head(self, lbl):
-        """The Freq header, as a hand the user can lay on."""
-        btn = Gtk.Button()
-        btn.set_child(lbl)
+    def _freq_head(self, lbl):
+        """The Freq header: its word where the other headers keep
+        theirs, flush with the fields' edge, and the sort at the
+        column's right end. The word used to be the face of a flat
+        button, which shows no outline until hovered, so the eye read
+        the word -- set in by the button's padding (10 px on
+        libadwaita 1.5 here, about 17 on his screen) -- and H11, which reads a
+        control at its outline, saw a straight column. The sort
+        stands in the Tab walk with the header row, before the bands."""
+        lbl.set_hexpand(True)
+        btn = Gtk.Button.new_from_icon_name("view-sort-ascending-symbolic")
         btn.add_css_class("flat")
         btn.set_tooltip_text("Sort the rows by frequency")
+        btn.update_property([Gtk.AccessibleProperty.LABEL],
+                            ["Sort by frequency"])
         btn.connect("clicked", self._on_sort_freq)
-        return btn
+        self._focus_stops.append(btn)
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        head.append(lbl)
+        head.append(btn)
+        return head
 
     def _on_sort_freq(self, *_a):
         """Order the rows by frequency, once, on request.

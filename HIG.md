@@ -90,6 +90,15 @@ entries below keep their verdicts as history.
   tooltips; no toolbar. The add buttons of the tab strips, here
   and in the measurement window, took Text Editor's New Tab icon
   (tab-new-symbolic), so a card's + is the band table's alone.
+- Freq header (Nov 17): a label like its neighbours, flush with
+  the fields' edge, and the sort an icon button
+  (view-sort-ascending-symbolic) at the column's right end, in
+  the Tab walk with the header row -- his layout. The word was
+  the face of a flat button, which shows no outline until
+  hovered: the eye read the word, set in by the button's padding
+  (10 px on libadwaita 1.5, about 17 on his screen), while H11,
+  which reads a control at its outline, saw a straight column.
+  And the button was in no stop of the Tab walk.
 - Eye toggle (measured curves): icon-only flat in a card corner.
   [Mikhail] against Calendar's icon buttons -- fine as is?
 - Preamp spin + Auto: linked pair -- borrowed (facets of one
