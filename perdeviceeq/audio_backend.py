@@ -33,9 +33,10 @@ The moratorium (a measurement in progress):
     keeps the measured device bare whatever it is told, and plays
     what it was told last once the name goes;
   * moratorium_end() restores mutes and volume, clears the name, then
-    applies the pending levels in one pass. A forced sweep stop ends
-    it the same way. One moratorium at a time; nesting is a
-    programming error and raises.
+    applies the pending levels in one pass, each step whatever became
+    of the one before. A forced sweep stop ends it the same way, and so
+    does a begin that fails once it has changed anything. One
+    moratorium at a time; nesting is a programming error and raises.
   * one at a time across processes too: a moratorium holds the claim,
     a lock on config.MEASURE_LOCK_FILE, from before it reads anything
     until everything is back, and a begin whose claim another process
@@ -423,7 +424,9 @@ class AudioBackend(ABC):
         it holds nothing, which after a cold start of PipeWire says
         nothing of what the hook plays), that it was played bare and
         that it was given back. Raises if one is already active, and
-        refuses (RefusalError) when another process holds the claim.
+        refuses (RefusalError) when another process holds the claim. A
+        begin that raises leaves nothing to end: what it changed is put
+        back before the exception goes on.
 
         THE SINK'S OWN MUTE IS CLEARED with the volume, and this is
         his finding: a desktop fader dragged to its far left does not
@@ -482,38 +485,52 @@ class AudioBackend(ABC):
                         self._pending[device] = self._volumes[device]
                 self._moratorium = {"sink": sink, "restore": restore,
                                     "muted": mute_others, "claim": claim}
-            # ALWAYS, whatever the device holds: one with no correction
-            # of its own still plays the listener's taste and preamp
-            self._put_graph(MEASURE_KEY, key)
-            state["bypass"] = True
-            if restore["mute"]:
-                self._push_mute(sink, False)
-            if measure_cubic is not None:
-                self._put_volume(sink, measure_cubic)
-            # AND IT DOES NOT RETURN UNTIL IT IS IN FORCE. Every push
-            # above is a metadata write the server applies when it
-            # gets to it, and this returned the instant they were
-            # SENT -- so a caller could start a sweep into a sink that
-            # still wore its correction.
-            #
-            # That is not a theory. One rung of a walk came back 26 dB
-            # quiet, and subtracting the profile's own correction
-            # curve from the shortfall halved its spread and flattened
-            # its tilt: the sweep had been played through the EQ. It
-            # was his recollection that put us onto it -- the same
-            # thing happened once before, when the bypass was a
-            # separate toggle rather than this.
-            #
-            # The takes waited for the volume and nothing waited for
-            # the graph; the map's rungs waited for neither. Waiting
-            # here covers both, because both come through this door.
-            #
-            # The wait is NOT recorded in the evidence dict. That dict
-            # is a contract two courts compare whole, and a duration
-            # differs on every run -- a number that cannot be equal to
-            # itself does not belong in a record whose job is to be
-            # compared.
-            self._await_moratorium(sink, key, measure_cubic)
+            # FROM HERE THE MORATORIUM IS RECORDED, and a begin that
+            # raises may not leave it behind: its callers end only what
+            # a begin returned. A write below that failed (the sink
+            # gone, its id stale) or a Ctrl+C in the wait left the
+            # device named, the foreign streams muted and the claim held
+            # -- until the window closed, and past the exit of a
+            # command-line tool. The end puts back what was changed, as
+            # after a sweep, and the failure goes on.
+            try:
+                # ALWAYS, whatever the device holds: one with no
+                # correction of its own still plays the listener's
+                # taste and preamp
+                self._put_graph(MEASURE_KEY, key)
+                state["bypass"] = True
+                if restore["mute"]:
+                    self._push_mute(sink, False)
+                if measure_cubic is not None:
+                    self._put_volume(sink, measure_cubic)
+                # AND IT DOES NOT RETURN UNTIL IT IS IN FORCE. Every
+                # push above is a metadata write the server applies
+                # when it gets to it, and this returned the instant
+                # they were SENT -- so a caller could start a sweep
+                # into a sink that still wore its correction.
+                #
+                # That is not a theory. One rung of a walk came back
+                # 26 dB quiet, and subtracting the profile's own
+                # correction curve from the shortfall halved its spread
+                # and flattened its tilt: the sweep had been played
+                # through the EQ. It was his recollection that put us
+                # onto it -- the same thing happened once before, when
+                # the bypass was a separate toggle rather than this.
+                #
+                # The takes waited for the volume and nothing waited
+                # for the graph; the map's rungs waited for neither.
+                # Waiting here covers both, because both come through
+                # this door.
+                #
+                # The wait is NOT recorded in the evidence dict. That
+                # dict is a contract two courts compare whole, and a
+                # duration differs on every run -- a number that cannot
+                # be equal to itself does not belong in a record whose
+                # job is to be compared.
+                self._await_moratorium(sink, key, measure_cubic)
+            except BaseException:
+                self._end()
+                raise
             return state
 
     # how long to wait for the pushes above to be visible on the
@@ -566,43 +583,64 @@ class AudioBackend(ABC):
         foreign streams unmuted -- then apply the levels wished
         meanwhile, one pass, last write per device. A level wished for
         the measured sink outranks its restore. Fills
-        state["restored"]: whether the name was cleared. The claim goes
-        back last, whatever happened before it."""
+        state["restored"]: whether the name was cleared.
+
+        EVERY STEP IS TRIED, whatever became of the ones before it, the
+        claim goes back last, and the first failure is raised after
+        them all. The end used to stop at the first, which is the
+        measured sink's level: a sink gone during the sweep took the
+        name's clearing and the foreign streams' unmute down with it.
+        A Ctrl+C that comes meanwhile waits for the rest too."""
         with self._lock:
-            with self._wish_lock:
-                m = self._moratorium
-                if m is None:
-                    return
-                self._moratorium = None
-                self._idle.notify_all()          # land() waits for it
-                # a wish made from here on goes to the writer, which
-                # waits for the server until this pass is done
-                pending, self._pending = self._pending, {}
+            self._end()
+
+    def _end(self):
+        """moratorium_end with the server already held. A begin calls
+        it too, for the moratorium it recorded and could not finish."""
+        with self._wish_lock:
+            m = self._moratorium
+            if m is None:
+                return
+            self._moratorium = None
+            self._idle.notify_all()          # land() waits for it
+            # a wish made from here on goes to the writer, which
+            # waits for the server until this pass is done
+            pending, self._pending = self._pending, {}
+        failed = []
+
+        def attempt(put, *args):
             try:
-                sink, restore = m["sink"], m["restore"]
-                state = restore["state"]
-                if sink not in pending and restore["volume"] is not None:
-                    self._put_volume(sink, restore["volume"])
-                # after the volume, not before: a card set back to
-                # muted and then given a level would be left silent
-                # with a number on the fader. Outside that branch,
-                # though: the mute is restored whether or not a level
-                # was written, because it is now cleared the same way
-                if sink not in pending and restore.get("mute"):
-                    self._push_mute(sink, True)
-                ok = bool(self._put_graph(MEASURE_KEY, STRIP))
-                state["restored"] = ok
-                if not ok:
-                    self._restore_failed(MEASURE_KEY, STRIP)
-                if m["muted"]:
-                    self._push_stream_mutes(sink, False,
-                                            restore["mutes"])
-                for device, cubic in pending.items():
-                    self._put_volume(device, cubic)
-            finally:
-                # LAST: until everything is back, a begin in another
-                # process would read what we changed as the server's
-                m["claim"].close()
+                return put(*args)
+            except BaseException as e:       # a Ctrl+C waits for the rest
+                failed.append(e)
+
+        try:
+            sink, restore = m["sink"], m["restore"]
+            state = restore["state"]
+            if sink not in pending and restore["volume"] is not None:
+                attempt(self._put_volume, sink, restore["volume"])
+            # after the volume, not before: a card set back to muted
+            # and then given a level would be left silent with a
+            # number on the fader. Outside that branch, though: the
+            # mute is restored whether or not a level was written,
+            # because it is now cleared the same way
+            if sink not in pending and restore.get("mute"):
+                attempt(self._push_mute, sink, True)
+            ok = bool(attempt(self._put_graph, MEASURE_KEY, STRIP))
+            state["restored"] = ok
+            if not ok:
+                self._restore_failed(MEASURE_KEY, STRIP)
+            if m["muted"]:
+                attempt(self._push_stream_mutes, sink, False,
+                        restore["mutes"])
+            for device, cubic in pending.items():
+                attempt(self._put_volume, device, cubic)
+        finally:
+            # LAST: until everything is back, a begin in another
+            # process would read what we changed as the server's
+            m["claim"].close()
+        if failed:
+            raise failed[0]
 
     def _clear_abandoned(self):
         """Clear a name under MEASURE_KEY that no measurement holds.

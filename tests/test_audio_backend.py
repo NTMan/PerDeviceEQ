@@ -830,3 +830,82 @@ def test_kill_minus_nine_gives_the_claim_back():
         proc.wait(10)
         proc.stdout.close()
     assert _free()
+
+
+# ---- an end tries every step, and a begin that fails ends itself ----
+
+class _LevelRefused(FakeBackend):
+    """A level the server refuses: the sink is gone, or its id stale.
+    `exc` is what the write raises."""
+
+    def __init__(self, refused, exc=None):
+        super().__init__()
+        self.refused = refused
+        self.exc = exc or RuntimeError("wpctl set-volume failed")
+
+    def _push_volume(self, device, cubic):
+        if cubic == self.refused:
+            raise self.exc
+        super()._push_volume(device, cubic)
+
+
+def test_an_end_whose_level_fails_gives_the_rest_back():
+    """A sink gone during the sweep: its level cannot go back, and the
+    end stopped there, with the device named and the streams muted."""
+    f = _LevelRefused(0.61)
+    f.server_volume = 0.61
+    f.moratorium_begin("dev", 0.074)
+    f.set_volume("other", 0.5)                # wished during the sweep
+    with pytest.raises(RuntimeError):
+        f.moratorium_end()
+    assert f.server[MEASURE_KEY] == STRIP
+    assert ("mutes", "dev", False) in f.log
+    assert ("volume", "other", 0.5) in f.log
+    assert not f.moratorium_active
+    assert _free()
+
+
+def test_a_begin_whose_level_fails_ends_itself():
+    """Its callers end only what a begin returned: the device stayed
+    named, the streams muted, the claim held, and every later begin
+    answered "moratorium already active"."""
+    f = _LevelRefused(0.074)
+    f.server_volume = 0.61
+    with pytest.raises(RuntimeError):
+        f.moratorium_begin("dev", 0.074)
+    assert not f.moratorium_active
+    assert f.server[MEASURE_KEY] == STRIP
+    assert ("mutes", "dev", False) in f.log
+    assert _free()
+    f.moratorium_begin("dev", None, mute_others=False)
+    f.moratorium_end()
+
+
+def test_a_begin_interrupted_in_its_wait_ends_itself():
+    """Ctrl+C, or SIGTERM through end_on_signals, while begin waits for
+    the server: a command-line tool calls no land, and everything begin
+    had changed outlived it."""
+    class Interrupted(FakeBackend):
+        def _await_moratorium(self, *a):
+            raise KeyboardInterrupt
+
+    f = Interrupted()
+    f.server_volume = 0.61
+    with pytest.raises(KeyboardInterrupt):
+        f.moratorium_begin("dev", 0.074)
+    assert not f.moratorium_active
+    assert f.server[MEASURE_KEY] == STRIP
+    assert f.server_volume == 0.61
+    assert ("mutes", "dev", False) in f.log
+    assert _free()
+
+
+def test_a_ctrl_c_in_the_end_waits_for_the_rest():
+    f = _LevelRefused(0.61, KeyboardInterrupt())
+    f.server_volume = 0.61
+    f.moratorium_begin("dev", 0.074)
+    with pytest.raises(KeyboardInterrupt):
+        f.moratorium_end()
+    assert f.server[MEASURE_KEY] == STRIP
+    assert ("mutes", "dev", False) in f.log
+    assert _free()
