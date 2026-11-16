@@ -287,7 +287,6 @@ class EqWindow(Adw.ApplicationWindow):
         self.taste_card.set_body(tbody)
         b.get_object("taste_card_slot").append(self.taste_card)
 
-        self._install_css()
         _t = time.monotonic()
         self._build_header_buttons()
         debug.timing("_build_header_buttons", _t)
@@ -1308,32 +1307,6 @@ class EqWindow(Adw.ApplicationWindow):
         card.append(self.meters_grid)
         b = self._builder
         b.get_object("preamp_card_slot").append(card)
-
-    _CSS_INSTALLED = False
-
-    def _install_css(self):
-        """Install the compact .eqrow style, once per process (ported from the
-        monolith): spin buttons / dropdowns tighter than the libadwaita default.
-        """
-        if EqWindow._CSS_INSTALLED:
-            return
-        EqWindow._CSS_INSTALLED = True
-        data = (
-            ".eqrow spinbutton, .eqrow button, .eqrow dropdown,"
-            " .eqrow dropdown > button { min-height: 24px; }"
-            " .eqrow spinbutton text, .eqrow spinbutton entry,"
-            " .eqrow dropdown > button, .eqrow button"
-            " { min-height: 24px; padding-top: 1px;"
-            " padding-bottom: 1px; }")
-        css = Gtk.CssProvider()
-        if hasattr(css, "load_from_string"):
-            css.load_from_string(data)
-        else:
-            css.load_from_data(data.encode())
-        disp = Gdk.Display.get_default()
-        if disp is not None:
-            Gtk.StyleContext.add_provider_for_display(
-                disp, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def _build_bands_area(self):
         """The editor's action strip inside the device card: the
