@@ -176,6 +176,35 @@ def test_a_run_that_walked_cleanly_says_its_level(monkeypatch):
     assert _done(_win(), dict(seen, error=None)) == "FL: level 24%"
 
 
+# ---- a Stop is not a failure, on the console either ---------------
+
+def _take_that_raises(monkeypatch, exc):
+    win = _win()
+    monkeypatch.setattr(mw, "GLib", _Idle)
+    win._level_only = False
+    win._take_level = None
+    win._measure_done = lambda ch, result: None
+
+    def take(ch, analyze=None):
+        raise exc
+    win.session.take = take
+    mw.MeasureWindow._measure_worker(win, 0)
+
+
+def test_a_cancelled_take_says_nothing_on_the_console(monkeypatch, capsys):
+    """The Stop button, the close and a signal all cancel a take. The
+    window keeps quiet about it, and the console printed "the
+    measurement failed: MeasureCancelled:" on every one."""
+    _take_that_raises(monkeypatch, mw.sweep_io.MeasureCancelled())
+    assert capsys.readouterr().err == ""
+
+
+def test_a_take_that_failed_still_says_so(monkeypatch, capsys):
+    _take_that_raises(monkeypatch, mw.sweep_io.MeasureError("no signal"))
+    assert ("the measurement failed: MeasureError: no signal"
+            in capsys.readouterr().err)
+
+
 def test_the_end_of_a_walk_asks_for_the_frame():
     """The rungs move back from the walk's own stack to what is on
     disk here, and nothing told the canvas: the last live frame stood

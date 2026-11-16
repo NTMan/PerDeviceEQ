@@ -52,10 +52,10 @@ from . import measure_prefs                         # noqa: E402
 CLEAN_TARGET = 3            # clean takes per channel before "all clean"
 
 # The failures this window is WRITTEN to have: a refusal, a measurement
-# error, a Stop. They are reported to the hand in words and need no
-# traceback. Anything else is a defect and gets one on stderr.
-EXPECTED_FAILURES = (sweep_io.MeasureCancelled, sweep_io.MeasureError,
-                     sweep_io.RefusalError)
+# error. They are reported to the hand in words and need no traceback.
+# Anything else is a defect and gets one on stderr. A Stop is not here:
+# it is not a failure, and nothing reports it.
+EXPECTED_FAILURES = (sweep_io.MeasureError, sweep_io.RefusalError)
 
 # Where each channel sits on the ring, as a compass angle from the front
 # (0 = straight ahead, positive = clockwise toward the right), so a
@@ -5490,6 +5490,11 @@ class MeasureWindow(Adw.Window):
                 self.session.set_level(self._take_level)
                 result["outcome"] = self.session.take(
                     ch, analyze=self.mic_of[ch])
+        except sweep_io.MeasureCancelled as e:
+            # A STOP IS NOT A FAILURE. The Stop button, the close and a
+            # signal all cancel a take; _measure_done keeps quiet about
+            # it, and so does the console.
+            result["error"] = e
         except Exception as e:
             result["error"] = e
             debug.crashed("the measurement", e, expected=EXPECTED_FAILURES)
