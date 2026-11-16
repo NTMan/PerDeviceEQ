@@ -1,13 +1,22 @@
 """The AudioBackend contract, proven against a fake heir: no shims,
 no PipeWire, no GTK -- the platform-free half must hold everywhere."""
 
+import fcntl
+import os
+import subprocess
+import sys
+import textwrap
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
-from perdeviceeq.audio_backend import AudioBackend
+from perdeviceeq import audio_backend, config
+from perdeviceeq.audio_backend import AudioBackend, RefusalError
 from perdeviceeq.config import MEASURE_KEY, STRIP
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class FakeBackend(AudioBackend):
@@ -665,3 +674,159 @@ def test_land_waits_for_an_end_in_progress():
     assert done == [True]
     assert _graphs(f, MEASURE_KEY) == [(MEASURE_KEY, "dev"),
                                        (MEASURE_KEY, STRIP)]
+
+
+# ---- the claim: one measurement at a time, and a name left behind ----
+
+def _held():
+    """The claim as another process holds it. Two opens of one file
+    lock each other out within a process as between two."""
+    f = open(config.MEASURE_LOCK_FILE, "a")
+    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return f
+
+
+def _free():
+    f = audio_backend._claim(0)
+    if f is None:
+        return False
+    f.close()
+    return True
+
+
+def test_a_measurement_in_another_process_refuses_the_begin(monkeypatch):
+    """Two sweeps in one room ruin both, and the second would take the
+    first one's level and mutes for the server's own."""
+    monkeypatch.setattr(AudioBackend, "CLAIM_WAIT_S", 0.05)
+    other = _held()
+    f = FakeBackend()
+    f.server_volume = 0.61
+    with pytest.raises(RefusalError):
+        f.moratorium_begin("dev", 0.074)
+    assert f.log == []
+    assert not f.moratorium_active
+    other.close()
+
+
+def test_the_claim_is_held_from_begin_to_end():
+    f = FakeBackend()
+    f.moratorium_begin("dev", 0.074)
+    assert not _free()
+    f.moratorium_end()
+    assert _free()
+    assert os.path.getsize(config.MEASURE_LOCK_FILE) == 0
+
+
+def test_a_claim_held_for_a_moment_is_waited_for():
+    """The clearing in another process holds the claim for one read
+    and one write; a measurement starting then is not refused."""
+    other = _held()
+    threading.Timer(0.1, other.close).start()
+    f = FakeBackend()
+    f.moratorium_begin("dev", None, mute_others=False)
+    assert f.moratorium_active
+    f.moratorium_end()
+
+
+def test_a_begin_that_fails_gives_the_claim_back():
+    class Failing(FakeBackend):
+        def _push_stream_mutes(self, sink, mute, prior=None):
+            raise RuntimeError("no such sink")
+
+    f = Failing()
+    # kept, as the window keeps a failure to show it (_measure_worker),
+    # and with it the frames it was raised through
+    with pytest.raises(RuntimeError) as kept:
+        f.moratorium_begin("dev", 0.074)
+    assert _free()
+    assert kept.value
+
+
+def test_an_end_whose_restore_fails_gives_the_claim_back():
+    class Failing(FakeBackend):
+        def _push_volume(self, device, cubic):
+            if cubic == 0.61:
+                raise RuntimeError("wpctl set-volume failed")
+            super()._push_volume(device, cubic)
+
+    f = Failing()
+    f.server_volume = 0.61
+    f.moratorium_begin("dev", 0.074)
+    with pytest.raises(RuntimeError) as kept:
+        f.moratorium_end()
+    assert _free()
+    assert kept.value
+
+
+def test_a_name_no_claim_holds_is_cleared(capsys):
+    """Left by a measurement killed in another process: the hook keeps
+    the device bare until WirePlumber restarts."""
+    f = FakeBackend()
+    f.server[MEASURE_KEY] = "dev"
+    f._clear_abandoned()
+    assert f.server[MEASURE_KEY] == STRIP
+    assert ("a measurement that is no longer running left dev named to "
+            "the hook; the name is cleared" in capsys.readouterr().err)
+
+
+def test_the_name_of_a_live_measurement_stays():
+    other = _held()
+    f = FakeBackend()
+    f.server[MEASURE_KEY] = "dev"
+    f._clear_abandoned()
+    assert f.server[MEASURE_KEY] == "dev"
+    assert f.log == []
+    other.close()
+
+
+def test_the_name_of_our_own_measurement_stays():
+    f = FakeBackend()
+    f.moratorium_begin("dev", None, mute_others=False)
+    f._clear_abandoned()
+    assert f.server[MEASURE_KEY] == "dev"
+    f.moratorium_end()
+
+
+def test_a_name_gone_since_the_snapshot_says_nothing(capsys):
+    """The snapshot saw a measurement of ours that has ended since."""
+    f = FakeBackend()
+    f.server[MEASURE_KEY] = STRIP
+    f._clear_abandoned()
+    assert f.log == []
+    assert capsys.readouterr().err == ""
+
+
+def test_a_snapshot_with_a_name_asks_the_claim():
+    f = FakeBackend()
+    f.server[MEASURE_KEY] = "dev"
+    f._pull = lambda: {"sinks": [], "sources": [], "default_sink": None,
+                       "measure": "dev"}
+    f.refresh()
+    for t in threading.enumerate():
+        if t.name == "pde-abandoned":
+            t.join(5)
+    assert f.server[MEASURE_KEY] == STRIP
+
+
+def test_kill_minus_nine_gives_the_claim_back():
+    """A process killed with SIGKILL runs no line of its own: the
+    kernel drops its lock with its descriptors."""
+    code = textwrap.dedent("""
+        import sys, time
+        from perdeviceeq import audio_backend, config
+        config.MEASURE_LOCK_FILE = sys.argv[1]
+        held = audio_backend._claim(0)
+        print("held" if held else "busy", flush=True)
+        time.sleep(60)
+    """)
+    proc = subprocess.Popen([sys.executable, "-c", code,
+                             config.MEASURE_LOCK_FILE], cwd=str(ROOT),
+                            stdout=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout.readline().strip() == "held"
+        assert not _free()
+    finally:
+        proc.kill()
+        proc.wait(10)
+        proc.stdout.close()
+    assert _free()

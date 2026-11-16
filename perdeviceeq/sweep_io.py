@@ -58,6 +58,7 @@ import numpy as np
 from . import debug
 from . import measure_core as mc
 from . import pw_backend
+from .audio_backend import RefusalError
 from .pw_backend import playback_channels, sink_channels
 
 
@@ -85,10 +86,6 @@ EXTRA_TAIL_S = 1.0                       # decay + link latency margin
 
 class MeasureError(RuntimeError):
     pass
-
-
-class RefusalError(RuntimeError):
-    """Precondition not met; nothing was played, nothing was changed."""
 
 
 class FaultyCaptureError(MeasureError):

@@ -80,7 +80,10 @@ PROTOCOL = "5"
 # is sweeping, STRIP when none is: while it is named there the hook
 # keeps every graph off it, and gives back what it holds for the device
 # when the name goes (audio_backend, moratorium). A measurement never
-# writes a device's value, so nothing is read back afterwards.
+# writes a device's value, so nothing is read back afterwards. Only a
+# measurement writes the name, and it holds MEASURE_LOCK_FILE while it
+# stands; a name with no lock behind it was left by a measurement that is
+# gone, and the program clears it.
 #
 # The value under BYPASS_KEY is BYPASS_ON while Bypass is pressed, STRIP
 # when it is not: the hook keeps every graph off every device while it
@@ -133,6 +136,11 @@ PREF_LAYERS_FILE  = os.path.join(CONFIG_DIR, "preference-layers.json")
 # and the last auto-level volume that measured that sink well.
 MIC_PROFILES_FILE  = os.path.join(CONFIG_DIR, "mic-profiles.json")
 MEASURE_STATE_FILE = os.path.join(CONFIG_DIR, "measure-state.json")
+# A measurement holds an exclusive lock on this file from before it names
+# its device under MEASURE_KEY until everything it changed is back
+# (audio_backend, the claim). The file stays empty: the lock is all it
+# carries.
+MEASURE_LOCK_FILE  = os.path.join(CONFIG_DIR, "measure.lock")
 
 TYPE_TO_LABEL = {"PK": "bq_peaking", "LSC": "bq_lowshelf",
                  "HSC": "bq_highshelf",

@@ -1246,3 +1246,20 @@ def test_another_metadata_object_is_not_ours():
 def test_a_hook_without_a_stamp_is_found_but_unversioned():
     d = _metadata_dump(entries=[{"subject": 0, "key": "x", "value": 1}])
     assert PipeWireBackend().hook_protocol(d) == (True, None)
+
+
+def test_the_measured_name_rides_the_snapshot():
+    """The beat already holds the hook's metadata object: the name a
+    measurement gave the hook is read off it, by no process of its
+    own."""
+    d = _metadata_dump(entries=[
+        {"subject": 0, "key": "protocol", "value": int(config.PROTOCOL)},
+        {"subject": 0, "key": config.MEASURE_KEY,
+         "value": "alsa_output.x#analog-output"}])
+    d.append({"id": 31, "type": "PipeWire:Interface:Metadata",
+              "props": {"metadata.name": "default"},
+              "metadata": [{"subject": 0, "key": "default.audio.sink",
+                            "value": {"name": "alsa_output.x"}}]})
+    snap = PipeWireBackend()._pull(d)
+    assert snap["measure"] == "alsa_output.x#analog-output"
+    assert snap["hook"] == (True, config.PROTOCOL)

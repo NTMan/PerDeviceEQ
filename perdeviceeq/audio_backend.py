@@ -36,6 +36,15 @@ The moratorium (a measurement in progress):
     applies the pending levels in one pass. A forced sweep stop ends
     it the same way. One moratorium at a time; nesting is a
     programming error and raises.
+  * one at a time across processes too: a moratorium holds the claim,
+    a lock on config.MEASURE_LOCK_FILE, from before it reads anything
+    until everything is back, and a begin whose claim another process
+    holds is refused (RefusalError). The kernel gives a lock back when
+    its process dies, kill -9 included, so a name with no claim behind
+    it was left by a measurement that is gone: the program clears it
+    when a snapshot shows it (_clear_abandoned). Nothing else such a
+    measurement changed is put back -- a level, a mute is a value
+    anyone may have set since, and the server does not say who.
 
 The writer coalesces the rest, a graph always and a level outside a
 measurement. publish_graph, clear_graph and set_volume record the
@@ -51,6 +60,8 @@ No GTK, no windows, no knowledge of who calls: the presence of a
 measure window must never gate code anywhere else.
 """
 
+import fcntl
+import os
 import signal
 import sys
 import threading
@@ -58,8 +69,39 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 
-from . import debug
+from . import config, debug
 from .config import MEASURE_KEY, STRIP
+
+
+class RefusalError(RuntimeError):
+    """Precondition not met; nothing was played, nothing was changed.
+
+    Defined here, not in sweep_io, which imports it from here: the
+    moratorium raises it too, for a claim another process holds, and
+    sweep_io sits above this module."""
+
+
+CLAIM_POLL_S = 0.01
+
+
+def _claim(wait):
+    """The measurement claim: an exclusive lock on
+    config.MEASURE_LOCK_FILE. Returns the open file that holds it, or
+    None when another holder kept it for `wait` seconds. Closing the
+    file gives it back, and so does the end of the process."""
+    path = config.MEASURE_LOCK_FILE
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    f = open(path, "a")
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                f.close()
+                return None
+            time.sleep(CLAIM_POLL_S)
 
 
 def _route_sig(routes):
@@ -380,7 +422,8 @@ class AudioBackend(ABC):
         device's key, the value the metadata held under it (None when
         it holds nothing, which after a cold start of PipeWire says
         nothing of what the hook plays), that it was played bare and
-        that it was given back. Raises if one is already active.
+        that it was given back. Raises if one is already active, and
+        refuses (RefusalError) when another process holds the claim.
 
         THE SINK'S OWN MUTE IS CLEARED with the volume, and this is
         his finding: a desktop fader dragged to its far left does not
@@ -393,26 +436,39 @@ class AudioBackend(ABC):
             with self._wish_lock:
                 if self._moratorium is not None:
                     raise RuntimeError("moratorium already active")
-            key = self._graph_key(sink)
-            state = {"metadata_key": key,
-                     "profile": self._read_graph(key),
-                     "bypass": False, "restored": None}
-            restore = {
-                "volume": (self._read_volume(sink)
-                           if measure_cubic is not None else None),
-                # ALWAYS, not only when a level is written. A mute is
-                # not part of setting a level, it is the other half of
-                # the same act: we move the knob and put it back, and
-                # the mute is a knob. Tying it to the volume left a
-                # hole exactly where nothing needed writing -- a sink
-                # already standing at the measurement level, and muted,
-                # got neither the write nor the unmute and played a
-                # whole sweep into silence
-                "mute": self._read_mute(sink),
-                "mutes": (self._push_stream_mutes(sink, True)
-                          if mute_others else None),
-                "state": state,
-            }
+            # THE CLAIM BEFORE ANYTHING IS READ: a measurement running
+            # in another process would hand us its own level, its
+            # unmuted sink and its muted streams as the server's, to
+            # put back at our end
+            claim = _claim(self.CLAIM_WAIT_S)
+            if claim is None:
+                raise RefusalError("a measurement is running in another "
+                                   "per-device-eq process")
+            try:
+                key = self._graph_key(sink)
+                state = {"metadata_key": key,
+                         "profile": self._read_graph(key),
+                         "bypass": False, "restored": None}
+                restore = {
+                    "volume": (self._read_volume(sink)
+                               if measure_cubic is not None else None),
+                    # ALWAYS, not only when a level is written. A mute
+                    # is not part of setting a level, it is the other
+                    # half of the same act: we move the knob and put it
+                    # back, and the mute is a knob. Tying it to the
+                    # volume left a hole exactly where nothing needed
+                    # writing -- a sink already standing at the
+                    # measurement level, and muted, got neither the
+                    # write nor the unmute and played a whole sweep
+                    # into silence
+                    "mute": self._read_mute(sink),
+                    "mutes": (self._push_stream_mutes(sink, True)
+                              if mute_others else None),
+                    "state": state,
+                }
+            except BaseException:
+                claim.close()            # not recorded: no end gives it back
+                raise
             with self._wish_lock:
                 # levels still waiting for the writer go behind the
                 # measurement with every later one: none may land
@@ -425,7 +481,7 @@ class AudioBackend(ABC):
                         del self._dirty[(kind, device)]
                         self._pending[device] = self._volumes[device]
                 self._moratorium = {"sink": sink, "restore": restore,
-                                    "muted": mute_others}
+                                    "muted": mute_others, "claim": claim}
             # ALWAYS, whatever the device holds: one with no correction
             # of its own still plays the listener's taste and preamp
             self._put_graph(MEASURE_KEY, key)
@@ -467,6 +523,12 @@ class AudioBackend(ABC):
     SETTLE_TIMEOUT_S = 1.5
     SETTLE_POLL_S = 0.01
 
+    # how long a begin waits for a claim another process holds. A
+    # measurement holds it for a sweep, twenty seconds and more, and is
+    # refused; _clear_abandoned in another process holds it for one
+    # metadata read and one write, milliseconds each, and is waited for
+    CLAIM_WAIT_S = 1.0
+
     def _await_moratorium(self, sink, key, measure_cubic):
         """Block until the server shows the moratorium in force, or
         the timeout runs out.
@@ -504,7 +566,8 @@ class AudioBackend(ABC):
         foreign streams unmuted -- then apply the levels wished
         meanwhile, one pass, last write per device. A level wished for
         the measured sink outranks its restore. Fills
-        state["restored"]: whether the name was cleared."""
+        state["restored"]: whether the name was cleared. The claim goes
+        back last, whatever happened before it."""
         with self._lock:
             with self._wish_lock:
                 m = self._moratorium
@@ -515,26 +578,58 @@ class AudioBackend(ABC):
                 # a wish made from here on goes to the writer, which
                 # waits for the server until this pass is done
                 pending, self._pending = self._pending, {}
-            sink, restore = m["sink"], m["restore"]
-            state = restore["state"]
-            if sink not in pending and restore["volume"] is not None:
-                self._put_volume(sink, restore["volume"])
-            # after the volume, not before: a card set back to muted
-            # and then given a level would be left silent with a
-            # number on the fader. Outside that branch, though: the
-            # mute is restored whether or not a level was written,
-            # because it is now cleared the same way
-            if sink not in pending and restore.get("mute"):
-                self._push_mute(sink, True)
-            ok = bool(self._put_graph(MEASURE_KEY, STRIP))
-            state["restored"] = ok
-            if not ok:
-                self._restore_failed(MEASURE_KEY, STRIP)
-            if m["muted"]:
-                self._push_stream_mutes(sink, False,
-                                        restore["mutes"])
-            for device, cubic in pending.items():
-                self._put_volume(device, cubic)
+            try:
+                sink, restore = m["sink"], m["restore"]
+                state = restore["state"]
+                if sink not in pending and restore["volume"] is not None:
+                    self._put_volume(sink, restore["volume"])
+                # after the volume, not before: a card set back to
+                # muted and then given a level would be left silent
+                # with a number on the fader. Outside that branch,
+                # though: the mute is restored whether or not a level
+                # was written, because it is now cleared the same way
+                if sink not in pending and restore.get("mute"):
+                    self._push_mute(sink, True)
+                ok = bool(self._put_graph(MEASURE_KEY, STRIP))
+                state["restored"] = ok
+                if not ok:
+                    self._restore_failed(MEASURE_KEY, STRIP)
+                if m["muted"]:
+                    self._push_stream_mutes(sink, False,
+                                            restore["mutes"])
+                for device, cubic in pending.items():
+                    self._put_volume(device, cubic)
+            finally:
+                # LAST: until everything is back, a begin in another
+                # process would read what we changed as the server's
+                m["claim"].close()
+
+    def _clear_abandoned(self):
+        """Clear a name under MEASURE_KEY that no measurement holds.
+
+        Only a measurement writes the name, and it holds the claim from
+        before it writes it until after it clears it. So a name standing
+        while the claim is free was left by a measurement that is gone
+        -- killed, or its own clear refused -- and the hook keeps that
+        device bare until WirePlumber restarts. The claim is held while
+        the name is read and cleared, so no measurement can start in
+        between. Asked from _ingest, whose snapshot may be older than
+        the name: it is read again here."""
+        with self._lock:
+            with self._wish_lock:
+                if self._moratorium is not None:
+                    return
+            claim = _claim(0)
+            if claim is None:
+                return
+            try:
+                name = self._read_graph(MEASURE_KEY)
+                if name and self._put_graph(MEASURE_KEY, STRIP):
+                    debug.log("a measurement that is no longer running "
+                              "left %s named to the hook; the name is "
+                              "cleared" % name)
+            finally:
+                claim.close()
 
     def moratorium_muted_ids(self):
         """Stream ids the active moratorium muted -- the session's
@@ -572,6 +667,12 @@ class AudioBackend(ABC):
         self.sinks = snap.get("sinks", [])
         self.sources = snap.get("sources", [])
         self.default_sink = snap.get("default_sink")
+        # A NAME THE HOOK HOLDS WHILE THIS PROCESS MEASURES NOTHING:
+        # whether anyone does, the claim says. Off this thread, which
+        # may be the window's, since the answer may be a write
+        if snap.get("measure") and self._moratorium is None:
+            threading.Thread(target=self._clear_abandoned, daemon=True,
+                             name="pde-abandoned").start()
         # (found, version) of the loaded hook, as of this beat. It is
         # in the signature below: a hook that dies, or comes back, or
         # comes back speaking another protocol, is a change the window

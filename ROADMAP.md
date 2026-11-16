@@ -90,6 +90,11 @@ listener, headroom that never lies.
   - An edit made just before the window closes is saved, and what the
     window sent reaches the hook; a sweep the close cancels gives its
     device back.
+  - A measurement killed in the middle (kill -9, a crash) no longer
+    leaves its device without correction until WirePlumber restarts:
+    the window clears the name it left, at its next start or, while
+    open, within three seconds. The level and the mutes stay as it left
+    them. A measurement is refused while another process measures.
   - Bypass takes every output raw and stays, through a change of
     output, an edit and a restart, until it is released.
   - A channel's balance is a number of the channel, not a band: a

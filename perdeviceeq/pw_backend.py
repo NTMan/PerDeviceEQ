@@ -1202,7 +1202,7 @@ import time
 import sys
 import weakref
 
-from .config import LISTENER_KEY, METADATA_NAME
+from .config import LISTENER_KEY, MEASURE_KEY, METADATA_NAME
 from .audio_backend import AudioBackend
 
 
@@ -1669,10 +1669,6 @@ class PipeWireBackend(AudioBackend):
         -- which is what lets the heartbeat watch the hook instead of
         checking it once at startup and never again.
 
-        Its properties sit at o["props"], NOT at o["info"]["props"]
-        where every other object keeps them; reading the usual place
-        returns an empty dict and the object looks anonymous.
-
         The stamp arrives as a JSON number (2), while the hook writes
         a string ("2"), so the version is normalised to text or the
         comparison is false forever.
@@ -1683,17 +1679,28 @@ class PipeWireBackend(AudioBackend):
         """
         if dump is None:
             dump = pw_dump()
+        entries = self._channel(dump)
+        if entries is None:
+            return False, None
+        v = entries.get("protocol")
+        return True, (None if v is None else str(v))
+
+    @staticmethod
+    def _channel(dump):
+        """The hook's metadata object off a dump, key -> value, or None
+        when the dump has none.
+
+        Its properties sit at o["props"], NOT at o["info"]["props"]
+        where every other object keeps them; reading the usual place
+        returns an empty dict and the object looks anonymous."""
         for o in dump or []:
             if not str(o.get("type", "")).endswith("Metadata"):
                 continue
             if (o.get("props") or {}).get("metadata.name") != METADATA_NAME:
                 continue
-            for e in o.get("metadata") or []:
-                if e.get("key") == "protocol":
-                    v = e.get("value")
-                    return True, (None if v is None else str(v))
-            return True, None
-        return False, None
+            return {e.get("key"): e.get("value")
+                    for e in o.get("metadata") or []}
+        return None
 
     def monitor_positions(self, device):
         """What a capture on this node's monitor must ask for."""
@@ -1723,6 +1730,9 @@ class PipeWireBackend(AudioBackend):
             # the hook rides the snapshot: watched every beat, not
             # asked once at startup and trusted for the session
             "hook": (found, ver),
+            # and so does the device a measurement named to it: whether
+            # a measurement still holds the name is the base's question
+            "measure": (self._channel(dump) or {}).get(MEASURE_KEY),
         }
 
     def update(self, dump=None):

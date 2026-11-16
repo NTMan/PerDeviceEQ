@@ -38,6 +38,16 @@ def _listener_state_is_the_test_s(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _the_measurement_claim_is_the_test_s(tmp_path, monkeypatch):
+    """A measurement locks a file in the user's config (the claim). A
+    test locks its own, so it neither waits for a measurement of whoever
+    runs it nor holds one up."""
+    from perdeviceeq import config
+    monkeypatch.setattr(config, "MEASURE_LOCK_FILE",
+                        str(tmp_path / "measure.lock"))
+
+
+@pytest.fixture(autouse=True)
 def _no_node_seen_before(monkeypatch):
     """The device-key rule remembers the last port each node showed; a
     test starts with none seen."""
