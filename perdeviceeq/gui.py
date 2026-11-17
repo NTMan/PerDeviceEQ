@@ -2897,19 +2897,30 @@ class EqWindow(Adw.ApplicationWindow):
         marks a profile birth: undo, leaving that entry, buries the
         profile. A real push first materializes a deferred
         mid-history switch, so the edit's pre-state is on record.
-        Dedup compares content without the marks."""
+        Dedup compares content without the marks.
+
+        A push that brings no new content -- the state already on
+        record, the entry it stands at or a deferred switch -- is no
+        step: it enters nothing and drops no redo branch. The branch
+        used to go first and the comparison after, so an edit that
+        changed nothing, landing after an undo, took the redo away."""
         snap = self._snapshot()
         if sel:
             snap["sel"] = True
         if born:
             snap["born"] = born
-        if self._hidx < len(self._hist) - 1:        # drop the redo branch
-            del self._hist[self._hidx + 1:]
 
         def _bare(d):
             return {k: v for k, v in d.items()
                     if k not in ("sel", "born")}
         pend = self._pending_sel
+        known = (pend if pend is not None and not sel
+                 else self._hist[self._hidx] if self._hist else None)
+        if known is not None and _bare(known) == _bare(snap):
+            self._update_undo_buttons()
+            return
+        if self._hidx < len(self._hist) - 1:        # drop the redo branch
+            del self._hist[self._hidx + 1:]
         self._pending_sel = None
         if pend is not None and not sel:
             pend = dict(pend)
