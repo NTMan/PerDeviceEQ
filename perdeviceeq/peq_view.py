@@ -181,6 +181,9 @@ class PeqView(Gtk.Box):
         self.grid = focus.OrderedGrid(column_spacing=4,
                                       row_spacing=4)
         self._focus_stops = []
+        self._head_stops = []     # the frame's stops above the rows
+        self._row_bands = []      # the band each row shows, as built
+        self._acts = None         # the actions under the rows
         for side in ("top", "bottom", "start", "end"):
             getattr(self.grid, "set_margin_" + side)(3)
         self.append(self.grid)
@@ -1064,16 +1067,47 @@ class PeqView(Gtk.Box):
 
     # ---- the band table -------------------------------------------------
     def _rebuild_table(self):
-        self._focus_stops = []
+        # THE FRAME STAYS, THE ROWS ARE REBUILT. A sort, an add, a
+        # delete, a load each rebuilt the whole grid, so the widget
+        # under the hand died with the rest: GTK then sent the focus
+        # forward from nothing, some 300 ms later, to the walk's first
+        # stop -- the Balance since it came, the first row's type
+        # before -- and the pointer resting on the sort no longer
+        # hovered what it rested on. The Balance, the header and the
+        # actions are built once (_build_frame); a rebuild replaces the
+        # band rows and moves the actions under the last of them, and
+        # a hand in a row gets its field back (_refocus).
+        if self._acts is None:
+            self._build_frame()
+        held = self._held_row()
+        rows = range(self._top + 1, self._top + 1 + len(self._row_bands))
         child = self.grid.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
-            self.grid.remove(child)
+            if self.grid.query_child(child)[1] in rows:
+                self.grid.remove(child)
             child = nxt
+        # the rows ARE the storage order, verbatim -- nothing
+        # reshuffles under the hand that is editing it
+        self._row_bands = list(self._bands)
+        self.grid.get_layout_manager().get_layout_child(
+            self._acts).set_row(self._top + len(self._row_bands) + 1)
+        self._focus_stops = list(self._head_stops)
+        for i, b in enumerate(self._row_bands):
+            self._attach_band(i, b)
+        # the walk's verdict: Tab reads a band row as written --
+        # type, freq, gain, Q, on/off, delete -- the on/off is
+        # second to last, not first, whatever geometry says
+        self._focus_stops.append(self._acts)
+        self.grid.set_focus_order(self._focus_stops)
+        self._refocus(held)
+
+    def _build_frame(self):
+        """The Balance, the column header and the actions, once: they
+        outlive every rebuild of the rows."""
+        self._focus_stops = []
         # the channel's balance stands above the header, which is
         # what sets it off from the bands
-        self._balance_spin = None
-        self._top = 0
         if self._on_balance is not None:
             self._attach_balance(0)
             self._top = 1
@@ -1087,11 +1121,8 @@ class PeqView(Gtk.Box):
                 self.grid.attach(self._freq_head(lbl), c, self._top, 1, 1)
             else:
                 self.grid.attach(lbl, c, self._top, 1, 1)
-        # the rows ARE the storage order, verbatim -- nothing
-        # reshuffles under the hand that is editing it
-        shown = self._bands
-        for i, b in enumerate(shown):
-            self._attach_band(i, b)
+        self._head_stops = list(self._focus_stops)
+
         def _action(icon, name, tip):
             # outside a header bar a button carries an icon or a
             # label, not both (GNOME HIG, Buttons): an icon, flat
@@ -1118,12 +1149,43 @@ class PeqView(Gtk.Box):
             repl.connect("clicked",
                          lambda *_: self._on_import_file())
             acts.append(repl)
-        self.grid.attach(acts, 1, self._top + len(self._bands) + 1, 7, 1)
-        # the walk's verdict: Tab reads a band row as written --
-        # type, freq, gain, Q, on/off, delete -- the on/off is
-        # second to last, not first, whatever geometry says
-        self._focus_stops.append(acts)
-        self.grid.set_focus_order(self._focus_stops)
+        # under the rows: every rebuild moves it to follow the last
+        self.grid.attach(acts, 1, self._top + 1, 7, 1)
+        self._acts = acts
+
+    def _held_row(self):
+        """Where in the band rows the focus is, as a key that outlives
+        their rebuild: the band, its row, the column. None when the
+        focus is elsewhere -- the frame keeps its own."""
+        root = self.get_root()
+        f = root.get_focus() if root is not None else None
+        if f is None or not f.is_ancestor(self.grid):
+            return None
+        w = f
+        while w.get_parent() is not self.grid:
+            w = w.get_parent()
+        col, row, _w, _h = self.grid.query_child(w)
+        i = row - self._top - 1
+        if not 0 <= i < len(self._row_bands):
+            return None
+        return self._row_bands[i], i, col
+
+    def _refocus(self, held):
+        """The focus back in the rows: the same field of the same band
+        -- of the same row when the bands are new (a load, an undo), of
+        the row that took its place when the band is gone, the last
+        row when it was the last, Add band when no row is left."""
+        if held is None:
+            return
+        band, i, col = held
+        idx = next((n for n, x in enumerate(self._bands) if x is band),
+                   None)
+        if idx is None:
+            idx = min(i, len(self._bands) - 1)
+        w = (self.grid.get_child_at(col, self._top + 1 + idx)
+             if idx >= 0 else self._acts.get_first_child())
+        if w is not None:
+            w.grab_focus()
 
     def _freq_head(self, lbl):
         """The Freq header: its word where the other headers keep

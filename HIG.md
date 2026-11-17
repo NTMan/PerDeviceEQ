@@ -99,6 +99,14 @@ entries below keep their verdicts as history.
   (10 px on libadwaita 1.5, about 17 on his screen), while H11,
   which reads a control at its outline, saw a straight column.
   And the button was in no stop of the Tab walk.
+- The band table across a rebuild (Nov 17, his finds): a sort, an
+  add or a delete rebuilt the whole grid and destroyed the control
+  under the hand -- GTK sent the focus to the walk's first stop,
+  the Balance, and the pointer resting on the sort lost its hover.
+  The Balance, the header and the actions are now built once; a
+  rebuild replaces only the band rows, and a hand in a row gets
+  the same field of the same band back -- a deleted band's row
+  passes it to the row that took its place.
 - Eye toggle (measured curves): icon-only flat in a card corner.
   [Mikhail] against Calendar's icon buttons -- fine as is?
 - Preamp spin + Auto: linked pair -- borrowed (facets of one
