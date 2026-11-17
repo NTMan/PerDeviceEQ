@@ -126,15 +126,6 @@ def _slot_from(chan):
             "balance": eq.balance_db(chan)}
 
 
-def _by_freq(bands):
-    """Band dicts in the order a history record keeps them: by
-    frequency, as the table shows them after a load, ties broken by
-    the rest of the band -- so one set of bands is one record,
-    whatever order it was held in (EqWindow._snapshot)."""
-    return sorted(bands, key=lambda b: (b["freq"],
-                                        json.dumps(b, sort_keys=True)))
-
-
 class EqWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         """Build the window from the .ui design and wire all behavior to it."""
@@ -2825,29 +2816,25 @@ class EqWindow(Adw.ApplicationWindow):
     def _snapshot(self):
         """Serialize editor state for undo (the viewed channel is left out).
 
-        The bands are recorded by frequency, whatever order the editor
-        holds them in. The order is no content: the response does not
-        depend on it, and a sort is no step of the history. Two orders
-        of one list did meet here -- the table sorts its own copy on
-        every load, undo included, the window keeps the profile's
-        order, and the first edit from the table, even one that
-        changes nothing, hands the window the sorted list. Recorded as
-        held, that was a new state, and a click on a band's handle
-        after Undo took the redo away."""
+        The bands go in as held, in the profile's order: the table
+        hands them back in the order it was given (PeqView.get_bands),
+        so a sort of its rows never reads as a change here, and an
+        undo must give back the exact body it recorded -- the fit
+        stamps a hash of the body it produced, bands in its placement
+        order, and the mark that the fit was edited clears only when
+        a save hashes the same again."""
         keys = list(self.ch_keys)
         return {"pid": self.current_pid,
                 "preamp": float(self.preamp),
                 "preamp_auto": bool(self.preamp_auto),
                 "ch_keys": list(self.ch_keys),
-                "slots": {k: dict(s, bands=_by_freq(s["bands"]))
-                          for k, s in zip(keys,
-                                          map(self._slot_to_dict, keys))},
+                "slots": {k: self._slot_to_dict(k) for k in keys},
                 "taste": {
                     "active": self.pref_layers.active_id,
                     "layers": [
                         {"id": l["id"], "name": l["name"],
-                         "bands": _by_freq([dict(x) for x in
-                                            (l.get("bands") or [])])}
+                         "bands": [dict(x) for x in
+                                   (l.get("bands") or [])]}
                         for l in self.pref_layers.layers]}}
 
     def _restore(self, snap):

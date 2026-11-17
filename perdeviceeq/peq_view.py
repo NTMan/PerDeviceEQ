@@ -104,7 +104,8 @@ class PeqView(Gtk.Box):
         # a document-level import lives in the profile menu.
         self._on_import_file = on_import_file
         self._preamp = float(preamp)
-        self._bands = []
+        self._bands = []    # the rows' order: what the table shows
+        self._given = []    # the same bands in the owner's order
         self._floor = []  # sealed stages: drawn, never listed
         self._zone = None  # trust edges: drawn always
         self._tgt = None   # lawful target: the gain law's silhouette
@@ -201,16 +202,24 @@ class PeqView(Gtk.Box):
 
         A load is the one moment the table may reorder itself:
         the solver hands its bands over in placement order and
-        nobody is looking at a row yet.
+        nobody is looking at a row yet. The ROWS reorder; the
+        owner's order is kept beside them and is what get_bands()
+        hands back. The order is presentation, and handing the
+        sorted list back made the first edit -- an empty one too,
+        a click on a handle -- rewrite the profile's order: its
+        history took a reading order for content, and an undo to
+        a fitted body no longer matched the hash the fit stamped.
         """
-        self._bands = [eq.Band.from_dict(b) for b in (band_dicts or [])]
-        self._bands.sort(key=lambda b: b.freq)
+        self._given = [eq.Band.from_dict(b) for b in (band_dicts or [])]
+        self._bands = sorted(self._given, key=lambda b: b.freq)
         self._drag_band = None
         self._rebuild_table()
         self.graph.queue_draw()
 
     def get_bands(self):
-        return [b.to_dict() for b in self._bands]
+        """The bands as dicts, in the order the owner gave them; a new
+        band comes last. The rows' order is the table's own."""
+        return [b.to_dict() for b in self._given]
 
     def set_balance(self, db):
         """The channel's balance, dB, as the owner holds it."""
@@ -1046,6 +1055,7 @@ class PeqView(Gtk.Box):
                 return
             b = eq.Band("PK", f, self._gain_at(db), 1.0, True)
             self._bands.append(b)
+            self._given.append(b)
             created = True
         self._drag_band = b
         # The grab: the band as it stood and the plot's scale at the
@@ -1106,6 +1116,7 @@ class PeqView(Gtk.Box):
         b = self._hit_band(x, y)
         if b is not None and b in self._bands:
             self._bands.remove(b)
+            self._given.remove(b)
             self._rebuild_table()
             self.graph.queue_draw()   # the handle must die with it
             self._emit(True)
@@ -1261,6 +1272,7 @@ class PeqView(Gtk.Box):
         order, and a load sorts anyway, so the click buys the
         reading order without forking a built-in profile or
         resetting the headroom session behind the user's back.
+        The owner's order (get_bands) is not touched either.
         """
         if len(self._bands) < 2:
             return
@@ -1377,7 +1389,9 @@ class PeqView(Gtk.Box):
         self._emit(True)
 
     def _on_add(self, *_):
-        self._bands.append(eq.Band("PK", 1000.0, 0.0, 1.0, True))
+        b = eq.Band("PK", 1000.0, 0.0, 1.0, True)
+        self._bands.append(b)
+        self._given.append(b)
         self._rebuild_table()
         self.graph.queue_draw()
         self._emit(True)
@@ -1385,6 +1399,7 @@ class PeqView(Gtk.Box):
     def _on_del(self, b):
         if b in self._bands:
             self._bands.remove(b)
+            self._given.remove(b)
             self._rebuild_table()
             self.graph.queue_draw()
             self._emit(True)

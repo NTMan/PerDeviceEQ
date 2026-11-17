@@ -1,14 +1,12 @@
-"""The order of the bands is no content of the history.
+"""The table's order is its own; the owner gets its bands back in its.
 
-The table sorts its own copy of the bands by frequency on every load,
-undo included, while the window keeps the profile's order; the first
-edit from the table, even one that changes nothing, hands the window
-the sorted list. Recorded as held, the same bands in another order
-were a new state, and a click on a band's handle after Undo took the
-redo away. Runs the real methods over a stub window. Needs gi for
-the module; a GTK-less sandbox skips."""
-import types
-
+The table sorts its rows on a load, and get_bands() used to hand that
+sorted list to the owner at the first edit, an empty one included (a
+click on a handle). The owner, its history and the profile took a
+reading order for content: an undo then failed to give back the exact
+fitted body, and the fit's hash of it -- bands in placement order --
+kept the fit marked as edited, the auto-fit Auto un-pressed. Needs gi
+for the view; a GTK-less sandbox skips."""
 import pytest
 
 gi = pytest.importorskip("gi")
@@ -18,48 +16,54 @@ try:
 except ValueError as e:                        # pragma: no cover
     pytest.skip(str(e), allow_module_level=True)
 
-from perdeviceeq import gui                    # noqa: E402
+from perdeviceeq import eq, profiles           # noqa: E402
+from perdeviceeq.peq_view import PeqView       # noqa: E402
 
 # a fit hands its bands over in placement order, not by frequency
-PLACED = [{"type": "PK", "freq": 3475.8, "gain": -15.59, "q": 0.533},
-          {"type": "PK", "freq": 1000.0, "gain": 2.0, "q": 1.0},
-          {"type": "HSC", "freq": 18417.2, "gain": -2.04, "q": 0.956},
-          {"type": "PK", "freq": 63.0, "gain": -0.94, "q": 0.46}]
-SORTED = sorted(PLACED, key=lambda b: b["freq"])
+PLACED = [eq.Band.from_dict(b).to_dict() for b in (
+    {"type": "PK", "freq": 3475.8, "gain": -15.59, "q": 0.533},
+    {"type": "PK", "freq": 822.4, "gain": 6.0, "q": 0.48},
+    {"type": "HSC", "freq": 18417.2, "gain": -2.04, "q": 0.956},
+    {"type": "PK", "freq": 63.0, "gain": -0.94, "q": 0.46})]
 
 
-def _win(fl, taste=()):
-    w = types.SimpleNamespace(
-        current_pid="p", preamp=-3.0, preamp_auto=True,
-        ch_keys=["FL"], slots={"FL": gui._slot_from({"bands": fl})},
-        pref_layers=types.SimpleNamespace(
-            active_id="t",
-            layers=[{"id": "t", "name": "T", "bands": list(taste)}]))
-    w._slot_to_dict = lambda k: gui.EqWindow._slot_to_dict(w, k)
-    w._snapshot = lambda: gui.EqWindow._snapshot(w)
-    w._update_undo_buttons = lambda: None
-    return w
+def _view():
+    edits = []
+    v = PeqView(lambda bands, final: edits.append(bands))
+    v.set_bands(PLACED)
+    return v, edits
 
 
-def test_one_set_of_bands_is_one_record():
-    assert (gui.EqWindow._snapshot(_win(PLACED, PLACED))
-            == gui.EqWindow._snapshot(_win(SORTED, SORTED)))
+def _freqs(bands):
+    return [b["freq"] if isinstance(b, dict) else b.freq for b in bands]
 
 
-def test_another_value_is_still_another_record():
-    moved = [dict(b) for b in SORTED]
-    moved[0]["gain"] = -1.0
-    assert (gui.EqWindow._snapshot(_win(PLACED))
-            != gui.EqWindow._snapshot(_win(moved)))
+def test_the_rows_sort_and_the_owner_s_order_stays():
+    v, _ = _view()
+    assert _freqs(v._bands) == sorted(_freqs(PLACED))
+    assert v.get_bands() == PLACED
 
 
-def test_a_click_after_undo_keeps_the_redo():
-    """The record was taken while the window held the profile's order;
-    the click handed it the table's. Same bands, so no step."""
-    w = _win(PLACED)
-    seed = w._snapshot()
-    edit = dict(seed, preamp=-6.0)
-    w._hist, w._hidx, w._pending_sel = [seed, edit], 0, None
-    w.slots = {"FL": gui._slot_from({"bands": SORTED})}
-    gui.EqWindow._push_history(w)
-    assert w._hist == [seed, edit] and w._hidx == 0
+def test_a_sort_of_the_rows_writes_nothing():
+    v, edits = _view()
+    v._on_add()                                # a 1 kHz row, last
+    v._on_sort_freq()
+    assert _freqs(v._bands) == sorted(_freqs(PLACED) + [1000.0])
+    assert _freqs(v.get_bands()) == _freqs(PLACED) + [1000.0]
+    assert len(edits) == 1                     # the add; the sort none
+
+
+def test_a_removed_band_leaves_the_rest_in_order():
+    v, _ = _view()
+    v._on_del(next(b for b in v._bands if b.freq == 822.4))
+    assert v.get_bands() == [PLACED[0], PLACED[2], PLACED[3]]
+
+
+def test_a_fitted_body_handed_back_is_no_edit_of_the_fit():
+    stored = {"name": "P", "ch_keys": ["FL"],
+              "channels": {"FL": {"bands": PLACED}}}
+    stored["fit"] = {"output_sha256": profiles.playback_sha256(stored)}
+    v, _ = _view()
+    body = {"name": "P", "ch_keys": ["FL"],
+            "channels": {"FL": {"bands": v.get_bands()}}}
+    assert not profiles.editor_body(body, stored)["fit"].get("edited")
