@@ -37,7 +37,10 @@ from . import curve_view as cv
 from . import eq
 from .eq import FMIN, FMAX
 
-DB_MAX = 24.0
+# A band's gain either way, as its field takes it. The plot's window
+# stands this far either side of the level the bands act from, so the
+# window's height is exactly a band's range (_band_ref, _y_window).
+GAIN_MAX = 24.0
 _TYPES = ["PK", "LSC", "HSC"]
 # the four house lines, for the label that names one of them
 _LINE_COL = {"measured": (0.85, 0.85, 0.90),
@@ -614,7 +617,9 @@ class PeqView(Gtk.Box):
         self.graph.queue_draw()
 
     def set_preamp(self, v):
-        """The dB window follows the preamp, like the main editor."""
+        """The dB window and the handles follow the preamp (_band_ref):
+        a handle and the EQ line keep their place on screen, and the
+        numbers of the scale move."""
         self._preamp = float(v or 0.0)
         self.graph.queue_draw()
 
@@ -641,8 +646,20 @@ class PeqView(Gtk.Box):
         self.graph.queue_draw()
 
     # ---- geometry -----------------------------------------------------
+    def _band_ref(self):
+        """The level a band's gain counts from on the plot: the
+        preamp and this channel's balance, as the EQ line is drawn.
+        A handle stands at this plus its band's gain -- where the
+        band acts on the scale -- as on the taste card, whose
+        reference is 0. Drawn from 0 dB under a preamp of -12.5, a
+        handle could not rise past +11.5 and could sink to -36.5,
+        below what its field takes, and the dB under a fixed pixel
+        moved whenever Auto moved the preamp."""
+        return self._preamp + self._balance
+
     def _y_window(self):
-        lo, hi = -DB_MAX + self._preamp, DB_MAX + self._preamp
+        ref = self._band_ref()
+        lo, hi = -GAIN_MAX + ref, GAIN_MAX + ref
         c = self._curves
         if c is not None:
             lo = min(lo, c[4])
@@ -699,9 +716,10 @@ class PeqView(Gtk.Box):
             return None
         best, bestd = None, r * r
         wlo, whi = self._y_window()
+        ref = self._band_ref()
         for b in self._bands:
             bx = self._x_of(max(b.freq, FMIN))  # below the plot: its edge
-            by = self._y_of(max(wlo, min(whi, b.gain)))
+            by = self._y_of(max(wlo, min(whi, ref + b.gain)))
             d = (bx - x) ** 2 + (by - y) ** 2
             if d <= bestd:
                 best, bestd = b, d
@@ -972,9 +990,10 @@ class PeqView(Gtk.Box):
             cr.line_to(ml + pw_, y_of(0)); cr.stroke()
             cr.set_dash([], 0)
 
+        ref = self._band_ref()
         for b in self._bands:
             bx = x_of(max(b.freq, FMIN))
-            by = y_of(max(wlo, min(whi, b.gain)))
+            by = y_of(max(wlo, min(whi, ref + b.gain)))
             r, g, bl = _band_color(b.freq)
             cr.arc(bx, by, 5.5, 0, 2 * math.pi)
             if b.enabled:
@@ -1024,7 +1043,7 @@ class PeqView(Gtk.Box):
             f = self._f_of(sx); db = self._db_of(sy)
             if f is None or db is None:
                 return
-            b = eq.Band("PK", f, db, 1.0, True)
+            b = eq.Band("PK", f, self._gain_at(db), 1.0, True)
             self._bands.append(b)
             created = True
         self._drag_band = b
@@ -1047,9 +1066,15 @@ class PeqView(Gtk.Box):
             # to 20 Hz
             self._drag_band.freq = f
         if db is not None:
-            self._drag_band.gain = db
+            self._drag_band.gain = self._gain_at(db)
         self.graph.queue_draw()
         self._emit(False)             # live; no table rebuild
+
+    def _gain_at(self, db):
+        """A band's gain for a level on the scale: counted from the
+        band reference, kept within the band's range -- the window can
+        be wider than it when context curves reach past."""
+        return max(-GAIN_MAX, min(GAIN_MAX, db - self._band_ref()))
 
     def _on_drag_end(self, gesture, ox, oy):
         if self._drag_band is None:
@@ -1277,7 +1302,7 @@ class PeqView(Gtk.Box):
         col = 2
         for key, lo, hi, step, dig, tip in (
                 ("freq", 10.0, 20000.0, 1.0, 0, "Frequency, Hz"),
-                ("gain", -24.0, 24.0, 0.1, 1, "Gain, dB"),
+                ("gain", -GAIN_MAX, GAIN_MAX, 0.1, 1, "Gain, dB"),
                 ("q", 0.1, 10.0, 0.05, 2, "Q")):
             sp = Gtk.SpinButton.new_with_range(lo, hi, step)
             sp.set_digits(dig)
