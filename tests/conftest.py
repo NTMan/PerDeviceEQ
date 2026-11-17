@@ -3,6 +3,7 @@
 Fixtures are generated on the fly by tools/make_fixtures.py (deterministic,
 seed-pinned) — no binary test data is stored in git.
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,13 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))   # CLI tools (audit_*, etc.)
 sys.path.insert(0, str(ROOT))             # perdeviceeq package
+
+# Some tests present a window -- focus is live only in a mapped one --
+# and presenting wakes GSK's renderer. The CI container ships no
+# libGLESv2, and the GL path aborts the whole run there. The tests
+# need focus and values, not frames: cairo, as tools/hig_audit.py
+# does, unless the environment names another renderer.
+os.environ.setdefault("GSK_RENDERER", "cairo")
 
 
 @pytest.fixture(scope="session")
