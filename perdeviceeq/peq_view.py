@@ -121,6 +121,7 @@ class PeqView(Gtk.Box):
         self._under_v = None
         self._plot = None
         self._drag_band = None
+        self._grab = None           # the band and the scale at the press
         self._loading = False
         self._active = True
 
@@ -1047,39 +1048,57 @@ class PeqView(Gtk.Box):
             self._bands.append(b)
             created = True
         self._drag_band = b
+        # The grab: the band as it stood and the plot's scale at the
+        # press. A drag moves the band by the pointer's offset from the
+        # press, in those units, instead of putting it under the
+        # pointer: a press lands anywhere on the 11 px handle, and the
+        # first motion jumped the band there -- a half-pixel tremor of
+        # a click took one from 63.00 Hz -0.94 dB to 65.83 Hz -0.47 dB,
+        # and a straight vertical drag retuned the band. An offset of
+        # zero leaves the band exactly as it was.
+        ml, mt, pw_, ph = self._plot
+        lo, hi = self._y_window()
+        self._grab = (b.freq, b.gain,
+                      (math.log10(FMAX) - math.log10(FMIN)) / pw_
+                      if pw_ > 0 else 0.0,
+                      (hi - lo) / ph if ph > 0 else 0.0)
         if created:
             self._rebuild_table()
             self._emit(True)
         self.graph.queue_draw()
 
     def _on_drag_update(self, gesture, ox, oy):
-        if self._drag_band is None or not self._plot:
+        if self._drag_band is None:
             return
-        ok, sx, sy = gesture.get_start_point()
-        if not ok:
-            return
-        f = self._f_of(sx + ox); db = self._db_of(sy + oy)
-        if f is not None and self._drag_band.freq >= FMIN:
+        b = self._drag_band
+        f0, g0, dec_px, db_px = self._grab
+        if f0 >= FMIN:
             # a band below the plot (the frequency field goes down to
             # 10 Hz) keeps its frequency under drag -- the plot cannot
             # express it and a vertical gain drag must not retune it
             # to 20 Hz
-            self._drag_band.freq = f
-        if db is not None:
-            self._drag_band.gain = self._gain_at(db)
+            b.freq = min(max(FMAX, f0),
+                         max(FMIN, f0 * 10 ** (ox * dec_px)))
+        # within the band's range; a band already past it, from an
+        # older profile or an import, stays where it was at an offset
+        # of zero and is not dragged further out
+        b.gain = min(max(GAIN_MAX, g0),
+                     max(min(-GAIN_MAX, g0), g0 - oy * db_px))
         self.graph.queue_draw()
         self._emit(False)             # live; no table rebuild
 
     def _gain_at(self, db):
-        """A band's gain for a level on the scale: counted from the
-        band reference, kept within the band's range -- the window can
-        be wider than it when context curves reach past."""
+        """A band's gain for a level on the scale, where a band is
+        born: counted from the band reference, kept within the band's
+        range -- the window can be wider than it when context curves
+        reach past."""
         return max(-GAIN_MAX, min(GAIN_MAX, db - self._band_ref()))
 
     def _on_drag_end(self, gesture, ox, oy):
         if self._drag_band is None:
             return
         self._drag_band = None
+        self._grab = None
         self._rebuild_table()
         self._emit(True)
 
