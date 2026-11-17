@@ -110,7 +110,7 @@ def test_the_tab_in_view_shows_its_balance():
         set_preamp=lambda p: None)
     win = _win({"FR": gui._slot_from({"bands": [PK], "balance": -0.4})},
                _loading=False, tabs=None, preamp=-3.0, current_pid="p",
-               preamp_spin=types.SimpleNamespace(set_value=lambda v: None),
+               _put_preamp=lambda v: None,
                store=types.SimpleNamespace(get=lambda pid: {"name": "P"}),
                view=view, _sync_view_curves=lambda: None,
                _update_headroom=lambda: None,

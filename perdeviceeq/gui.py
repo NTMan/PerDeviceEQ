@@ -37,8 +37,8 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Gio, GLib, Gdk, Adw, Pango
 
-from . import (__version__, chantabs, config, debug, eq, level_run,
-               pw_backend, integration)
+from . import (__version__, chantabs, config, debug, eq, focus,
+               level_run, pw_backend, integration)
 
 import numpy as np
 from .picker import NodeMenu
@@ -1270,7 +1270,8 @@ class EqWindow(Adw.ApplicationWindow):
         self.preamp_spin = Gtk.SpinButton.new_with_range(-DB_MAX, DB_MAX, 0.5)
         self.preamp_spin.set_digits(1)
         self.preamp_spin.set_valign(Gtk.Align.CENTER)
-        self.preamp_spin.connect("value-changed", self._on_preamp)
+        self._put_preamp = focus.connect_value(self.preamp_spin,
+                                               self._on_preamp)
         self._tame_scroll(self.preamp_spin)
         self.auto_button = Gtk.ToggleButton(label="Auto")
         self.auto_button.set_active(True)
@@ -2193,7 +2194,7 @@ class EqWindow(Adw.ApplicationWindow):
                 self.tabs.select(ch)
             slot = self._slot(ch)
             self.bands = slot["bands"]               # alias: edits mutate the slot
-            self.preamp_spin.set_value(self.preamp)
+            self._put_preamp(self.preamp)
             prof = self.store.get(self.current_pid) or {}
             self.view.export_parts = (prof.get("name") or "", ch)
             self.view.set_bands([b.to_dict() for b in self.bands])
@@ -3133,7 +3134,7 @@ class EqWindow(Adw.ApplicationWindow):
             return
         self._preamp_syncing = True
         try:
-            self.preamp_spin.set_value(v)
+            self._put_preamp(v)
         finally:
             self._preamp_syncing = False
         self._apply_now()          # Auto stores nothing: it is derived
@@ -3153,7 +3154,7 @@ class EqWindow(Adw.ApplicationWindow):
             return
         self._preamp_syncing = True
         try:
-            self.preamp_spin.set_value(v)
+            self._put_preamp(v)
         finally:
             self._preamp_syncing = False
         self._sess_peak = None          # consumed, like Session did

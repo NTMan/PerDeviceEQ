@@ -91,6 +91,7 @@ class PeqView(Gtk.Box):
         self._on_balance = on_balance
         self._balance = 0.0
         self._balance_spin = None
+        self._put_balance = None    # its value, set by the program
         self._top = 0               # grid rows above the column header
         self.export_prefix = export_prefix
         self.export_parts = ()      # set by the owner, who knows
@@ -213,7 +214,7 @@ class PeqView(Gtk.Box):
         if self._balance_spin is not None:
             held, self._loading = self._loading, True
             try:
-                self._balance_spin.set_value(self._balance)
+                self._put_balance(self._balance)
             finally:
                 self._loading = held
         self.graph.queue_draw()
@@ -1240,7 +1241,7 @@ class PeqView(Gtk.Box):
         sp.set_tooltip_text("This channel's level against the "
                             "others, dB")
         sp.set_value(self._balance)
-        sp.connect("value-changed", self._on_balance_spin)
+        self._put_balance = focus.connect_value(sp, self._on_balance_spin)
         _tame_scroll(sp, self._on_widget_scroll)
         self.grid.attach(sp, 3, row, 1, 1)
         self._focus_stops.append(sp)
@@ -1285,9 +1286,8 @@ class PeqView(Gtk.Box):
             sp.set_max_width_chars(5)
             sp.set_tooltip_text(tip)
             sp.set_value(float(getattr(b, key)))
-            sp.connect("value-changed",
-                       lambda spb, key=key, b=b:
-                       self._write(b, key, spb.get_value()))
+            focus.connect_value(sp, lambda spb, key=key, b=b:
+                                self._write(b, key, spb.get_value()))
             _tame_scroll(sp, self._on_widget_scroll)
             self.grid.attach(sp, col, row, 1, 1)
             self._focus_stops.append(sp)

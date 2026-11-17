@@ -17,6 +17,9 @@ backward Tab off the walk's head, and forward Tab off its tail
 -- without the forward neighbor GTK falls back to positional
 sort at the exit, which is how the field caught a play ->
 auto-level -> ring loop.
+
+connect_value() is what focus leaving a spin may not do: change
+the value the spin holds when the hand typed nothing into it.
 """
 
 import gi
@@ -93,3 +96,45 @@ class OrderedGrid(Gtk.Grid, _Ordered):
     def do_focus(self, direction):
         return _walk(self, self._order, self._prev, self._next,
                      direction, Gtk.Grid.do_focus)
+
+
+def connect_value(spin, handler):
+    """Hand handler(spin) the changes of a spin's value -- all but GTK
+    re-reading the spin's own rounded text -- and return put(value),
+    the program's way to set it.
+
+    GtkSpinButton re-reads its text whenever it loses focus and sets
+    the value it parses, and the text shows the value rounded to the
+    spin's digits. So a field the hand only passed through rounded what
+    it held: a fitted band's 822.37 Hz became 822 -- an edit nobody
+    made, with its undo step and its save, and a built-in forked for
+    it; the preamp the session clamp pulled to -6.54 dB became -6.5,
+    taken for a hand's turn, which un-presses Auto. A change the field
+    shows as no change is put back and not handed on. The program's own
+    writes go through put(), so one that moves the value by less than
+    the field shows is not taken for GTK's."""
+    held = [spin.get_value()]
+    back = [False]
+
+    def on_value(sp):
+        v = sp.get_value()
+        if back[0]:
+            # the put-back arriving: GTK delivers it once this
+            # handler has returned, not inside it
+            back[0] = False
+            if v == held[0]:
+                return
+        d = sp.get_digits()
+        if v != held[0] and "%.*f" % (d, v) == "%.*f" % (d, held[0]):
+            back[0] = True
+            sp.set_value(held[0])
+            return
+        held[0] = v
+        handler(sp)
+
+    def put(value):
+        held[0] = float(value)
+        spin.set_value(value)
+
+    spin.connect("value-changed", on_value)
+    return put
