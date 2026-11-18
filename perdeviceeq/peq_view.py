@@ -124,6 +124,7 @@ class PeqView(Gtk.Box):
         self._drag_band = None
         self._grab = None           # the band and the scale at the press
         self._held = None           # the window around _band_ref, held
+        self._moved = False         # the drag has changed the band
         self._loading = False
         self._active = True
 
@@ -1086,6 +1087,7 @@ class PeqView(Gtk.Box):
         # The release lets the window fit the lines again.
         ref = self._band_ref()
         self._held = (lo - ref, hi - ref)
+        self._moved = False
         if created:
             self._rebuild_table()
             self._emit(True)
@@ -1096,18 +1098,21 @@ class PeqView(Gtk.Box):
             return
         b = self._drag_band
         f0, g0, dec_px, db_px = self._grab
+        f, g = b.freq, b.gain
         if f0 >= FMIN:
             # a band below the plot (the frequency field goes down to
             # 10 Hz) keeps its frequency under drag -- the plot cannot
             # express it and a vertical gain drag must not retune it
             # to 20 Hz
-            b.freq = min(max(FMAX, f0),
-                         max(FMIN, f0 * 10 ** (ox * dec_px)))
+            f = min(max(FMAX, f0), max(FMIN, f0 * 10 ** (ox * dec_px)))
         # within the band's range; a band already past it, from an
         # older profile or an import, stays where it was at an offset
         # of zero and is not dragged further out
-        b.gain = min(max(GAIN_MAX, g0),
-                     max(min(-GAIN_MAX, g0), g0 - oy * db_px))
+        g = min(max(GAIN_MAX, g0), max(min(-GAIN_MAX, g0), g0 - oy * db_px))
+        if (f, g) == (b.freq, b.gain):
+            return                    # a motion that changes nothing
+        b.freq, b.gain = f, g
+        self._moved = True
         self.graph.queue_draw()
         self._emit(False)             # live; no table rebuild
 
@@ -1119,13 +1124,21 @@ class PeqView(Gtk.Box):
         return max(-GAIN_MAX, min(GAIN_MAX, db - self._band_ref()))
 
     def _on_drag_end(self, gesture, ox, oy):
+        """The release: an edit only if the drag changed the band. A
+        press and a release with nothing moved in between used to be
+        reported too -- the owner took it for an edit: it reset the
+        headroom session's latched peak, rewrote the profile and put
+        the same graph on the server again. A band born by the press
+        was reported by the press."""
         if self._drag_band is None:
             return
+        moved, self._moved = self._moved, False
         self._drag_band = None
         self._grab = None
         self._held = None
-        self._rebuild_table()
-        self._emit(True)
+        if moved:
+            self._rebuild_table()
+            self._emit(True)
         self.graph.queue_draw()
 
     def _on_right_click(self, gesture, n, x, y):
