@@ -80,3 +80,20 @@ def test_a_band_below_the_plot_keeps_its_frequency():
     v._on_drag_update(g, 30.0, 4.0)
     assert b.freq == 10.0
     assert b.gain == pytest.approx(3.0 - 4 * DB_PX)
+
+
+def test_the_scale_holds_under_the_hand_while_auto_moves_the_preamp():
+    """A measured line stays where it was measured, and the window
+    widened to keep it in sight once Auto had moved the preamp far
+    enough: the dB per pixel changed under the hand mid-drag, and the
+    handle fell behind it."""
+    v = _view()                                # +3 dB at 1 kHz, -3 preamp
+    fr = [20.0 * 1000.0 ** (i / 99) for i in range(100)]
+    v.set_curves(fr, [15.0] * 100)
+    b, g = _press(v, 0, 0)
+    for dy in range(4, 84, 4):
+        v._on_drag_update(g, 0.0, -float(dy))
+        v.set_preamp(-b.gain)                  # Auto: the peak stays at 0
+        assert v._y_of(v._band_ref() + b.gain) == pytest.approx(g.y - dy)
+    v._on_drag_end(g, 0.0, -80.0)
+    assert v._y_window()[1] >= 15.0            # the release fits it again

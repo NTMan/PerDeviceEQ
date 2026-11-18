@@ -123,6 +123,7 @@ class PeqView(Gtk.Box):
         self._plot = None
         self._drag_band = None
         self._grab = None           # the band and the scale at the press
+        self._held = None           # the window around _band_ref, held
         self._loading = False
         self._active = True
 
@@ -213,6 +214,7 @@ class PeqView(Gtk.Box):
         self._given = [eq.Band.from_dict(b) for b in (band_dicts or [])]
         self._bands = sorted(self._given, key=lambda b: b.freq)
         self._drag_band = None
+        self._held = None
         self._rebuild_table()
         self.graph.queue_draw()
 
@@ -669,6 +671,8 @@ class PeqView(Gtk.Box):
 
     def _y_window(self):
         ref = self._band_ref()
+        if self._held is not None:
+            return ref + self._held[0], ref + self._held[1]
         lo, hi = -GAIN_MAX + ref, GAIN_MAX + ref
         c = self._curves
         if c is not None:
@@ -1017,6 +1021,7 @@ class PeqView(Gtk.Box):
     # ---- graph interaction ---------------------------------------------
     def _on_drag_begin(self, gesture, sx, sy):
         self._drag_band = None
+        self._held = None
         add = bool(gesture.get_current_event_state()
                    & Gdk.ModifierType.CONTROL_MASK)
         lab = self._legend_at(sx, sy)
@@ -1072,6 +1077,15 @@ class PeqView(Gtk.Box):
                       (math.log10(FMAX) - math.log10(FMIN)) / pw_
                       if pw_ > 0 else 0.0,
                       (hi - lo) / ph if ph > 0 else 0.0)
+        # ...and the window holds that span around the band reference
+        # until the release. It follows the preamp, but a measured
+        # line stays where it was measured, and the window widened to
+        # keep it in sight: once Auto had taken the preamp far enough,
+        # the dB per pixel changed under the hand, and the handle fell
+        # behind it -- 40 px behind after 80 px of a hand going up.
+        # The release lets the window fit the lines again.
+        ref = self._band_ref()
+        self._held = (lo - ref, hi - ref)
         if created:
             self._rebuild_table()
             self._emit(True)
@@ -1109,8 +1123,10 @@ class PeqView(Gtk.Box):
             return
         self._drag_band = None
         self._grab = None
+        self._held = None
         self._rebuild_table()
         self._emit(True)
+        self.graph.queue_draw()
 
     def _on_right_click(self, gesture, n, x, y):
         b = self._hit_band(x, y)
