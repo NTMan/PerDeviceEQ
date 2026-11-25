@@ -2985,7 +2985,14 @@ class EqWindow(Adw.ApplicationWindow):
         """ONE step back: restore the previous live entry, sel or
         not -- undoing an edit lands its pre-state and STAYS on
         that profile; only dead entries are skipped. A deferred
-        switch is abandoned: undo navigates the recorded branch."""
+        switch is abandoned: undo navigates the recorded branch.
+
+        An edit whose step still waits on the save timer lands first,
+        so Ctrl+Z pressed within 200 ms of it takes it back. Undo used
+        to go back past it to the step before, and the timer then
+        found the restored state on record: the edit was gone, and
+        Redo did not bring it back."""
+        self._land_save()
         if self._hidx <= 0:
             return
         self._pending_sel = None
@@ -3013,7 +3020,10 @@ class EqWindow(Adw.ApplicationWindow):
         self._update_undo_buttons()
 
     def _redo(self, *_):
-        """ONE step forward, skipping only dead entries."""
+        """ONE step forward, skipping only dead entries. A waiting step
+        lands first: an edit made after an undo drops the redo branch
+        at once, as it does when the timer lands it."""
+        self._land_save()
         if self._hidx >= len(self._hist) - 1:
             return
         self._pending_sel = None
