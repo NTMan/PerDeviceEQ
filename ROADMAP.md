@@ -104,13 +104,14 @@ listener, headroom that never lies.
   - An export carries Safe over the channels it carries, each at its
     balance; the window's preamp, Auto or set by hand, stays home.
   - A saved profile plays on every device bound to it.
+  - A drag of a band is one undo step, however long the hand rests
+    in it.
 - A reference profile and a comparison of desktop speakers (iLoud Micro
   Monitor, NUX AXON 3, Adam D3V) with and without the sub. Waiting on a
   place for the sub: a room notch of about 20 dB at 40-41 Hz.
 
 ## Planned
 
-- One undo step per drag.
 - Find why one graph write of a pass went missing (Nov 7).
 - Level passport, to decide: the first sweep of a search; the mirror
   mark; rebuilding from a rung and from a probe; takes from sittings

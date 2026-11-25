@@ -147,6 +147,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.floor_off = False
         self.floor_hz = None
         self._save_source = 0
+        self._step_due = False      # an edit asked for an undo step
         self._shared = {}           # key -> value _publish_sharers sent
         self._loading = False
         self.sinks = []
@@ -503,12 +504,24 @@ class EqWindow(Adw.ApplicationWindow):
         """The editor reports an edit of the shown slot: land it in
         the slot IN PLACE (the alias and the slot share the list)
         and run the classic pipeline -- fork built-ins, live apply,
-        headroom, debounced save with undo history."""
+        headroom, debounced save with undo history.
+
+        A drag is one undo step. Its live reports (final False) are
+        heard and saved as any edit is and ask for no step; the
+        settled report that ends it asks for one. The step used to
+        come with every rest of the hand longer than the save timer:
+        one drag of a taste band took ten presses of Ctrl+Z to undo.
+        A step still waiting from an edit made just before the grab
+        lands at the first live report, on the state it was made on,
+        and not in the middle of the drag with the drag's first
+        stretch in it."""
         if self._loading:
             return
+        if not final and self._step_due:
+            self._land_save()
         self.bands[:] = [eq.Band.from_dict(b) for b in bands]
         self._ensure_editable()
-        self._on_edit()
+        self._on_edit(step=final)
 
     def _on_balance_changed(self, db):
         """The Balance row of the channel in view: an edit of the
@@ -2451,7 +2464,7 @@ class EqWindow(Adw.ApplicationWindow):
         self.profile_button.set_label(self._display_name(self.store.get(pid)))
         return True
 
-    def _on_edit(self):
+    def _on_edit(self, step=True):
         """Any edit: redraw, publish, debounce the save. An edit of the
         bands forks a built-in first, in its caller (_ensure_editable);
         a turn of the preamp does not -- the ride is the listener's,
@@ -2461,7 +2474,10 @@ class EqWindow(Adw.ApplicationWindow):
         heard only after 200 ms of stillness: a slow drag of a band
         stayed silent until the hand stopped, and one click of an
         arrow came 200 ms late. The door paces the writes now
-        (WRITE_PACE_S); the save keeps the disk and the timeline."""
+        (WRITE_PACE_S); the save keeps the disk and the timeline.
+
+        step=False is a live report of a drag: heard and saved, with
+        no undo step of its own (_on_view_changed)."""
         if self._loading:
             return
         # the edit may have just given the profile its first channel, so
@@ -2479,7 +2495,7 @@ class EqWindow(Adw.ApplicationWindow):
             b.reset_session()
         self._update_headroom()
         self._apply_now()
-        self._schedule_save()
+        self._schedule_save(step)
 
     def _build_pair_controls(self):
         """Add and remove, at the end of the tab row. Built once and
@@ -2723,32 +2739,47 @@ class EqWindow(Adw.ApplicationWindow):
                                  self.ch_keys):
             self.slots[k] = src
 
-    def _schedule_save(self):
-        """(Re)arm the save debounce timer."""
+    def _schedule_save(self, step=True):
+        """(Re)arm the save debounce timer. step: the edit asks for an
+        undo step when the timer lands (_save_now); a live report of a
+        drag asks for none and leaves a step already asked for due."""
+        if step:
+            self._step_due = True
         if self._save_source:
             GLib.source_remove(self._save_source)
         self._save_source = GLib.timeout_add(_SAVE_DEBOUNCE_MS, self._save_now)
 
     def _save_now(self):
         """Land the debounce: persist the device profile when a
-        device-side edit is pending, and record ONE history entry
-        either way -- the timeline is global, taste edits arrive here
-        through the same timer. It publishes nothing: an edit was
-        heard when it was made (_on_edit), and the floor's edits by
-        their own handlers."""
+        device-side edit is pending, and record ONE history entry when
+        an edit since the last landing asked for one (_schedule_save)
+        -- the timeline is global, taste edits arrive here through the
+        same timer; a drag's live reports ask for none, its end does.
+        It publishes nothing: an edit was heard when it was made
+        (_on_edit), and the floor's edits by their own handlers."""
         self._save_source = 0
+        step, self._step_due = self._step_due, False
+        step = step and not self._restoring
         if self._dev_dirty:
             self._dev_dirty = False
             if self._editable(self.current_pid):
                 self._save_profile(self._working_body())
-            if not self._restoring:
+            if step:
                 self._push_history(born=self._born_pending)
                 self._born_pending = None
             self._canvas_refresh()
-        elif not self._restoring:
+        elif step:
             self._push_history(born=self._born_pending)
             self._born_pending = None
         return GLib.SOURCE_REMOVE
+
+    def _land_save(self):
+        """Land the save now, its undo step with it, instead of when the
+        timer would."""
+        if self._save_source:
+            GLib.source_remove(self._save_source)
+            self._save_source = 0
+        self._save_now()
 
     def _apply_now(self):
         """Publish the device's live state to the per-device-eq metadata:
@@ -4063,17 +4094,20 @@ class EqWindow(Adw.ApplicationWindow):
         dlg.present(self)
 
     def _on_taste_view_changed(self, bands, final):
-        """Write-through: the active layer takes every edit; the
-        session undo for taste returns as part of the GLOBAL
-        history in the next patch."""
+        """Write-through: the active layer takes every edit, and the
+        listener record carries it to every device. The undo step is
+        the global history's, one per drag as for a band of the device
+        (_on_view_changed)."""
         act = self.pref_layers.active()
         if act is None:
             return
+        if not final and self._step_due:
+            self._land_save()
         self.pref_layers.upsert(dict(act, bands=bands))
         self._update_meter()
         self._publish_listener()
-        self._schedule_save()        # one global-history entry per
-        if final:                    # settled gesture
+        self._schedule_save(step=final)
+        if final:
             self._update_headroom()
 
 class EqApplication(Adw.Application):

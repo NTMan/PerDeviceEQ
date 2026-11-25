@@ -1091,7 +1091,10 @@ class PeqView(Gtk.Box):
         self._held = (lo - ref, hi - ref)
         if created:
             self._rebuild_table()
-            self._emit(True)
+            # the start of a drag, reported live as its moves are: the
+            # release settles it, and the owner takes one undo step for
+            # the band and the drag
+            self._emit(False)
         self.graph.queue_draw()
 
     def _on_drag_update(self, gesture, ox, oy):
@@ -1440,14 +1443,15 @@ class PeqView(Gtk.Box):
         switch speak only on a change, and a row added or removed
         always makes one. The rule is the same for all of them.
 
-        A report is live (final False: a drag under way) or settled
-        (final True: a gesture ended, a field set, a row added or
-        removed). The taste card's owner recomputes the headroom on a
-        settled report only, so the end of a drag must reach it even
-        though the last live report already carried the same bands;
-        hence two marks. A live report goes out when the bands differ
-        from the last report of either kind; a settled one, when they
-        differ from the last settled report or the load.
+        A report is live (final False: a drag under way, a band born
+        by its press included) or settled (final True: a gesture
+        ended, a field set, a row added or removed). The taste card's
+        owner recomputes the headroom on a settled report only, so the
+        end of a drag must reach it even though the last live report
+        already carried the same bands; hence two marks. A live report
+        goes out when the bands differ from the last report of either
+        kind; a settled one, when they differ from the last settled
+        report or the load.
         """
         if self._loading:
             return False

@@ -71,12 +71,14 @@ def test_a_drag_is_an_edit():
     assert edits == [False, True]
 
 
-def test_a_band_born_by_a_click_is_one_edit():
+def test_a_band_born_by_a_click_settles_at_the_release():
+    """The press reports the new band live, as the start of a drag;
+    the release settles it, once."""
     v, edits = _view(())
     g = _Press(v._x_of(200.0), v._y_of(v._band_ref() + 6.0))
     v._on_drag_begin(g, g.x, g.y)
     v._on_drag_end(g, 0.0, 0.0)
-    assert edits == [True] and len(v.get_bands()) == 1
+    assert edits == [False, True] and len(v.get_bands()) == 1
 
 
 def test_a_drag_back_to_where_it_began_settles_nothing():
