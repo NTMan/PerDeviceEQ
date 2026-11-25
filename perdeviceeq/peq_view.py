@@ -124,7 +124,8 @@ class PeqView(Gtk.Box):
         self._drag_band = None
         self._grab = None           # the band and the scale at the press
         self._held = None           # the window around _band_ref, held
-        self._moved = False         # the drag has changed the band
+        self._sent = []             # the bands as last reported (_emit)
+        self._settled = []          # ...as last reported settled, or loaded
         self._loading = False
         self._active = True
 
@@ -214,6 +215,7 @@ class PeqView(Gtk.Box):
         """
         self._given = [eq.Band.from_dict(b) for b in (band_dicts or [])]
         self._bands = sorted(self._given, key=lambda b: b.freq)
+        self._sent = self._settled = self.get_bands()
         self._drag_band = None
         self._held = None
         self._rebuild_table()
@@ -1087,7 +1089,6 @@ class PeqView(Gtk.Box):
         # The release lets the window fit the lines again.
         ref = self._band_ref()
         self._held = (lo - ref, hi - ref)
-        self._moved = False
         if created:
             self._rebuild_table()
             self._emit(True)
@@ -1098,21 +1099,18 @@ class PeqView(Gtk.Box):
             return
         b = self._drag_band
         f0, g0, dec_px, db_px = self._grab
-        f, g = b.freq, b.gain
         if f0 >= FMIN:
             # a band below the plot (the frequency field goes down to
             # 10 Hz) keeps its frequency under drag -- the plot cannot
             # express it and a vertical gain drag must not retune it
             # to 20 Hz
-            f = min(max(FMAX, f0), max(FMIN, f0 * 10 ** (ox * dec_px)))
+            b.freq = min(max(FMAX, f0),
+                         max(FMIN, f0 * 10 ** (ox * dec_px)))
         # within the band's range; a band already past it, from an
         # older profile or an import, stays where it was at an offset
         # of zero and is not dragged further out
-        g = min(max(GAIN_MAX, g0), max(min(-GAIN_MAX, g0), g0 - oy * db_px))
-        if (f, g) == (b.freq, b.gain):
-            return                    # a motion that changes nothing
-        b.freq, b.gain = f, g
-        self._moved = True
+        b.gain = min(max(GAIN_MAX, g0),
+                     max(min(-GAIN_MAX, g0), g0 - oy * db_px))
         self.graph.queue_draw()
         self._emit(False)             # live; no table rebuild
 
@@ -1124,21 +1122,17 @@ class PeqView(Gtk.Box):
         return max(-GAIN_MAX, min(GAIN_MAX, db - self._band_ref()))
 
     def _on_drag_end(self, gesture, ox, oy):
-        """The release: an edit only if the drag changed the band. A
-        press and a release with nothing moved in between used to be
-        reported too -- the owner took it for an edit: it reset the
-        headroom session's latched peak, rewrote the profile and put
-        the same graph on the server again. A band born by the press
-        was reported by the press."""
+        """The release settles the drag (_emit); the fields, which a
+        drag leaves alone, catch up only when something was reported:
+        a click that moved nothing reports nothing and rebuilds
+        nothing."""
         if self._drag_band is None:
             return
-        moved, self._moved = self._moved, False
         self._drag_band = None
         self._grab = None
         self._held = None
-        if moved:
+        if self._emit(True):
             self._rebuild_table()
-            self._emit(True)
         self.graph.queue_draw()
 
     def _on_right_click(self, gesture, n, x, y):
@@ -1434,8 +1428,37 @@ class PeqView(Gtk.Box):
             self._emit(True)
 
     def _emit(self, final):
-        if not self._loading:
-            self._on_changed(self.get_bands(), final)
+        """Report the bands to the owner -- only when they changed,
+        whoever changed them: a field of a row, a row added or removed,
+        a handle on the graph. Returns whether it reported.
+
+        The owner takes every report for an edit: the device card's
+        resets the headroom session's latched peak, publishes the graph
+        and saves the profile. Only the graph asks with nothing changed
+        -- a click on a handle, a motion that moves nothing, a drag
+        back to where it began; the fields, the type picker and the
+        switch speak only on a change, and a row added or removed
+        always makes one. The rule is the same for all of them.
+
+        A report is live (final False: a drag under way) or settled
+        (final True: a gesture ended, a field set, a row added or
+        removed). The taste card's owner recomputes the headroom on a
+        settled report only, so the end of a drag must reach it even
+        though the last live report already carried the same bands;
+        hence two marks. A live report goes out when the bands differ
+        from the last report of either kind; a settled one, when they
+        differ from the last settled report or the load.
+        """
+        if self._loading:
+            return False
+        now = self.get_bands()
+        if now == (self._settled if final else self._sent):
+            return False
+        self._sent = now
+        if final:
+            self._settled = now
+        self._on_changed(now, final)
+        return True
 
     # ---- scroll taming ---------------------------------------------------
     def _on_widget_scroll(self, ctrl, dx, dy):

@@ -1,11 +1,11 @@
-"""A press and a release that move nothing are no edit.
+"""The editor reports the bands only when they changed.
 
-The release reported every drag, and the owner took it for an edit:
-a click on a handle reset the headroom session's latched peak,
-rewrote the profile and put the same graph on the server again.
-Drives the real handlers of a PeqView that was never shown; the plot
-rectangle is set as a draw would set it. Needs gi; a GTK-less sandbox
-skips."""
+A click on a handle used to be reported, and the owner took it for an
+edit: it reset the headroom session's latched peak, rewrote the
+profile and put the same graph on the server again. So was the
+release of a drag that came back to where it began. Drives the real
+handlers of a PeqView that was never shown; the plot rectangle is set
+as a draw would set it. Needs gi; a GTK-less sandbox skips."""
 import pytest
 
 gi = pytest.importorskip("gi")
@@ -77,3 +77,15 @@ def test_a_band_born_by_a_click_is_one_edit():
     v._on_drag_begin(g, g.x, g.y)
     v._on_drag_end(g, 0.0, 0.0)
     assert edits == [True] and len(v.get_bands()) == 1
+
+
+def test_a_drag_back_to_where_it_began_settles_nothing():
+    """Live reports went out on the way; at the end the bands are as
+    they were before the press, and there is nothing to settle."""
+    v, edits = _view()
+    g = _on_handle(v)
+    v._on_drag_begin(g, g.x, g.y)
+    v._on_drag_update(g, 0.0, -4.0)
+    v._on_drag_update(g, 0.0, 0.0)
+    v._on_drag_end(g, 0.0, 0.0)
+    assert edits == [False, False]
