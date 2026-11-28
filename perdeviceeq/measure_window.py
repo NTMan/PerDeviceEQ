@@ -71,6 +71,10 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 FACE_H, ROW_H = 300, 200
 LADDER_ROW_H = 26      # one shelf per record on the passport canvas
 LADDER_RULE_H = 24     # the rule above the search's rows, and its words
+# The level button with no row chosen: the search, then the map. It
+# said "probe sweeps only" from when a press ran the search alone.
+RELEVEL_TIP = ("Measure the playback level now: the search, then the "
+               "level map. No takes are recorded.")
 LADDER_SPAN_DB = 2.0   # a shelf shows this much either way; beyond it
                        # a line is pinned to the shelf's edge
 
@@ -694,9 +698,7 @@ class MeasureWindow(Adw.Window):
         self._gain_set = {}
         self._take_gain = None
         self.relevel_btn = self._pult_btn(
-            "pde-level-symbolic",
-            "Measure the playback level now (probe sweeps only)",
-            self._on_relevel)
+            "pde-level-symbolic", RELEVEL_TIP, self._on_relevel)
         self.relevel_btn.set_halign(Gtk.Align.CENTER)
 
     def _sync_level_fader(self):
@@ -705,10 +707,11 @@ class MeasureWindow(Adw.Window):
 
         THIS IS WHAT THE PASSPORT WAS FOR. The takes of one canvas
         share one level -- one sink, one knob -- so the level that may
-        be used is the loudest one EVERY channel still follows, and a
-        rig whose sides differ is decided by its weaker one. His
-        Origin answers 1.1 dB louder on one side than the other, which
-        is the ordinary case rather than a corner of it.
+        be used is the loudest one EVERY channel still follows
+        (level_run.working_level), and the tooltip names the channel
+        that set it and why. His Origin answers 1.1 dB louder on one
+        side than the other, which is the ordinary case rather than a
+        corner of it.
 
         Two earlier cuts locked the fader without computing anything,
         and the second locked it on whatever the pair's memory
@@ -726,8 +729,8 @@ class MeasureWindow(Adw.Window):
                 if self.edit_pid and getattr(self.parent, "store", None)
                 else {})
         ppo = ((prof.get("measurement") or {}).get("grid") or {}).get("ppo")
-        v, who = level_run.working_level(level_run.maps_of(prof), ppo,
-                                         level_run.settled_of(prof))
+        v, who, why = level_run.working_level(
+            level_run.maps_of(prof), ppo, level_run.settled_of(prof))
         if v is None:
             self.vol_spin.set_sensitive(not gone)
             self.vol_spin.set_tooltip_text(
@@ -740,9 +743,11 @@ class MeasureWindow(Adw.Window):
         self.vol_spin.set_sensitive(False)
         self.vol_spin.set_tooltip_text(
             "Sweep playback level (%%). The loudest level every "
-            "channel still follows, read from the maps: %s sets it, "
-            "being the weaker side. Walk the maps again to change it."
-            % who)
+            "channel still follows, read from the maps. %s sets it: "
+            "%s. Walk the maps again to change it."
+            % (who, {"answer": "its search answered loudest",
+                     "knee": "a fine step under its knee",
+                     "top": "the loudest rung its map checked"}[why]))
 
     def _sync_relevel(self):
         """The button says which of the two things it will do.
@@ -761,8 +766,7 @@ class MeasureWindow(Adw.Window):
         if self._map_pick is None:
             if isinstance(img, Gtk.Image):
                 img.set_from_icon_name("pde-level-symbolic")
-            btn.set_tooltip_text(
-                "Measure the playback level now (probe sweeps only)")
+            btn.set_tooltip_text(RELEVEL_TIP)
             return
         if isinstance(img, Gtk.Image):
             img.set_from_icon_name("pde-map-rebuild-symbolic")

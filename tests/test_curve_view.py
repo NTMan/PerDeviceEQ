@@ -933,7 +933,7 @@ MAP_METHODS = ("_map_rungs", "_arm_walk", "_map_steps", "_ladder_probes",
                "_ladder_rows", "_draw_ladder", "_ladder_record",
                "_ladder_first", "_ladder_k", "_pick_rung", "_pick_step",
                "_on_ladder_pick", "_ladder_word_for", "_wrapped",
-               "_walk_here")
+               "_walk_here", "_sync_level_fader")
 
 
 def map_fake():
@@ -1401,6 +1401,28 @@ def test_the_heading_names_what_ended_the_walk():
         rungs[-1]["stopped_by"] = what
         assert f._ladder_word_for(rungs) == (
             "linear at least to %d%%%s" % (top, end))
+
+
+def test_the_fader_says_why_its_channel_sets_it(monkeypatch):
+    """It put every level down to the weaker side; since the search
+    the louder answer sets it, unless a knee or an old map caps it."""
+    import types
+    from perdeviceeq import level_run
+    f = map_window(map_rungs([6.0, 6.0]), pick=None)
+    tips = []
+    f.vol_spin = types.SimpleNamespace(set_sensitive=lambda _on: None,
+                                       set_tooltip_text=tips.append)
+    f._set_volume_display = lambda _v: None
+    f.session = None
+    for why, words in (("answer", "FR sets it: its search answered "
+                                  "loudest."),
+                       ("knee", "FR sets it: a fine step under its knee."),
+                       ("top", "FR sets it: the loudest rung its map "
+                               "checked.")):
+        monkeypatch.setattr(level_run, "working_level",
+                            lambda *a, **k: (0.2, "FR", why))
+        f._sync_level_fader()
+        assert words in tips[-1] and "weaker" not in tips[-1]
 
 
 def test_a_probe_s_line_shows_the_choice_as_a_rung_s_does():

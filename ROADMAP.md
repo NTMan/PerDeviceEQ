@@ -116,8 +116,8 @@ listener, headroom that never lies.
   mark; rebuilding from a rung and from a probe; takes from sittings
   with different conditions on one canvas; whether clipped and flagged
   takes count toward the two takes a band needs (TRUST.md).
-- Level passport, faults found by reading the code: its conditions are
-  never read; two tooltips describe old behaviour.
+- Level passport, a fault found by reading the code: its conditions are
+  never read.
 - Level map: a map is bound to its chain, and a common axis would carry
   it to another amplifier; whether every rung needs two sweeps
   (tools/scatter_probe.py).

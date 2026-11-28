@@ -240,7 +240,7 @@ def test_the_walk_keeps_its_rungs_until_it_ends(monkeypatch):
         return list(rungs)
     monkeypatch.setattr(level_run, "headroom_map", walk)
     monkeypatch.setattr(level_run, "working_level",
-                        lambda *a, **k: (0.15, None))
+                        lambda *a, **k: (0.15, None, None))
     win._map_live = lambda r: setattr(win, "_map_partial", list(r))
     win._walk_live = True
     mw.MeasureWindow._walk_map(win, 0, lambda *a: None, 0.12, None)

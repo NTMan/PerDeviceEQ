@@ -1096,8 +1096,7 @@ def test_the_working_level_is_set_by_the_weaker_channel():
     decided by its weaker one."""
     maps = {"FL": _rungs([0.10, 0.16, 0.25, 0.40]),
             "FR": _rungs([0.10, 0.16, 0.25, 0.40], loss_from=2)}
-    v, who = level_run.working_level(maps)
-    assert (v, who) == (0.16, "FR")
+    assert level_run.working_level(maps) == (0.16, "FR", "top")
 
 
 def test_an_unfinished_map_does_not_set_a_level():
@@ -1105,12 +1104,12 @@ def test_an_unfinished_map_does_not_set_a_level():
     said where following ends."""
     got = _rungs([0.10, 0.16, 0.25, 0.40])
     got[-1]["stopped_by"] = "asked"
-    assert level_run.working_level({"FL": got}) == (None, None)
+    assert level_run.working_level({"FL": got}) == (None, None, None)
 
 
 def test_no_map_names_no_level():
-    assert level_run.working_level({}) == (None, None)
-    assert level_run.working_level(None) == (None, None)
+    assert level_run.working_level({}) == (None, None, None)
+    assert level_run.working_level(None) == (None, None, None)
 
 
 def test_the_step_is_read_from_the_capture_peak_not_the_knob():
@@ -1663,25 +1662,26 @@ def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
     clean = ladder([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
     top = max(r["level"] for r in clean)
     # no knee: the search's answer stands, and the top does not
-    lvl, who = L.working_level({"FL": clean}, 96, {"FL": 0.19})
-    assert abs(lvl - 0.19) < 1e-9 and who == "FL"
+    lvl, who, why = L.working_level({"FL": clean}, 96, {"FL": 0.19})
+    assert abs(lvl - 0.19) < 1e-9 and (who, why) == ("FL", "answer")
     assert L.knee_of(clean, 96) is None
     # no search remembered: the old behaviour, the top
-    lvl, _ = L.working_level({"FL": clean}, 96, None)
-    assert abs(lvl - top) < 1e-9
+    lvl, _, why = L.working_level({"FL": clean}, 96, None)
+    assert abs(lvl - top) < 1e-9 and why == "top"
     # a knee below the search's answer caps it, a fine step under
     bent = ladder([6.0, 6.0, 2.0, 2.0, 2.0, 2.0], knee_after=2)
     knee = L.knee_of(bent, 96)
     assert knee is not None and knee < top
-    lvl, _ = L.working_level({"FL": bent}, 96, {"FL": 0.90})
+    lvl, _, why = L.working_level({"FL": bent}, 96, {"FL": 0.90})
     assert abs(lvl - knee * 10.0 ** (-L.KNEE_MARGIN_DB / 60.0)) < 1e-9
+    assert why == "knee"
     # one fader for both channels, and with no knee the louder wins
-    lvl, who = L.working_level({"FL": clean, "FR": clean}, 96,
-                               {"FL": 0.19, "FR": 0.20})
+    lvl, who, _ = L.working_level({"FL": clean, "FR": clean}, 96,
+                                  {"FL": 0.19, "FR": 0.20})
     assert abs(lvl - 0.20) < 1e-9 and who == "FR"
     # but a knee on either side caps the whole fader
-    lvl, who = L.working_level({"FL": clean, "FR": bent}, 96,
-                               {"FL": 0.90, "FR": 0.90})
+    lvl, who, _ = L.working_level({"FL": clean, "FR": bent}, 96,
+                                  {"FL": 0.90, "FR": 0.90})
     assert abs(lvl - knee * 10.0 ** (-L.KNEE_MARGIN_DB / 60.0)) < 1e-9
     assert who == "FR"
 
@@ -1698,9 +1698,9 @@ def test_a_knee_caps_the_fader_whatever_the_channels_are_called():
            * 10.0 ** (-level_run.KNEE_MARGIN_DB / 60.0))
     assert cap < 0.19
     for capped, louder in (("FL", "FR"), ("FR", "FL")):
-        lvl, who = level_run.working_level(
+        lvl, who, why = level_run.working_level(
             {capped: bent, louder: clean}, 96, {capped: 0.19, louder: 0.20})
-        assert abs(lvl - cap) < 1e-9 and who == capped
+        assert abs(lvl - cap) < 1e-9 and (who, why) == (capped, "knee")
 
 
 def test_the_margin_is_per_bin_from_the_floor():

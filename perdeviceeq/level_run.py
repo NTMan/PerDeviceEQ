@@ -722,7 +722,7 @@ def _longest_run(mask):
 
 
 def working_level(maps, ppo=None, settled=None):
-    """The loudest level EVERY channel still follows. (level, why)
+    """The loudest level EVERY channel still follows. (level, who, why)
 
     This is what a passport is for. The takes of one canvas share one
     level -- one sink, one knob -- so one fader serves channels that
@@ -735,14 +735,20 @@ def working_level(maps, ppo=None, settled=None):
     read so far, so a louder answer met after a capped channel lifted
     the fader back over that channel's knee.
 
-    `why` names the channel that set it, because a number with no
-    author is the kind this project has spent a day removing.
+    `who` names the channel that set it, because a number with no
+    author is the kind this project has spent a day removing, and
+    `why` says which of its bounds it was: "answer", its search
+    answered loudest; "knee", a fine step under its knee; "top", the
+    loudest rung of a map with no search remembered. The fader's
+    tooltip says both; it used to put every level down to the weaker
+    side.
 
-    None when no channel has a map worth reading: a level nobody
-    measured must not arrive wearing the authority of one.
+    (None, None, None) when no channel has a map worth reading: a
+    level nobody measured must not arrive wearing the authority of
+    one.
     """
-    loud = None             # (level, channel): the louder answer
-    caps = []               # (level, channel): what the fader stays under
+    loud = None             # (level, channel, why): the louder answer
+    caps = []               # (level, channel, why): what it stays under
     for ch, rungs in sorted((maps or {}).items()):
         done, _what = map_state(rungs)
         if not done:
@@ -770,7 +776,7 @@ def working_level(maps, ppo=None, settled=None):
         if lvl is None:
             # no search remembered: the top, as before, and the
             # quieter channel decides as it always did
-            caps.append((top, ch))
+            caps.append((top, ch, "top"))
             continue
         # ONE FADER FOR ALL CHANNELS, AND WITH NO KNEE THE LOUDER WINS.
         # Each channel's search found the level that puts ITS capture
@@ -782,13 +788,14 @@ def working_level(maps, ppo=None, settled=None):
         # that channel's knee, with a fine step of margin, that caps
         # the whole fader.
         if loud is None or lvl > loud[0]:
-            loud = (lvl, ch)
+            loud = (lvl, ch, "answer")
         knee = knee_of(rungs, ppo=ppo)
         if knee is not None:
-            caps.append((knee * 10.0 ** (-KNEE_MARGIN_DB / 60.0), ch))
+            caps.append((knee * 10.0 ** (-KNEE_MARGIN_DB / 60.0), ch,
+                         "knee"))
     bound = ([loud] if loud is not None else []) + caps
     if not bound:
-        return None, None
+        return None, None, None
     return min(bound)
 
 
