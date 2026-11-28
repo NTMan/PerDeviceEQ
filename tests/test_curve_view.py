@@ -962,7 +962,7 @@ def map_fake():
 
     ns = {"math": math, "np": np, "level_run": level_run,
           "FMIN_PLOT": 20.0, "FMAX_PLOT": 20000.0,
-          "LADDER_ROW_H": 26, "LADDER_SPAN_DB": 2.0}
+          "LADDER_ROW_H": 26, "LADDER_RULE_H": 24, "LADDER_SPAN_DB": 2.0}
     body = "".join(grab(n) for n in MAP_METHODS)
     exec("class Fake:\n" + body, ns)
     return ns["Fake"]
@@ -1335,6 +1335,14 @@ def test_a_walk_is_shown_on_its_own_channel_only():
     assert f._walk_ch == 1
 
 
+def _mid(f, i):
+    """Where row `i` of the drawn passport has its middle: rows from
+    y 8, the rule's band before the rows below it."""
+    rule_y = f._ladder_geom[1]
+    below = rule_y is not None and i >= f._ladder_split
+    return 8 + i * 26 + (24 if below else 0) + 13
+
+
 def test_a_step_of_the_search_can_be_chosen_and_resumed_from():
     """The choice is a SLOT of the command, not a rung: on a probe
     row it means "resume the search from this step" -- the steps
@@ -1354,14 +1362,14 @@ def test_a_step_of_the_search_can_be_chosen_and_resumed_from():
     at = [i for i, r in enumerate(rows) if r[0] == "probe" and r[1] == 2][0]
     f._sync_relevel = lambda: None
     f._ladder_repaint = lambda: None
-    f._on_ladder_pick(None, 1, 0.0, 8 + at * 26 + 13)
+    f._on_ladder_pick(None, 1, 0.0, _mid(f, at))
     assert f._map_pick == 2
     assert f._pick_step() == 2 and f._pick_rung() is None
     # a click on a rung row is still a rung
     top = [i for i, r in enumerate(rows) if r[0] == "rung"][0]
-    f._on_ladder_pick(None, 1, 0.0, 8 + top * 26 + 13)
+    f._on_ladder_pick(None, 1, 0.0, _mid(f, top))
     assert f._pick_rung() == len(rungs) - 1 and f._pick_step() is None
-    f._on_ladder_pick(None, 1, 0.0, 8 + at * 26 + 13)
+    f._on_ladder_pick(None, 1, 0.0, _mid(f, at))
     assert f._pick_step() == 2
     # armed: step 1 is kept for the replay, the ladder is gone
     f._rebuild_ack = True
@@ -1375,6 +1383,35 @@ def test_a_step_of_the_search_can_be_chosen_and_resumed_from():
     f._busy = True
     assert [r[1] for r in f._ladder_rows() if r[0] == "probe"] == [1]
     assert [r for r in f._ladder_rows() if r[0] == "rung"] == []
+
+
+def test_a_click_picks_the_row_it_lands_on():
+    """The rows below the rule are drawn lower by its height, and the
+    pick counted them as if it were not there: a click on a step of
+    the search picked the step after it, and the last step could not
+    be picked at all. A click on the rule picks nothing."""
+    import cairo
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0])
+    probes = [{"step": k, "level": lv, "verdict": "quiet",
+               "mag_db": rungs[1]["mag_db"]}
+              for k, lv in ((1, 0.15), (2, 0.17), (3, 0.19))]
+    f = map_window(rungs, probes=probes, pick=None)
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 700, 400)
+    f._draw_ladder(None, cairo.Context(surf), 700, 400)
+    rows, rule_y = f._ladder_geom
+    f._sync_relevel = lambda: None
+    f._ladder_repaint = lambda: None
+    picks = [(i, r[1]) for i, r in enumerate(rows)
+             if r[0] in ("rung", "probe") and r[1] is not None]
+    assert rule_y is not None
+    assert [s for i, s in picks if i >= f._ladder_split] == [3, 2, 1]
+    for i, slot in picks:
+        f._map_pick = None
+        f._on_ladder_pick(None, 1, 0.0, _mid(f, i))
+        assert f._map_pick == slot
+    f._map_pick = None
+    f._on_ladder_pick(None, 1, 0.0, rule_y + 12)
+    assert f._map_pick is None
 
 
 def test_the_step_subtracted_is_the_step_the_rig_took():

@@ -70,6 +70,7 @@ FMIN_PLOT, FMAX_PLOT = 20.0, 20000.0
 # harmonics fifty decibels below it, and that needs room
 FACE_H, ROW_H = 300, 200
 LADDER_ROW_H = 26      # one shelf per record on the passport canvas
+LADDER_RULE_H = 24     # the rule above the search's rows, and its words
 LADDER_SPAN_DB = 2.0   # a shelf shows this much either way; beyond it
                        # a line is pinned to the shelf's edge
 
@@ -1130,7 +1131,8 @@ class MeasureWindow(Adw.Window):
             return ml + (math.log10(max(fhz, 1e-6)) - lo) / (hi - lo) * pw_
 
         n_up = getattr(self, "_ladder_split", len(rows))
-        field_h = LADDER_ROW_H * len(rows) + (24 if n_up < len(rows) else 0)
+        field_h = LADDER_ROW_H * len(rows) + (LADDER_RULE_H
+                                              if n_up < len(rows) else 0)
         cr.set_source_rgba(0.5, 0.5, 0.5, 0.08)
         cr.rectangle(ml, mt, pw_, field_h)
         cr.fill()
@@ -1158,7 +1160,7 @@ class MeasureWindow(Adw.Window):
                 cr.show_text("not the graph: the search, and the sweeps "
                              "that serve it")
                 rule_y = y
-                y += 24
+                y += LADDER_RULE_H
             mid = y + LADDER_ROW_H / 2.0
             # THE CHOICE, ON THE ROWS. The chosen slot's row is tinted
             # and every later slot -- what a rebuild from it re-records
@@ -1282,8 +1284,18 @@ class MeasureWindow(Adw.Window):
         """
         if self._busy:
             return
-        rows = getattr(self, "_ladder_geom", ([], None))[0] or []
-        idx = int((y - 8) // LADDER_ROW_H)
+        rows, rule_y = getattr(self, "_ladder_geom", ([], None))
+        rows = rows or []
+        # THE ROWS BELOW THE RULE ARE DRAWN LOWER BY ITS HEIGHT, and the
+        # pick counted them as if the rule were not there: a click on
+        # a row below it picked its neighbour, and the last row could
+        # not be picked at all. A click on the rule picks nothing.
+        top = 8
+        if rule_y is not None and y >= rule_y:
+            if y < rule_y + LADDER_RULE_H:
+                return
+            top += LADDER_RULE_H
+        idx = int((y - top) // LADDER_ROW_H)
         if not 0 <= idx < len(rows) or rows[idx][0] not in ("rung", "probe"):
             return
         slot = rows[idx][1]
