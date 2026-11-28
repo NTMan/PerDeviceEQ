@@ -1604,6 +1604,29 @@ def test_a_search_is_remembered_as_records_in_the_order_played():
     assert L.probe_records(None) == []
 
 
+def _fader_ladder(steps, knee_after=None, n=200):
+    """A map climbing by `steps` decibels; with `knee_after`, a rig
+    that runs out in the bass first from that rung on: the low third
+    of the band falls behind while the rest still climbs -- the only
+    kind of knee a step read from the curve's own rise can see, and
+    the kind every rig here has shown."""
+    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
+    out, up = [], 0.0
+    for j, d in enumerate([0.0] + list(steps)):
+        up += d
+        lost = (0.0 if knee_after is None or j <= knee_after
+                else 1.5 * (j - knee_after))
+        r = {"level": 0.12 * 10.0 ** (up / 60.0), "peak_dbfs": -30.0 + up,
+             "heard_offset_db": -40.0,
+             "mag_db": [up + s - (lost if i < n // 3 else 0.0)
+                        for i, s in enumerate(slope)],
+             "stopped_by": "capture" if j == len(steps) else None}
+        if j == 0:
+            r["scatter_db"] = [0.1] * n
+        out.append(r)
+    return out
+
+
 def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
     """Linear to 26%, no knee found, and the fader stood at 26 --
     "checked this far" read as "may go this far". The level is the
@@ -1611,29 +1634,7 @@ def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
     it, with a fine step of margin."""
     from perdeviceeq import level_run as L
 
-    n = 200
-    slope = [45.0 - 90.0 * i / (n - 1) for i in range(n)]
-
-    def ladder(steps, knee_after=None):
-        out, up = [], 0.0
-        for j, d in enumerate([0.0] + list(steps)):
-            up += d
-            # a rig that runs out in the bass first: the low third of
-            # the band falls behind while the rest still climbs -- the
-            # only kind of knee a step read from the curve's own rise
-            # can see, and the kind every rig here has shown
-            lost = (0.0 if knee_after is None or j <= knee_after
-                    else 1.5 * (j - knee_after))
-            r = {"level": 0.12 * 10.0 ** (up / 60.0), "peak_dbfs": -30.0 + up,
-                 "heard_offset_db": -40.0,
-                 "mag_db": [up + s - (lost if i < n // 3 else 0.0)
-                            for i, s in enumerate(slope)],
-                 "stopped_by": "capture" if j == len(steps) else None}
-            if j == 0:
-                r["scatter_db"] = [0.1] * n
-            out.append(r)
-        return out
-
+    ladder = _fader_ladder
     clean = ladder([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
     top = max(r["level"] for r in clean)
     # no knee: the search's answer stands, and the top does not
@@ -1658,6 +1659,23 @@ def test_the_fader_carries_the_recording_level_not_the_loudest_rung():
                                {"FL": 0.90, "FR": 0.90})
     assert abs(lvl - knee * 10.0 ** (-L.KNEE_MARGIN_DB / 60.0)) < 1e-9
     assert who == "FR"
+
+
+def test_a_knee_caps_the_fader_whatever_the_channels_are_called():
+    """The channels were read in the order of their names, a knee
+    capping what had been read so far, so a louder answer met after a
+    capped channel lifted the fader back over that channel's knee:
+    the bent side sorted first, the clean side's 20% stood above its
+    knee; the same maps the other way round gave the knee."""
+    clean = _fader_ladder([6.0, 6.0, 2.0, 2.0, 2.0, 2.0])
+    bent = _fader_ladder([6.0, 6.0, 2.0, 2.0, 2.0, 2.0], knee_after=2)
+    cap = (level_run.knee_of(bent, 96)
+           * 10.0 ** (-level_run.KNEE_MARGIN_DB / 60.0))
+    assert cap < 0.19
+    for capped, louder in (("FL", "FR"), ("FR", "FL")):
+        lvl, who = level_run.working_level(
+            {capped: bent, louder: clean}, 96, {capped: 0.19, louder: 0.20})
+        assert abs(lvl - cap) < 1e-9 and who == capped
 
 
 def test_the_margin_is_per_bin_from_the_floor():

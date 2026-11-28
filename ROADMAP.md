@@ -117,11 +117,10 @@ listener, headroom that never lies.
   with different conditions on one canvas; whether clipped and flagged
   takes count toward the two takes a band needs (TRUST.md).
 - Level passport, faults found by reading the code: its conditions are
-  never read; the knee cap depends on the order of channel names; a
-  rebuild from a rung above the base is not checked for seating; the
-  heading blames the capture for every walk without a knee; two
-  tooltips describe old behaviour; a click below the rule can select
-  the next row.
+  never read; a rebuild from a rung above the base is not checked for
+  seating; the heading blames the capture for every walk without a
+  knee; two tooltips describe old behaviour; a click below the rule
+  can select the next row.
 - Level map: a map is bound to its chain, and a common axis would carry
   it to another amplifier; whether every rung needs two sweeps
   (tools/scatter_probe.py).
