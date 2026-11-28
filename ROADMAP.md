@@ -112,7 +112,6 @@ listener, headroom that never lies.
 
 ## Planned
 
-- Find why one graph write of a pass went missing (Nov 7).
 - Level passport, to decide: the first sweep of a search; the mirror
   mark; rebuilding from a rung and from a probe; takes from sittings
   with different conditions on one canvas; whether clipped and flagged
