@@ -17,6 +17,7 @@ from perdeviceeq import curve_view as cv
 class Ext:
     def __init__(self, width):
         self.width = width
+        self.x_advance = width
         self.height = 8
 
 
@@ -1383,6 +1384,34 @@ def test_a_step_of_the_search_can_be_chosen_and_resumed_from():
     f._busy = True
     assert [r[1] for r in f._ladder_rows() if r[0] == "probe"] == [1]
     assert [r for r in f._ladder_rows() if r[0] == "rung"] == []
+
+
+def test_a_probe_s_line_shows_the_choice_as_a_rung_s_does():
+    """A probe's line was grey whatever was chosen: the chosen probe
+    got only the faint tint of its row, and the probes after it faded
+    only their labels. Chosen, its line is blue; after the chosen
+    slot, faded; otherwise black, as a rung's."""
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0])
+    probes = [{"step": k, "level": lv, "verdict": "quiet",
+               "mag_db": rungs[1]["mag_db"]}
+              for k, lv in ((1, 0.15), (2, 0.24), (3, 0.19), (4, 0.21))]
+    f = map_window(rungs, probes=probes, pick=None)
+    f._map_pick = 3
+    cr = FakeCr()
+    f._draw_ladder(None, cr, 700, 400)
+    rows = f._ladder_geom[0]
+
+    def line(slot):
+        i = [j for j, r in enumerate(rows)
+             if r[0] == "probe" and r[1] == slot][0]
+        y0 = _mid(f, i) - 13
+        got = [c for c, pts in cr.segments
+               if len(pts) > 10 and y0 <= pts[0][1] < y0 + 26]
+        assert len(got) == 1
+        return got[0]
+    assert line(3) == (0.16, 0.40, 0.85, 1.0)          # chosen
+    assert line(4) == (0.12, 0.12, 0.12, 0.3)          # replayed after it
+    assert line(2) == (0.12, 0.12, 0.12, 0.95)         # kept
 
 
 def test_a_click_picks_the_row_it_lands_on():

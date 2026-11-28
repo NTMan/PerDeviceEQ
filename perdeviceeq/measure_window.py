@@ -943,9 +943,14 @@ class MeasureWindow(Adw.Window):
         climbing. A chosen row tells the hand what a rebuild from it
         keeps and replays, in numbers rather than in heights.
 
-        THREE STATES OF A LINE and nothing else: dashed while the sweep
-        is announced and playing, grey while a row holds only an
-        auxiliary sweep, black once it is a record.
+        TWO STATES OF A LINE: dashed while the sweep is announced and
+        playing, black once it is a record -- a probe's as a rung's. A
+        probe's line was grey, from when it was its curve against the
+        nearest rung, drawn late and rewritten as the ladder climbed;
+        since the search is read against itself it is a record like a
+        rung's, and the grey only hid the choice below the rule. The
+        chosen row's line is blue, and the lines of the slots after it
+        fade, above the rule and below it alike.
 
         THIS IS THE WALK'S ONLY PICTURE. The fan in the level card and
         the search's strip of dots drew the same rungs and the same
@@ -1196,9 +1201,7 @@ class MeasureWindow(Adw.Window):
                 cr.move_to(ml + pw_ + 4, mid + 3.5)
                 cr.show_text(note or "-")
             else:
-                if kind == "probe":
-                    cr.set_source_rgba(0.55, 0.55, 0.55, 0.95)
-                elif chosen:
+                if chosen:
                     cr.set_source_rgba(0.16, 0.40, 0.85, 1.0)
                 else:
                     cr.set_source_rgba(0.12, 0.12, 0.12, 0.3 if gone else 0.95)
