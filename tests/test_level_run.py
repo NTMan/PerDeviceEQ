@@ -959,6 +959,31 @@ def test_a_rig_that_moved_refuses_to_be_built_on(monkeypatch):
                                have=level_run.rolled_back(first, 1))
 
 
+def test_a_rebuild_from_a_rung_above_the_base_is_checked_too(monkeypatch):
+    """Only the base carries a scatter, so a kept top rung above it
+    had none of its own and the check let it through: a rig that had
+    moved by 9 dB was built on. It is judged against the base's
+    scatter, as every reading above the base is."""
+    freqs = np.array([100.0, 1000.0, 10000.0])
+    played = []
+    _fake_backend(monkeypatch, _rig(played))
+    first = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                   sink_name="x", freqs=freqs,
+                                   max_rungs=3)
+    kept = level_run.rolled_back(first, 2)
+    assert kept[-1]["scatter_db"] is None      # the rung above the base
+    _fake_backend(monkeypatch, _rig(played, bump=9.0))
+    with pytest.raises(level_run.SeatingChanged):
+        level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                               sink_name="x", freqs=freqs,
+                               max_rungs=6, have=kept)
+    _fake_backend(monkeypatch, _rig(played))   # sitting where it was
+    got = level_run.headroom_map({"name": "x"}, {"name": "y"}, 2, 0.4,
+                                 sink_name="x", freqs=freqs,
+                                 max_rungs=6, have=kept)
+    assert len(got) > len(kept)
+
+
 def test_a_kept_rung_with_no_scatter_is_built_on_without_a_check(
         monkeypatch):
     freqs = np.array([100.0, 1000.0, 10000.0])

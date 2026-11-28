@@ -849,10 +849,11 @@ def _ppo_of(freqs):
     return max(1, int(round(1.0 / math.log2(f[1] / f[0]))))
 
 
-def _check_seating(base, again, k=SEATING_K, ppo=None):
+def _check_seating(base, again, k=SEATING_K, ppo=None, scatter=None):
     """Raise SeatingChanged if the kept top rung no longer answers as
-    it did. Compared only where it was heard and only against its own
-    scatter -- a threshold of ours would be a number nobody measured.
+    it did. Compared only where it was heard and only against the
+    map's own scatter -- a threshold of ours would be a number nobody
+    measured.
 
     BY THIRDS OF AN OCTAVE, not one median over the whole band. The
     whole-band median was chosen to ignore the spikes one sweep
@@ -870,11 +871,16 @@ def _check_seating(base, again, k=SEATING_K, ppo=None):
     bottom of the band. The map's tolerance, a readable step, stays
     as the floor of the bar.
 
-    A rung with no scatter of its own predates the second base sweep.
-    Nothing can be checked then and nothing is claimed.
+    A map keeps one scatter, the base pair's, and every reading above
+    the base is judged against it; a rung above the base has none of
+    its own and is judged against that one (`scatter`). It used to be
+    taken for a rung that predates the second base sweep, so a
+    rebuild from any rung but the base was built on unchecked. A map
+    with no scatter at all does predate it: nothing can be checked
+    then and nothing is claimed.
     """
     old = base.get("mag_db") or []
-    sc = base.get("scatter_db")
+    sc = base.get("scatter_db") or scatter
     if not old or not sc:
         return
     new_mag = np.asarray(getattr(again, "mag_db", again), float)
@@ -1158,6 +1164,10 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         # agree with itself, or the new rungs and the old ones are
         # about two different rigs.
         top = max(rungs, key=lambda r: r["level"])
+        # the map's one scale, kept on its base (sweep_record)
+        base_sc = next((r["scatter_db"] for r in
+                        sorted(rungs, key=lambda r: r["level"])
+                        if r.get("scatter_db")), None)
         v = _clamp(float(top["level"]))
         # BEFORE THE SOUND, like every other sweep here. This one is
         # played to check the seating, and it went out silent: a hand
@@ -1175,7 +1185,8 @@ def headroom_map(sink, source, channels, start_volume, sink_name=None,
         except Exception:
             again = None
         if again is not None:
-            _check_seating(top, again, ppo=_ppo_of(freqs))
+            _check_seating(top, again, ppo=_ppo_of(freqs),
+                           scatter=base_sc)
         max_rungs = max(0, int(max_rungs) - len(rungs))
         # AND THE FIRST NEW RUNG GOES ABOVE THE KEPT ONE, not on top
         # of it. The loop plays wherever v stands, so seeding v with
