@@ -1386,6 +1386,23 @@ def test_a_step_of_the_search_can_be_chosen_and_resumed_from():
     assert [r for r in f._ladder_rows() if r[0] == "rung"] == []
 
 
+def test_the_heading_names_what_ended_the_walk():
+    """It said the capture ran out first whenever there was no knee:
+    also for a walk that reached the top of the volume, used up its
+    rungs or was stopped. A map with no word of its end gets none."""
+    rungs = map_rungs([6.0, 6.0, 2.0, 2.0])
+    f = map_window(rungs, pick=None)
+    top = round(100 * rungs[-1]["level"])
+    for what, end in (("capture", " -- the capture ran out first"),
+                      ("knob", " -- the volume reached 100% first"),
+                      ("rungs", " -- the walk used all its rungs first"),
+                      ("asked", " -- the walk was stopped"),
+                      (None, "")):
+        rungs[-1]["stopped_by"] = what
+        assert f._ladder_word_for(rungs) == (
+            "linear at least to %d%%%s" % (top, end))
+
+
 def test_a_probe_s_line_shows_the_choice_as_a_rung_s_does():
     """A probe's line was grey whatever was chosen: the chosen probe
     got only the faint tint of its row, and the probes after it faded

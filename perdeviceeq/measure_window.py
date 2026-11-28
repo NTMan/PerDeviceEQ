@@ -1233,7 +1233,15 @@ class MeasureWindow(Adw.Window):
 
     def _ladder_word_for(self, rungs):
         """The one sentence the passport is for: where linearity ends,
-        or how far it is guaranteed when the end was not reached."""
+        or how far it is guaranteed when the end was not reached, and
+        what ended the walk then.
+
+        The walk writes what stopped it on its loudest rung
+        (level_run.map_state), and the sentence used to blame the
+        capture whatever it was: a walk that reached the top of the
+        volume, used up its rungs or was stopped read the same. A map
+        written before the walk wrote its end gets no reason: what is
+        not known is not claimed."""
         if len(rungs) < 2:
             return ""
         ppo = ((((self.parent.store.get(self.edit_pid) or {})
@@ -1245,8 +1253,12 @@ class MeasureWindow(Adw.Window):
         top = level_run.linear_top(rungs, ppo=ppo)
         if top is None:
             return ""
-        return ("linear at least to %d%% -- the capture ran out first"
-                % round(100 * top))
+        end = {"capture": " -- the capture ran out first",
+               "knob": " -- the volume reached 100% first",
+               "rungs": " -- the walk used all its rungs first",
+               "asked": " -- the walk was stopped"}.get(
+                   level_run.map_state(rungs)[1], "")
+        return "linear at least to %d%%%s" % (round(100 * top), end)
 
     def _ladder_first(self):
         """How many slots the search holds: the last probe's step."""
